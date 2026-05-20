@@ -1,0 +1,207 @@
+import { useState, useEffect, useMemo, useCallback } from "react"
+import axios from "axios"
+import { Loader, Inbox, Filter, Radio, RefreshCw } from "lucide-react"
+import AdminLayout from "../../components/AdminLayout"
+import { useAdminAuth } from "../../context/AdminAuthContext"
+
+const API_BASE = "http://127.0.0.1:8000/api"
+const POLL_MS = 5000
+
+const SEV = {
+    low: { label: "Low", color: "#1D9E75", bg: "#E1F5EE" },
+    moderate: { label: "Moderate", color: "#BA7517", bg: "#FAEEDA" },
+    high: { label: "High", color: "#D85A30", bg: "#FAECE7" },
+    critical: { label: "Critical", color: "#A32D2D", bg: "#FCEBEB" },
+}
+
+export default function AdminHistory() {
+    const { authHeaders } = useAdminAuth()
+    const [logs, setLogs] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [refreshing, setRefreshing] = useState(false)
+    const [error, setError] = useState(null)
+    const [sevFilter, setSevFilter] = useState("all")
+    const [lastUpdated, setLastUpdated] = useState(null)
+
+    const fetchLogs = useCallback(async (silent = false) => {
+        if (!silent) setLoading(true)
+        else setRefreshing(true)
+        if (!silent) setError(null)
+        try {
+            const res = await axios.get(`${API_BASE}/admin/recommendations`, { headers: authHeaders() })
+            setLogs(res.data)
+            setLastUpdated(new Date())
+            setError(null)
+        } catch {
+            if (!silent) setError("Failed to load recommendation history.")
+        }
+        setLoading(false)
+        setRefreshing(false)
+    }, [authHeaders])
+
+    useEffect(() => {
+        fetchLogs(false)
+        const interval = setInterval(() => {
+            if (document.visibilityState === "visible") {
+                fetchLogs(true)
+            }
+        }, POLL_MS)
+        return () => clearInterval(interval)
+    }, [fetchLogs])
+
+    const lastUpdatedStr = lastUpdated
+        ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        : null
+
+    const filtered = useMemo(() => {
+        if (sevFilter === "all") return logs
+        return logs.filter((l) => l.typhoon_log?.severity_level === sevFilter)
+    }, [logs, sevFilter])
+
+    return (
+        <AdminLayout title="History">
+            <div style={styles.liveBar}>
+                <span style={styles.liveBadge}>
+                    <Radio size={12} />
+                    Live
+                </span>
+                <span style={styles.liveText}>New evacuation recommendations appear automatically</span>
+                {lastUpdatedStr && (
+                    <span style={styles.liveMeta}>
+                        <RefreshCw size={11} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
+                        Updated {lastUpdatedStr}
+                    </span>
+                )}
+            </div>
+
+            <div style={styles.toolbar}>
+                <div style={styles.filterRow}>
+                    <Filter size={14} color="#888" />
+                    <span style={styles.filterLabel}>Severity:</span>
+                    {["all", "low", "moderate", "high", "critical"].map((s) => (
+                        <div
+                            key={s}
+                            onClick={() => setSevFilter(s)}
+                            style={{
+                                ...styles.filterBtn,
+                                background: sevFilter === s ? "#1a237e" : "#fff",
+                                color: sevFilter === s ? "#fff" : "#555",
+                                border: sevFilter === s ? "1px solid #1a237e" : "1px solid #ddd",
+                            }}
+                        >
+                            {s === "all" ? "All" : SEV[s]?.label || s}
+                        </div>
+                    ))}
+                </div>
+                <div style={styles.count}>{filtered.length} record{filtered.length !== 1 ? "s" : ""}</div>
+            </div>
+
+            {error && <div style={styles.errorBox}>{error}</div>}
+
+            <div style={styles.tableWrap}>
+                {loading ? (
+                    <div style={styles.center}>
+                        <Loader size={24} color="#1a237e" style={{ animation: "spin 1s linear infinite" }} />
+                        <span style={{ color: "#888", marginTop: 10 }}>Loading history...</span>
+                    </div>
+                ) : filtered.length === 0 ? (
+                    <div style={styles.center}>
+                        <Inbox size={36} color="#ccc" />
+                        <span style={{ color: "#888", marginTop: 10 }}>No recommendations found.</span>
+                    </div>
+                ) : (
+                    <table style={styles.table}>
+                        <thead>
+                            <tr>
+                                <th style={styles.th}>ID</th>
+                                <th style={styles.th}>Barangay</th>
+                                <th style={styles.th}>Evacuation Center</th>
+                                <th style={styles.th}>Severity</th>
+                                <th style={styles.th}>Wind (km/h)</th>
+                                <th style={styles.th}>Rainfall (mm)</th>
+                                <th style={styles.th}>Pressure (hPa)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filtered.map((rec) => {
+                                const sev = rec.typhoon_log?.severity_level || "low"
+                                const cfg = SEV[sev] || SEV.low
+                                return (
+                                    <tr key={rec.id} style={styles.tr}>
+                                        <td style={styles.td}>#{rec.id}</td>
+                                        <td style={styles.td}>{rec.barangay?.name || "—"}</td>
+                                        <td style={styles.td}>{rec.evacuation_center?.name || "—"}</td>
+                                        <td style={styles.td}>
+                                            <span style={{
+                                                ...styles.badge,
+                                                background: cfg.bg,
+                                                color: cfg.color,
+                                            }}>
+                                                {cfg.label}
+                                            </span>
+                                        </td>
+                                        <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "—"}</td>
+                                        <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "—"}</td>
+                                        <td style={styles.td}>{rec.typhoon_log?.pressure ?? "—"}</td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+        </AdminLayout>
+    )
+}
+
+const styles = {
+    toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 },
+    filterRow: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+    filterLabel: { fontSize: 12, color: "#888", fontWeight: 500 },
+    filterBtn: {
+        padding: "5px 12px", borderRadius: 20, fontSize: 12,
+        fontWeight: 500, cursor: "pointer",
+    },
+    count: { fontSize: 13, color: "#888" },
+    tableWrap: { background: "#fff", borderRadius: 10, border: "1px solid #e8ecf0", overflow: "hidden", minHeight: 200 },
+    table: { width: "100%", borderCollapse: "collapse" },
+    th: {
+        textAlign: "left", padding: "12px 16px", fontSize: 11, fontWeight: 600,
+        color: "#888", textTransform: "uppercase", letterSpacing: 0.5,
+        background: "#f8f9fc", borderBottom: "1px solid #e8ecf0",
+    },
+    tr: { borderBottom: "1px solid #f0f0f0" },
+    td: { padding: "12px 16px", fontSize: 13, color: "#333" },
+    badge: { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 },
+    center: { display: "flex", flexDirection: "column", alignItems: "center", padding: 48 },
+    errorBox: { background: "#fcebeb", color: "#a32d2d", padding: "10px 14px", borderRadius: 8, marginBottom: 12, fontSize: 13 },
+    liveBar: {
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 10,
+        marginBottom: 16,
+        padding: "10px 14px",
+        background: "#f0f4ff",
+        borderRadius: 8,
+        border: "1px solid #c5cae9",
+    },
+    liveBadge: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#00c853",
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+    },
+    liveText: { fontSize: 12, color: "#555", flex: 1, minWidth: 180 },
+    liveMeta: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11,
+        color: "#888",
+    },
+}
