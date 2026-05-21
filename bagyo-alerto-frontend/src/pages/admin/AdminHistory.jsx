@@ -6,6 +6,7 @@ import { useAdminAuth } from "../../context/AdminAuthContext"
 
 const API_BASE = "http://127.0.0.1:8000/api"
 const POLL_MS = 5000
+const PAGE_SIZE = 8
 
 const SEV = {
     low: { label: "Low", color: "#1D9E75", bg: "#E1F5EE" },
@@ -22,6 +23,7 @@ export default function AdminHistory() {
     const [error, setError] = useState(null)
     const [sevFilter, setSevFilter] = useState("all")
     const [lastUpdated, setLastUpdated] = useState(null)
+    const [currentPage, setCurrentPage] = useState(1)
 
     const fetchLogs = useCallback(async (silent = false) => {
         if (!silent) setLoading(true)
@@ -57,6 +59,17 @@ export default function AdminHistory() {
         if (sevFilter === "all") return logs
         return logs.filter((l) => l.typhoon_log?.severity_level === sevFilter)
     }, [logs, sevFilter])
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+    const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [sevFilter])
+
+    useEffect(() => {
+        setCurrentPage((p) => Math.min(p, totalPages))
+    }, [totalPages])
 
     return (
         <AdminLayout title="History">
@@ -110,44 +123,95 @@ export default function AdminHistory() {
                         <span style={{ color: "#888", marginTop: 10 }}>No recommendations found.</span>
                     </div>
                 ) : (
-                    <table style={styles.table}>
-                        <thead>
-                            <tr>
-                                <th style={styles.th}>ID</th>
-                                <th style={styles.th}>Barangay</th>
-                                <th style={styles.th}>Evacuation Center</th>
-                                <th style={styles.th}>Severity</th>
-                                <th style={styles.th}>Wind (km/h)</th>
-                                <th style={styles.th}>Rainfall (mm)</th>
-                                <th style={styles.th}>Pressure (hPa)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filtered.map((rec) => {
-                                const sev = rec.typhoon_log?.severity_level || "low"
-                                const cfg = SEV[sev] || SEV.low
-                                return (
-                                    <tr key={rec.id} style={styles.tr}>
-                                        <td style={styles.td}>#{rec.id}</td>
-                                        <td style={styles.td}>{rec.barangay?.name || "—"}</td>
-                                        <td style={styles.td}>{rec.evacuation_center?.name || "—"}</td>
-                                        <td style={styles.td}>
-                                            <span style={{
-                                                ...styles.badge,
-                                                background: cfg.bg,
-                                                color: cfg.color,
-                                            }}>
-                                                {cfg.label}
-                                            </span>
-                                        </td>
-                                        <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "—"}</td>
-                                        <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "—"}</td>
-                                        <td style={styles.td}>{rec.typhoon_log?.pressure ?? "—"}</td>
-                                    </tr>
-                                )
-                            })}
-                        </tbody>
-                    </table>
+                    <>
+                        <table style={styles.table}>
+                            <thead>
+                                <tr>
+                                    <th style={styles.th}>ID</th>
+                                    <th style={styles.th}>Barangay</th>
+                                    <th style={styles.th}>Evacuation Center</th>
+                                    <th style={styles.th}>Severity</th>
+                                    <th style={styles.th}>Wind (km/h)</th>
+                                    <th style={styles.th}>Rainfall (mm)</th>
+                                    <th style={styles.th}>Pressure (hPa)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {paginated.map((rec) => {
+                                    const sev = rec.typhoon_log?.severity_level || "low"
+                                    const cfg = SEV[sev] || SEV.low
+                                    return (
+                                        <tr key={rec.id} style={styles.tr}>
+                                            <td style={styles.td}>#{rec.id}</td>
+                                            <td style={styles.td}>{rec.barangay?.name || "-"}</td>
+                                            <td style={styles.td}>{rec.evacuation_center?.name || "-"}</td>
+                                            <td style={styles.td}>
+                                                <span
+                                                    style={{
+                                                        ...styles.badge,
+                                                        background: cfg.bg,
+                                                        color: cfg.color,
+                                                    }}
+                                                >
+                                                    {cfg.label}
+                                                </span>
+                                            </td>
+                                            <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "-"}</td>
+                                            <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "-"}</td>
+                                            <td style={styles.td}>{rec.typhoon_log?.pressure ?? "-"}</td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+
+                        <div style={styles.pagination}>
+                            <span style={styles.pageInfo}>
+                                Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, filtered.length)}-{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} records
+                            </span>
+                            <div style={{ display: "flex", gap: 4 }}>
+                                <button
+                                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    style={{ ...styles.pageBtn, opacity: currentPage === 1 ? 0.4 : 1 }}
+                                >
+                                    Prev
+                                </button>
+                                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                    .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                                    .reduce((acc, p, idx, arr) => {
+                                        if (idx > 0 && p - arr[idx - 1] > 1) acc.push("...")
+                                        acc.push(p)
+                                        return acc
+                                    }, [])
+                                    .map((p, idx) =>
+                                        p === "..." ? (
+                                            <span key={`ellipsis-${idx}`} style={{ padding: "3px 6px", fontSize: 12, color: "#bbb" }}>...</span>
+                                        ) : (
+                                            <button
+                                                key={p}
+                                                onClick={() => setCurrentPage(p)}
+                                                style={{
+                                                    ...styles.pageBtn,
+                                                    background: currentPage === p ? "#1a237e" : "white",
+                                                    color: currentPage === p ? "white" : "#555",
+                                                    borderColor: currentPage === p ? "#1a237e" : "#e0e0e0",
+                                                }}
+                                            >
+                                                {p}
+                                            </button>
+                                        )
+                                    )}
+                                <button
+                                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage === totalPages}
+                                    style={{ ...styles.pageBtn, opacity: currentPage === totalPages ? 0.4 : 1 }}
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                    </>
                 )}
             </div>
         </AdminLayout>
@@ -203,5 +267,24 @@ const styles = {
         gap: 5,
         fontSize: 11,
         color: "#888",
+    },
+    pagination: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 16px",
+        borderTop: "1px solid #f0f4f8",
+        background: "#fafbff",
+    },
+    pageInfo: { fontSize: 11, color: "#888" },
+    pageBtn: {
+        fontSize: 11,
+        padding: "4px 10px",
+        borderRadius: 6,
+        border: "1px solid #e0e0e0",
+        background: "white",
+        color: "#555",
+        cursor: "pointer",
+        fontWeight: 500,
     },
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\TyphoonLog;
 use App\Models\EvacuationCenter;
 use App\Models\Recommendation;
+use App\Models\Barangay;
 use Illuminate\Http\Request;
 
 class TyphoonController extends Controller
@@ -33,12 +34,24 @@ class TyphoonController extends Controller
             'severity_level' => $severity
         ]);
 
-        // Get evacuation center with highest AVAILABLE capacity
-        $center = EvacuationCenter::where('barangay_id', $request->barangay_id)
-                    ->where('is_active', true)
-                    ->withCount('recommendations')
-                    ->orderByRaw('(capacity - recommendations_count) DESC')
-                    ->first();
+        $barangay = Barangay::find($request->barangay_id);
+        $center = null;
+
+        // Pick the nearest active evacuation center to the selected barangay
+        if ($barangay) {
+            $center = EvacuationCenter::where('is_active', true)
+                ->withCount('recommendations')
+                ->get()
+                ->map(function ($evacuationCenter) use ($barangay) {
+                    $distance = $evacuationCenter->getDistanceTo($barangay->latitude, $barangay->longitude);
+                    $evacuationCenter->distance = $distance;
+                    return $evacuationCenter;
+                })
+                ->sortBy(function ($evacuationCenter) {
+                    return $evacuationCenter->distance;
+                })
+                ->first();
+        }
 
         // Save recommendation
         if ($center) {
@@ -48,8 +61,7 @@ class TyphoonController extends Controller
                 'typhoon_log_id'       => $log->id
             ]);
 
-            $barangay = \App\Models\Barangay::find($request->barangay_id);
-            if ($barangay) {
+            if ($barangay && !isset($center->distance)) {
                 $center->distance = $center->getDistanceTo($barangay->latitude, $barangay->longitude);
             }
         }

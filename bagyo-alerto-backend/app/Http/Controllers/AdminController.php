@@ -10,6 +10,7 @@ use App\Models\TyphoonLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AdminController extends Controller
 {
@@ -77,11 +78,122 @@ class AdminController extends Controller
 
     public function stats()
     {
+        return response()->json($this->buildStats());
+    }
+
+    public function statsStream(Request $request)
+    {
+        $token = $request->query('token');
+        if (!$token) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $accessToken = PersonalAccessToken::findToken($token);
+        if (!$accessToken || !($accessToken->tokenable instanceof Admin)) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        return response()->stream(function () {
+            set_time_limit(0);
+            ignore_user_abort(true);
+
+            $previousPayload = null;
+
+            while (!connection_aborted()) {
+                $stats = $this->buildStats();
+                $payload = json_encode($stats);
+
+                if ($payload !== $previousPayload) {
+                    echo "data: {$payload}\n\n";
+                    ob_flush();
+                    flush();
+                    $previousPayload = $payload;
+                } else {
+                    echo ": keep-alive\n\n";
+                    ob_flush();
+                    flush();
+                }
+
+                sleep(2);
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+        ]);
+    }
+
+    private function buildStats(): array
+    {
         $severityCounts = TyphoonLog::selectRaw('severity_level, COUNT(*) as count')
             ->groupBy('severity_level')
             ->pluck('count', 'severity_level');
 
-        return response()->json([
+        $severityScoreMap = [
+            'low' => 1,
+            'moderate' => 2,
+            'high' => 3,
+            'critical' => 4,
+        ];
+
+        $recentAssessmentSeries = TyphoonLog::query()
+            ->orderByDesc('id')
+            ->limit(12)
+            ->get(['severity_level'])
+            ->reverse()
+            ->map(fn ($log) => $severityScoreMap[$log->severity_level] ?? 1)
+            ->values()
+            ->all();
+
+        $recentAssessments = Recommendation::query()
+            ->with(['barangay:id,name', 'typhoonLog:id,severity_level'])
+            ->orderByDesc('id')
+            ->limit(6)
+            ->get()
+            ->map(fn ($recommendation) => [
+                'id' => $recommendation->id,
+                'barangay_name' => $recommendation->barangay?->name ?? 'Unknown barangay',
+                'severity_level' => $recommendation->typhoonLog?->severity_level ?? 'low',
+            ])
+            ->values()
+            ->all();
+
+        $recentRecommendations = Recommendation::query()
+            ->with(['evacuationCenter:id,capacity'])
+            ->orderByDesc('id')
+            ->limit(12)
+            ->get();
+
+        $centerIds = $recentRecommendations
+            ->pluck('evacuation_center_id')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $recommendationCountsByCenter = $centerIds->isEmpty()
+            ? collect()
+            : Recommendation::query()
+                ->selectRaw('evacuation_center_id, COUNT(*) as total')
+                ->whereIn('evacuation_center_id', $centerIds)
+                ->groupBy('evacuation_center_id')
+                ->pluck('total', 'evacuation_center_id');
+
+        $capacityTrend = $recentRecommendations
+            ->reverse()
+            ->map(function ($recommendation) use ($recommendationCountsByCenter) {
+                $capacity = (int) ($recommendation->evacuationCenter?->capacity ?? 0);
+                $totalAssigned = (int) ($recommendationCountsByCenter[$recommendation->evacuation_center_id] ?? 0);
+
+                if ($capacity <= 0) {
+                    return 0;
+                }
+
+                return min(100, (int) round(($totalAssigned / $capacity) * 100));
+            })
+            ->values()
+            ->all();
+
+        return [
             'total_assessments' => TyphoonLog::count(),
             'severity_counts' => [
                 'low' => (int) ($severityCounts['low'] ?? 0),
@@ -89,11 +201,15 @@ class AdminController extends Controller
                 'high' => (int) ($severityCounts['high'] ?? 0),
                 'critical' => (int) ($severityCounts['critical'] ?? 0),
             ],
-            'total_capacity' => (int) EvacuationCenter::sum('capacity'),
+            'total_capacity' => (int) EvacuationCenter::where('is_active', 1)->sum('capacity'),
             'total_barangays' => Barangay::count(),
-            'total_evacuation_centers' => EvacuationCenter::count(),
+            'total_evacuation_centers' => EvacuationCenter::where('is_active', 1)->count(),
             'total_recommendations' => Recommendation::count(),
-        ]);
+            'assessments_over_time' => $recentAssessmentSeries,
+            'assessments_history' => $recentAssessmentSeries,
+            'recent_assessments' => $recentAssessments,
+            'capacity_trend' => $capacityTrend,
+        ];
     }
 
     public function recommendations()

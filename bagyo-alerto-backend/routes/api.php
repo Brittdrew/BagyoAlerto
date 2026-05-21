@@ -21,6 +21,7 @@ Route::delete('/recommendations/{id}', [RecommendationController::class, 'destro
 
 // Admin authentication
 Route::post('/admin/login', [AdminController::class, 'login']);
+Route::get('/admin/stats/stream', [AdminController::class, 'statsStream']);
 
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/logout', [AdminController::class, 'logout']);

@@ -10,6 +10,7 @@ import {
     Shield,
     Tornado,
     Cloud,
+    Map,
 } from "lucide-react"
 import { useAdminAuth } from "../context/AdminAuthContext"
 
@@ -18,6 +19,7 @@ const API_BASE = "http://127.0.0.1:8000/api"
 const navItems = [
     { id: "dashboard", label: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
     { id: "weather", label: "Weather Monitor", path: "/admin/weather", icon: Cloud },
+    { id: "weather-map", label: "Weather Map", path: "/admin/weather-map", icon: Map },
     { id: "barangays", label: "Barangays", path: "/admin/barangays", icon: MapPin },
     { id: "evacuation-centers", label: "Evacuation Centers", path: "/admin/evacuation-centers", icon: School },
     { id: "history", label: "History", path: "/admin/history", icon: Clock },

@@ -38,40 +38,40 @@ class RealBarangaySeeder extends Seeder
         // Each center is assigned to the nearest barangay
         $evacuationCenters = [
             // Washington
-            ['name' => 'Surigao City National High School',           'barangay' => 'Washington', 'address' => 'Washington St., Surigao City',            'latitude' => 9.78978, 'longitude' => 125.48419, 'capacity' => 800,  'is_active' => true],
-            ['name' => 'Washington Barangay Hall',                    'barangay' => 'Washington', 'address' => 'Washington, Surigao City',                 'latitude' => 9.78430, 'longitude' => 125.48870, 'capacity' => 200,  'is_active' => true],
+            ['name' => 'Surigao City National High School',           'barangay' => 'Washington', 'address' => 'Washington St., Surigao City',            'latitude' => 9.785493, 'longitude' => 125.487935, 'capacity' => 800,  'is_active' => true],
+            ['name' => 'Washington Barangay Hall',                    'barangay' => 'Washington', 'address' => 'Washington, Surigao City',                 'latitude' => 9.785493, 'longitude' => 125.487935, 'capacity' => 200,  'is_active' => true],
 
             // Lipata
-            ['name' => 'Lipata Elementary School',                    'barangay' => 'Lipata',     'address' => 'Lipata, Surigao City',                    'latitude' => 9.81280, 'longitude' => 125.45530, 'capacity' => 400,  'is_active' => true],
+            ['name' => 'Lipata Elementary School',                    'barangay' => 'Lipata',     'address' => 'Lipata, Surigao City',                    'latitude' => 9.812738, 'longitude' => 125.454576, 'capacity' => 400,  'is_active' => true],
 
             // Mabua
-            ['name' => 'Mabua Elementary School',                     'barangay' => 'Mabua',      'address' => 'Mabua, Surigao City',                    'latitude' => 9.80980, 'longitude' => 125.44090, 'capacity' => 350,  'is_active' => true],
+            ['name' => 'Mabua Elementary School',                     'barangay' => 'Mabua',      'address' => 'Mabua, Surigao City',                    'latitude' => 9.808649, 'longitude' => 125.441059, 'capacity' => 350,  'is_active' => true],
 
             // Taft
-            ['name' => 'Saint Paul University Surigao Gymnasium',     'barangay' => 'Taft',       'address' => 'San Nicolas & Rizal St., Surigao City',    'latitude' => 9.78956, 'longitude' => 125.49414, 'capacity' => 1200, 'is_active' => true],
-            ['name' => 'Taft Barangay Multipurpose Hall',             'barangay' => 'Taft',       'address' => 'Taft, Surigao City',                     'latitude' => 9.78470, 'longitude' => 125.49750, 'capacity' => 300,  'is_active' => true],
+            ['name' => 'Saint Paul University Surigao Gymnasium',     'barangay' => 'Taft',       'address' => 'San Nicolas & Rizal St., Surigao City',    'latitude' => 9.781708, 'longitude' => 125.495880, 'capacity' => 1200, 'is_active' => true],
+            ['name' => 'Taft Barangay Multipurpose Hall',             'barangay' => 'Taft',       'address' => 'Taft, Surigao City',                     'latitude' => 9.781708, 'longitude' => 125.495880, 'capacity' => 300,  'is_active' => true],
 
             // Bonifacio
-            ['name' => 'Surigao del Norte National High School',      'barangay' => 'Bonifacio',  'address' => 'Peñaranda St., Surigao City',              'latitude' => 9.78530, 'longitude' => 125.49306, 'capacity' => 900,  'is_active' => true],
+            ['name' => 'Bonifacio Elementary School',                 'barangay' => 'Bonifacio',  'address' => 'Bonifacio, Surigao City',                 'latitude' => 9.7381221, 'longitude' => 125.4953095, 'capacity' => 900,  'is_active' => true],
 
             // Rizal
-            ['name' => 'Rizal Elementary School',                     'barangay' => 'Rizal',      'address' => 'Rizal, Surigao City',                    'latitude' => 9.78230, 'longitude' => 125.46330, 'capacity' => 400,  'is_active' => true],
+            ['name' => 'Rizal Elementary School',                     'barangay' => 'Rizal',      'address' => 'Rizal, Surigao City',                    'latitude' => 9.780764, 'longitude' => 125.465263, 'capacity' => 400,  'is_active' => true],
 
             // Sabang
-            ['name' => 'Sabang Elementary School',                    'barangay' => 'Sabang',     'address' => 'Sabang, Surigao City',                   'latitude' => 9.79700, 'longitude' => 125.47200, 'capacity' => 350,  'is_active' => true],
-            ['name' => 'Surigao City Covered Court',                  'barangay' => 'Sabang',     'address' => 'Sabang, Surigao City',                   'latitude' => 9.79800, 'longitude' => 125.47250, 'capacity' => 600,  'is_active' => true],
+            ['name' => 'Sabang Elementary School',                    'barangay' => 'Sabang',     'address' => 'Sabang, Surigao City',                   'latitude' => 9.797459, 'longitude' => 125.471206, 'capacity' => 350,  'is_active' => true],
+            ['name' => 'Surigao City Covered Court',                  'barangay' => 'Sabang',     'address' => 'Sabang, Surigao City',                   'latitude' => 9.797459, 'longitude' => 125.471206, 'capacity' => 600,  'is_active' => true],
 
             // Day-asan
-            ['name' => 'Day-asan Barangay Hall',                      'barangay' => 'Day-asan',   'address' => 'Day-asan, Surigao City',                 'latitude' => 9.77260, 'longitude' => 125.55080, 'capacity' => 150,  'is_active' => true],
+            ['name' => 'Day-asan Barangay Hall',                      'barangay' => 'Day-asan',   'address' => 'Day-asan, Surigao City',                 'latitude' => 9.769697, 'longitude' => 125.535094, 'capacity' => 150,  'is_active' => true],
 
             // Cagniog
-            ['name' => 'Cagniog Elementary School',                   'barangay' => 'Cagniog',    'address' => 'Cagniog, Surigao City',                  'latitude' => 9.76190, 'longitude' => 125.50450, 'capacity' => 300,  'is_active' => true],
+            ['name' => 'Cagniog Elementary School',                   'barangay' => 'Cagniog',    'address' => 'Cagniog, Surigao City',                  'latitude' => 9.7703761, 'longitude' => 125.4914807, 'capacity' => 300,  'is_active' => true],
 
             // Togbongon
-            ['name' => 'Togbongon Barangay Covered Court',            'barangay' => 'Togbongon',  'address' => 'Togbongon, Surigao City',                'latitude' => 9.79600, 'longitude' => 125.48200, 'capacity' => 250,  'is_active' => true],
+            ['name' => 'Togbongon Barangay Covered Court',            'barangay' => 'Togbongon',  'address' => 'Togbongon, Surigao City',                'latitude' => 9.7627232, 'longitude' => 125.466670, 'capacity' => 250,  'is_active' => true],
 
             // Ipil
-            ['name' => 'Ipil Elementary School',                      'barangay' => 'Ipil',       'address' => 'Ipil, Surigao City',                     'latitude' => 9.79220, 'longitude' => 125.43960, 'capacity' => 300,  'is_active' => true],
+            ['name' => 'Ipil Elementary School',                      'barangay' => 'Ipil',       'address' => 'Ipil, Surigao City',                     'latitude' => 9.792006, 'longitude' => 125.439942, 'capacity' => 300,  'is_active' => true],
         ];
 
         // Insert barangays and map name -> id
@@ -90,3 +90,5 @@ class RealBarangaySeeder extends Seeder
         }
     }
 }
+
+

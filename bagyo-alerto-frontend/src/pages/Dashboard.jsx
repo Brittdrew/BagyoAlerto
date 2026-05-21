@@ -12,12 +12,12 @@ import {
     Radio, Loader, MapPin
 } from "lucide-react"
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// --- Constants ---------------------------------------------------------------
 const API_BASE = "http://127.0.0.1:8000/api"
 const WEATHER_REFRESH = 10 * 60 * 1000 // 10 minutes
 import { RefreshCw } from "lucide-react"
 
-// ─── Severity config (maps your backend severity_level to UI) ────────────────
+// --- Severity config (maps your backend severity_level to UI) ----------------
 const SEVERITY_CONFIG = {
     low: { label: "Low — Tropical Depression", color: "#1D9E75", gaugeColor: "#1D9E75", score: 22, signal: "Signal #1", alertBg: "#E1F5EE", alertBorder: "#5DCAA5", alertText: "#085041", dot: "#5DCAA5" },
     moderate: { label: "Moderate — Tropical Storm", color: "#BA7517", gaugeColor: "#EF9F27", score: 45, signal: "Signal #2", alertBg: "#FAEEDA", alertBorder: "#EF9F27", alertText: "#633806", dot: "#EF9F27" },
@@ -36,7 +36,7 @@ function windBarColor(v) {
     return "#378ADD"
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// --- Sub-components ----------------------------------------------------------
 
 function LiveDot() {
     return (
@@ -57,7 +57,7 @@ function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, ba
                 </div>
                 {trend && (
                     <span style={{ fontSize: 10, fontWeight: 600, color: trend === "up" ? "#A32D2D" : "#0F6E56", display: "flex", alignItems: "center", gap: 2 }}>
-                        {trend === "up" ? "↑" : "↓"} {trendLabel}
+                        {trend === "up" ? "?" : "?"} {trendLabel}
                     </span>
                 )}
             </div>
@@ -208,7 +208,7 @@ function EvacRoutes({ evacuationCenter, severity }) {
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{evacuationCenter.address}</div>
                     {evacuationCenter.distance !== undefined && evacuationCenter.distance !== null && (
                         <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
-                            <span>📍</span> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
+                            <span>??</span> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
                         </div>
                     )}
                 </div>
@@ -272,7 +272,7 @@ function RecentHistory({ logs }) {
     )
 }
 
-// ─── Main Dashboard ──────────────────────────────────────────────────────────
+// --- Main Dashboard ----------------------------------------------------------
 export default function Dashboard() {
     const navigate = useNavigate()
 
@@ -292,7 +292,7 @@ export default function Dashboard() {
 
     const weatherTimer = useRef(null)
 
-    // ── Fetch barangays on mount ────────────────────────────────────────────────
+    // -- Fetch barangays on mount ------------------------------------------------
     useEffect(() => {
         axios.get(`${API_BASE}/barangays`)
             .then(res => {
@@ -315,7 +315,7 @@ export default function Dashboard() {
         return () => { if (weatherTimer.current) clearInterval(weatherTimer.current) }
     }, [])
 
-    // ── Fetch live weather ──────────────────────────────────────────────────────
+    // -- Fetch live weather ------------------------------------------------------
     const fetchWeather = async (option) => {
         if (!option?.latitude || !option?.longitude) return
         setWeatherLoading(true)
@@ -365,7 +365,7 @@ export default function Dashboard() {
         setWeatherLoading(false)
     }
 
-    // ── Fetch recent history ────────────────────────────────────────────────────
+    // -- Fetch recent history ----------------------------------------------------
     const fetchRecentLogs = async () => {
         try {
             const res = await axios.get(`${API_BASE}/recommendations`)
@@ -375,7 +375,7 @@ export default function Dashboard() {
         }
     }
 
-    // ── Barangay change ─────────────────────────────────────────────────────────
+    // -- Barangay change ---------------------------------------------------------
     const handleBarangayChange = (option) => {
         setSelectedBarangay(option)
         setFormData(f => ({ ...f, barangay_id: option?.value ?? null }))
@@ -385,12 +385,12 @@ export default function Dashboard() {
         fetchWeather(option)
     }
 
-    // ── Manual input change ─────────────────────────────────────────────────────
+    // -- Manual input change -----------------------------------------------------
     const handleChange = (e) => {
         setFormData(f => ({ ...f, [e.target.name]: e.target.value }))
     }
 
-    // ── Assess ──────────────────────────────────────────────────────────────────
+    // -- Assess ------------------------------------------------------------------
     const handleAssess = async () => {
         setAssessing(true)
         setAssessError(null)
@@ -404,7 +404,7 @@ export default function Dashboard() {
         setAssessing(false)
     }
 
-    // ── Derived UI values ────────────────────────────────────────────────────────
+    // -- Derived UI values --------------------------------------------------------
     const wind = parseFloat(formData.wind_speed) || 0
     const rain = parseFloat(formData.rainfall) || 0
     const pressure = parseFloat(formData.pressure) || 0
@@ -458,10 +458,10 @@ export default function Dashboard() {
 
 
 
-            {/* ── Main Layout ────────────────────────────────────────────────── */}
+            {/* -- Main Layout -------------------------------------------------- */}
             <div style={styles.layout}>
 
-            {/* ── Sidebar ──────────────────────────────────────────────────── */}
+            {/* -- Sidebar ---------------------------------------------------- */}
             <Sidebar activePage="dashboard">
                 <div style={styles.navSection}>Barangay</div>
 
@@ -514,7 +514,7 @@ export default function Dashboard() {
                 </div>
             </Sidebar>
 
-                {/* ── Main Content ─────────────────────────────────────────────── */}
+                {/* -- Main Content ----------------------------------------------- */}
                 <main style={styles.main}>
 
                     {/* Topbar */}
@@ -691,7 +691,7 @@ export default function Dashboard() {
                                 )}
                                 {showMap && result?.evacuation_center && (
                                     <div style={{ marginTop: 10 }}>
-                                        <MapView evacuationCenter={result.evacuation_center} />
+                                        <MapView evacuationCenter={result.evacuation_center} barangay={selectedBarangay} />
                                     </div>
                                 )}
                             </div>
@@ -705,7 +705,7 @@ export default function Dashboard() {
     )
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
+// --- Styles ------------------------------------------------------------------
 const styles = {
     page: { minHeight: "100vh", background: "#f0f4f8", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" },
 
@@ -794,3 +794,4 @@ const selectStyles = {
     singleValue: b => ({ ...b, color: "#1a237e", fontWeight: 600, fontSize: 12 }),
     menu: b => ({ ...b, zIndex: 9999 }),
 }
+

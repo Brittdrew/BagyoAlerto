@@ -11,6 +11,7 @@ import AdminEvacuationCenters from './pages/admin/AdminEvacuationCenters'
 import AdminHistory from './pages/admin/AdminHistory'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminWeather from './pages/admin/AdminWeather'
+import AdminWeatherMap from './pages/admin/AdminWeatherMap'
 import './App.css'
 
 function App() {
@@ -28,6 +29,9 @@ function App() {
           } />
           <Route path="/admin/weather" element={
             <AdminProtectedRoute><AdminWeather /></AdminProtectedRoute>
+          } />
+          <Route path="/admin/weather-map" element={
+            <AdminProtectedRoute><AdminWeatherMap /></AdminProtectedRoute>
           } />
           <Route path="/admin/barangays" element={
             <AdminProtectedRoute><AdminBarangays /></AdminProtectedRoute>
