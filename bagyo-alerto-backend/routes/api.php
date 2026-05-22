@@ -12,6 +12,7 @@ Route::get('/barangays/{id}', [BarangayController::class, 'show']);
 
 Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);
+Route::get('/evacuation-centers/photo/{barangay_name}', [EvacuationCenterController::class, 'getPhotoByBarangay']);
 
 Route::post('/typhoon/assess', [TyphoonController::class, 'assess']);
 
@@ -39,4 +40,6 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/evacuation-centers', [AdminController::class, 'evacuationCentersStore']);
     Route::put('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersUpdate']);
     Route::delete('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersDestroy']);
+    Route::post('/evacuation-centers/photo', [AdminController::class, 'uploadEvacuationCenterPhoto']);
+    Route::delete('/evacuation-centers/photo/{barangay_name}', [AdminController::class, 'deleteEvacuationCenterPhoto']);
 });

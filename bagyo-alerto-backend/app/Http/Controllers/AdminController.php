@@ -345,4 +345,64 @@ class AdminController extends Controller
 
         return response()->json(['message' => 'Evacuation center deleted successfully']);
     }
+
+    public function uploadEvacuationCenterPhoto(Request $request)
+    {
+        $request->validate([
+            'barangay_name' => 'required|string|exists:barangays,name',
+            'photo' => 'required|image|max:5120',
+        ]);
+
+        $destinationPath = public_path('uploads/evacuation');
+        if (!file_exists($destinationPath)) {
+            mkdir($destinationPath, 0755, true);
+        }
+
+        $photo = $request->file('photo');
+        $extension = $photo->getClientOriginalExtension();
+        $filename = \Illuminate\Support\Str::slug($request->barangay_name) . '_' . time() . '.' . $extension;
+        $photo->move($destinationPath, $filename);
+
+        $imagePath = '/uploads/evacuation/' . $filename;
+
+        $record = \App\Models\EvacuationCenterPhoto::where('barangay_name', $request->barangay_name)->first();
+
+        if ($record) {
+            $oldFilePath = public_path($record->image_path);
+            if (file_exists($oldFilePath) && is_file($oldFilePath)) {
+                @unlink($oldFilePath);
+            }
+            $record->update([
+                'image_path' => $imagePath,
+            ]);
+        } else {
+            $record = \App\Models\EvacuationCenterPhoto::create([
+                'barangay_name' => $request->barangay_name,
+                'image_path' => $imagePath,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Evacuation center photo saved successfully.',
+            'data' => $record,
+        ]);
+    }
+
+    public function deleteEvacuationCenterPhoto($barangay_name)
+    {
+        $record = \App\Models\EvacuationCenterPhoto::where('barangay_name', $barangay_name)->first();
+
+        if (!$record) {
+            return response()->json(['message' => 'No photo found for this barangay.'], 404);
+        }
+
+        $filePath = public_path($record->image_path);
+        if (file_exists($filePath) && is_file($filePath)) {
+            @unlink($filePath);
+        }
+
+        $record->delete();
+
+        return response()->json(['message' => 'Evacuation center photo deleted successfully.']);
+    }
 }

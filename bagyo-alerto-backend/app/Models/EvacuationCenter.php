@@ -9,6 +9,7 @@ class EvacuationCenter extends Model
 {
     use HasFactory;
     public $timestamps = false;
+    protected $table = 'evacuation_centers_list';
 
     protected $fillable = [
         'name',

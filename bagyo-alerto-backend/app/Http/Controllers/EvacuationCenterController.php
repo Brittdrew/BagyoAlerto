@@ -20,4 +20,13 @@ class EvacuationCenterController extends Controller
         }
         return response()->json($center);
     }
+
+    public function getPhotoByBarangay($barangay_name)
+    {
+        $photo = \App\Models\EvacuationCenterPhoto::where('barangay_name', $barangay_name)->first();
+        if (!$photo) {
+            return response()->json(['message' => 'No photo found for this barangay'], 404);
+        }
+        return response()->json($photo);
+    }
 }

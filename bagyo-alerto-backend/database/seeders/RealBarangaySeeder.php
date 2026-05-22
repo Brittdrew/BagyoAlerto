@@ -48,7 +48,7 @@ class RealBarangaySeeder extends Seeder
             ['name' => 'Mabua Elementary School',                     'barangay' => 'Mabua',      'address' => 'Mabua, Surigao City',                    'latitude' => 9.808649, 'longitude' => 125.441059, 'capacity' => 350,  'is_active' => true],
 
             // Taft
-            ['name' => 'Saint Paul University Surigao Gymnasium',     'barangay' => 'Taft',       'address' => 'San Nicolas & Rizal St., Surigao City',    'latitude' => 9.781708, 'longitude' => 125.495880, 'capacity' => 1200, 'is_active' => true],
+            ['name' => 'Brgy Taft gymnasium',                         'barangay' => 'Taft',       'address' => 'San Nicolas & Rizal St., Surigao City',    'latitude' => 9.781708, 'longitude' => 125.495880, 'capacity' => 1200, 'is_active' => true],
             ['name' => 'Taft Barangay Multipurpose Hall',             'barangay' => 'Taft',       'address' => 'Taft, Surigao City',                     'latitude' => 9.781708, 'longitude' => 125.495880, 'capacity' => 300,  'is_active' => true],
 
             // Bonifacio
