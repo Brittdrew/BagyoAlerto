@@ -715,11 +715,13 @@ export default function Dashboard() {
                                 </div>
                                 <span style={{ fontSize: 11, color: "#aaa" }}>Auto-filled from live API</span>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, alignItems: "flex-end" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
                                 {[
-                                    { name: "wind_speed", label: "Wind speed (km/h)", placeholder: "e.g. 120" },
-                                    { name: "rainfall", label: "Rainfall (mm/hr)", placeholder: "e.g. 25" },
+                                    { name: "wind_speed", label: "Wind (km/h)", placeholder: "e.g. 120" },
+                                    { name: "rainfall", label: "Rain (mm/hr)", placeholder: "e.g. 25" },
                                     { name: "pressure", label: "Pressure (hPa)", placeholder: "e.g. 985" },
+                                    { name: "temperature", label: "Temp (°C)", placeholder: "e.g. 28" },
+                                    { name: "humidity", label: "Humidity (%)", placeholder: "e.g. 80" },
                                 ].map(({ name, label, placeholder }) => (
                                     <div key={name}>
                                         <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 4 }}>{label}</label>
@@ -755,6 +757,7 @@ export default function Dashboard() {
                                     )}
                                 </button>
                             </div>
+
                             {assessError && (
                                 <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8, display: "flex", alignItems: "center", gap: 6 }}>
                                     <AlertTriangle size={14} /> {assessError}
