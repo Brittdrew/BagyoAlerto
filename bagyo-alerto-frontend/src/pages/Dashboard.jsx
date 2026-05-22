@@ -52,7 +52,7 @@ function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, ba
                 </div>
                 {trend && (
                     <span style={{ fontSize: 10, fontWeight: 600, color: trend === "up" ? "#A32D2D" : "#0F6E56", display: "flex", alignItems: "center", gap: 2 }}>
-                        {trend === "up" ? "?" : "?"} {trendLabel}
+                        {trend === "up" ? "▲" : "▼"} {trendLabel}
                     </span>
                 )}
             </div>
@@ -245,7 +245,7 @@ function EvacRoutes({ evacuationCenter, severity }) {
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{evacuationCenter.address}</div>
                     {evacuationCenter.distance !== undefined && evacuationCenter.distance !== null && (
                         <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
-                            <span>??</span> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
+                            <span>📍</span> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
                         </div>
                     )}
                 </div>

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react"
 import axios from "axios"
 import Select from "react-select"
 import Sidebar from "../components/Sidebar"
-import BagyoBot from "../components/BagyoBot"
 import { 
     Tornado, MapPin, Wind, CloudRain, Gauge, Droplets, 
     RefreshCw, AlertTriangle, Satellite, Thermometer 
@@ -364,7 +363,6 @@ export default function Forecast() {
                     </div>
                 </main>
             </div>
-            <BagyoBot />
         </div>
     )
 }

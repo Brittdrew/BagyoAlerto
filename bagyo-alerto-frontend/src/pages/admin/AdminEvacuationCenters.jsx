@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import axios from "axios"
-import { Plus, Pencil, Trash2, Loader, Inbox, X } from "lucide-react"
+import { Plus, Pencil, Trash2, Loader, Inbox, X, Upload, ImageOff } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
@@ -28,6 +28,16 @@ export default function AdminEvacuationCenters() {
     const [editingId, setEditingId] = useState(null)
     const [form, setForm] = useState(emptyForm)
 
+    // Photo management state
+    const [photoBarangay, setPhotoBarangay] = useState("")
+    const [photoFile, setPhotoFile] = useState(null)
+    const [photoPreview, setPhotoPreview] = useState(null)
+    const [savedPhotoUrl, setSavedPhotoUrl] = useState(null)
+    const [photoSaving, setPhotoSaving] = useState(false)
+    const [photoMessage, setPhotoMessage] = useState(null)
+    const [photoError, setPhotoError] = useState(null)
+    const [photoLoading, setPhotoLoading] = useState(false)
+
     const fetchData = async () => {
         setLoading(true)
         setError(null)
@@ -38,10 +48,127 @@ export default function AdminEvacuationCenters() {
             ])
             setCenters(centersRes.data)
             setBarangays(barangaysRes.data)
+            if (barangaysRes.data.length > 0 && !photoBarangay) {
+                setPhotoBarangay(barangaysRes.data[0].name)
+            }
         } catch {
             setError("Failed to load evacuation centers.")
         }
         setLoading(false)
+    }
+
+    useEffect(() => {
+        if (!photoBarangay) {
+            setSavedPhotoUrl(null)
+            return
+        }
+
+        const fetchSavedPhoto = async () => {
+            setPhotoLoading(true)
+            setPhotoError(null)
+            try {
+                const res = await axios.get(`${API_BASE}/evacuation-centers/photo/${encodeURIComponent(photoBarangay)}`)
+                if (res.data && res.data.image_path) {
+                    const path = res.data.image_path
+                    const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+                    setSavedPhotoUrl(fullUrl)
+                } else {
+                    setSavedPhotoUrl(null)
+                }
+            } catch {
+                setSavedPhotoUrl(null)
+            } finally {
+                setPhotoLoading(false)
+            }
+        }
+
+        fetchSavedPhoto()
+    }, [photoBarangay])
+
+    const handlePhotoChange = (e) => {
+        const file = e.target.files[0]
+        if (!file) return
+
+        if (!file.type.startsWith("image/")) {
+            setPhotoError("Please select a valid image file.")
+            return
+        }
+
+        setPhotoFile(file)
+        setPhotoPreview(URL.createObjectURL(file))
+        setPhotoMessage(null)
+        setPhotoError(null)
+    }
+
+    const handleSavePhoto = async () => {
+        if (!photoBarangay) {
+            setPhotoError("Please select a barangay.")
+            return
+        }
+        if (!photoFile) {
+            setPhotoError("Please select a photo to upload.")
+            return
+        }
+
+        setPhotoSaving(true)
+        setPhotoError(null)
+        setPhotoMessage(null)
+
+        const formData = new FormData()
+        formData.append("barangay_name", photoBarangay)
+        formData.append("photo", photoFile)
+
+        try {
+            const res = await axios.post(`${API_BASE}/admin/evacuation-centers/photo`, formData, {
+                headers: {
+                    ...authHeaders(),
+                    "Content-Type": "multipart/form-data",
+                },
+            })
+            setPhotoMessage("Evacuation center photo saved successfully.")
+            const path = res.data.data.image_path
+            const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+            setSavedPhotoUrl(fullUrl)
+            setPhotoFile(null)
+            if (photoPreview) {
+                URL.revokeObjectURL(photoPreview)
+                setPhotoPreview(null)
+            }
+        } catch (err) {
+            setPhotoError(err.response?.data?.message || "Failed to save photo.")
+        } finally {
+            setPhotoSaving(false)
+        }
+    }
+
+    const handleDeletePhoto = async () => {
+        if (!photoBarangay) return
+        if (!window.confirm(`Delete the evacuation center photo for ${photoBarangay}?`)) return
+
+        setPhotoSaving(true)
+        setPhotoError(null)
+        setPhotoMessage(null)
+
+        try {
+            await axios.delete(`${API_BASE}/admin/evacuation-centers/photo/${encodeURIComponent(photoBarangay)}`, {
+                headers: authHeaders(),
+            })
+            setPhotoMessage("Photo deleted successfully.")
+            setSavedPhotoUrl(null)
+            setPhotoFile(null)
+            if (photoPreview) {
+                URL.revokeObjectURL(photoPreview)
+                setPhotoPreview(null)
+            }
+        } catch (err) {
+            setPhotoError(err.response?.data?.message || "Failed to delete photo.")
+        } finally {
+            setPhotoSaving(false)
+        }
+    }
+
+    const handleEditPhoto = () => {
+        document.getElementById("evac-photo-upload").click()
     }
 
     useEffect(() => { fetchData() }, [])
@@ -126,6 +253,119 @@ export default function AdminEvacuationCenters() {
                 <div style={styles.count}>{centers.length} center{centers.length !== 1 ? "s" : ""}</div>
                 <div onClick={openAdd} style={styles.addBtn}>
                     <Plus size={16} /> Add Center
+                </div>
+            </div>
+
+            {/* Photo Management Panel */}
+            <div style={styles.photoPanel}>
+                <div style={styles.photoPanelHeader}>
+                    <h3 style={styles.photoPanelTitle}>📷 Evacuation Center Photo Management</h3>
+                    <p style={styles.photoPanelSub}>Assign and manage representative photos for each barangay's evacuation center</p>
+                </div>
+                <div style={styles.photoPanelBody}>
+                    <div style={styles.photoForm}>
+                        <div style={styles.photoField}>
+                            <label style={styles.photoLabel}>Select Barangay</label>
+                            <select
+                                style={styles.photoSelect}
+                                value={photoBarangay}
+                                onChange={(e) => {
+                                    setPhotoBarangay(e.target.value)
+                                    setPhotoFile(null)
+                                    setPhotoPreview(null)
+                                    setPhotoMessage(null)
+                                    setPhotoError(null)
+                                }}
+                            >
+                                <option value="">Select a barangay...</option>
+                                {barangays.map((b) => (
+                                    <option key={b.id} value={b.name}>{b.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div style={styles.photoField}>
+                            <label style={styles.photoLabel}>Upload Photo</label>
+                            <div style={styles.fileInputWrapper}>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handlePhotoChange}
+                                    id="evac-photo-upload"
+                                    style={styles.fileInputHidden}
+                                />
+                                <label htmlFor="evac-photo-upload" style={styles.fileInputBtn}>
+                                    Choose Photo File
+                                </label>
+                                <span style={styles.fileInputName}>
+                                    {photoFile ? photoFile.name : "No file chosen"}
+                                </span>
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={handleSavePhoto}
+                            disabled={photoSaving || !photoFile}
+                            style={{
+                                ...styles.savePhotoBtn,
+                                opacity: (photoSaving || !photoFile) ? 0.6 : 1,
+                                cursor: (photoSaving || !photoFile) ? "not-allowed" : "pointer"
+                            }}
+                        >
+                            {photoSaving ? "Saving..." : "Save Photo"}
+                        </button>
+
+                        {photoMessage && <div style={styles.photoSuccess}>{photoMessage}</div>}
+                        {photoError && <div style={styles.photoError}>{photoError}</div>}
+                    </div>
+
+                    <div style={styles.photoPreviewPane}>
+                        <div style={styles.photoPreviewLabel}>Image Preview</div>
+                        {photoLoading ? (
+                            <div style={styles.previewFallback}>Loading current photo...</div>
+                        ) : photoPreview ? (
+                            <div style={styles.previewContainer}>
+                                <img src={photoPreview} alt="Local Preview" style={styles.previewImg} />
+                                <span style={styles.previewTagLocal}>New Upload Preview</span>
+                            </div>
+                        ) : savedPhotoUrl ? (
+                            <>
+                                <div style={styles.previewContainer}>
+                                    <img src={savedPhotoUrl} alt="Current Saved" style={styles.previewImg} />
+                                    <span style={styles.previewTagSaved}>Current Saved Photo</span>
+                                </div>
+                                <div style={styles.photoActions}>
+                                    <button
+                                        type="button"
+                                        onClick={handleEditPhoto}
+                                        style={styles.editPhotoBtn}
+                                    >
+                                        <Pencil size={13} /> Edit Photo
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleDeletePhoto}
+                                        disabled={photoSaving}
+                                        style={{
+                                            ...styles.deletePhotoBtn,
+                                            opacity: photoSaving ? 0.6 : 1,
+                                            cursor: photoSaving ? "not-allowed" : "pointer",
+                                        }}
+                                    >
+                                        <Trash2 size={13} /> {photoSaving ? "Deleting..." : "Delete Photo"}
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div style={styles.previewPlaceholder}>
+                                <div>No photo uploaded yet</div>
+                                <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>
+                                    Select a barangay and upload a photo to get started
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -289,4 +529,215 @@ const styles = {
     input: { width: "100%", padding: "9px 11px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, boxSizing: "border-box" },
     cancelBtn: { padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer", color: "#666", border: "1px solid #ddd" },
     saveBtn: { padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "#1a237e", color: "#fff" },
+    photoPanel: {
+        background: "#fff",
+        borderRadius: 12,
+        border: "1px solid #e8ecf0",
+        padding: 20,
+        marginBottom: 20,
+        boxShadow: "0 2px 12px rgba(0,0,0,0.02)",
+    },
+    photoPanelHeader: {
+        marginBottom: 16,
+        borderBottom: "1px solid #f0f0f0",
+        paddingBottom: 12,
+    },
+    photoPanelTitle: {
+        margin: 0,
+        fontSize: 15,
+        fontWeight: 700,
+        color: "#1a237e",
+    },
+    photoPanelSub: {
+        margin: "4px 0 0",
+        fontSize: 12,
+        color: "#666",
+    },
+    photoPanelBody: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 24,
+        alignItems: "start",
+    },
+    photoForm: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+    },
+    photoField: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+    },
+    photoLabel: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#444",
+    },
+    photoSelect: {
+        padding: "9px 11px",
+        border: "1px solid #ddd",
+        borderRadius: 8,
+        fontSize: 13,
+        outline: "none",
+        background: "#fff",
+    },
+    fileInputWrapper: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+    },
+    fileInputHidden: {
+        display: "none",
+    },
+    fileInputBtn: {
+        padding: "8px 14px",
+        background: "#f0f4ff",
+        color: "#1a237e",
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
+        border: "1px solid #d0dcf0",
+        textAlign: "center",
+        transition: "all 0.15s",
+    },
+    fileInputName: {
+        fontSize: 12,
+        color: "#666",
+        textOverflow: "ellipsis",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
+        flex: 1,
+    },
+    savePhotoBtn: {
+        padding: "10px 16px",
+        background: "linear-gradient(135deg, #1a237e, #1565c0)",
+        color: "#fff",
+        border: "none",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: 600,
+        cursor: "pointer",
+        textAlign: "center",
+        boxShadow: "0 2px 8px rgba(26, 35, 126, 0.2)",
+        alignSelf: "start",
+    },
+    photoSuccess: {
+        background: "#e1f5ee",
+        color: "#085041",
+        padding: "8px 12px",
+        borderRadius: 6,
+        fontSize: 12,
+        marginTop: 6,
+    },
+    photoError: {
+        background: "#fcebeb",
+        color: "#a32d2d",
+        padding: "8px 12px",
+        borderRadius: 6,
+        fontSize: 12,
+        marginTop: 6,
+    },
+    photoPreviewPane: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+    },
+    photoPreviewLabel: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: "#444",
+    },
+    previewPlaceholder: {
+        height: 180,
+        borderRadius: 8,
+        border: "1.5px dashed #ccc",
+        background: "#fafafa",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#888",
+        fontSize: 12,
+    },
+    previewFallback: {
+        height: 180,
+        borderRadius: 8,
+        border: "1px solid #e0e0e0",
+        background: "#fafafa",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#888",
+        fontSize: 12,
+    },
+    previewContainer: {
+        position: "relative",
+        borderRadius: 8,
+        overflow: "hidden",
+        border: "1px solid #e8ecf0",
+        height: 180,
+        background: "#000",
+    },
+    previewImg: {
+        width: "100%",
+        height: "100%",
+        objectFit: "contain",
+    },
+    previewTagLocal: {
+        position: "absolute",
+        bottom: 8,
+        right: 8,
+        background: "#ff9800",
+        color: "#fff",
+        padding: "2px 8px",
+        borderRadius: 4,
+        fontSize: 10,
+        fontWeight: 600,
+    },
+    previewTagSaved: {
+        position: "absolute",
+        bottom: 8,
+        right: 8,
+        background: "#4caf50",
+        color: "#fff",
+        padding: "2px 8px",
+        borderRadius: 4,
+        fontSize: 10,
+        fontWeight: 600,
+    },
+    photoActions: {
+        display: "flex",
+        gap: 8,
+        marginTop: 8,
+    },
+    editPhotoBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "7px 14px",
+        background: "#f0f4ff",
+        color: "#1a237e",
+        border: "1px solid #d0dcf0",
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "all 0.15s",
+    },
+    deletePhotoBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "7px 14px",
+        background: "#fcebeb",
+        color: "#a32d2d",
+        border: "1px solid #f0d0d0",
+        borderRadius: 8,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "all 0.15s",
+    },
 }

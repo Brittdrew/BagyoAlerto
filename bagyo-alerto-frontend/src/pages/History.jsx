@@ -3,7 +3,6 @@ import axios from "axios"
 import { useNavigate } from "react-router-dom"
 import { Tornado, BarChart2, Clock, RefreshCw, Download, Search, Loader, AlertTriangle, Inbox, MapPin, School, Trash2 } from "lucide-react"
 import Sidebar from "../components/Sidebar"
-import BagyoBot from "../components/BagyoBot"
 
 const API_BASE = "http://127.0.0.1:8000/api"
 const PAGE_SIZE = 8
@@ -541,7 +540,6 @@ export default function History() {
                     </div>
                 </main>
             </div>
-            <BagyoBot />
         </div>
     )
 }

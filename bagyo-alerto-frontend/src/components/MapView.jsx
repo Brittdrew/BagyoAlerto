@@ -74,6 +74,8 @@ async function getRoute(startLat, startLng, endLat, endLng) {
     return null
 }
 
+const API_BASE = "http://127.0.0.1:8000/api"
+
 export default function MapView({ evacuationCenter, barangay }) {
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
@@ -81,9 +83,8 @@ export default function MapView({ evacuationCenter, barangay }) {
     const [routeCoords, setRouteCoords] = useState([])
     const [routeDistance, setRouteDistance] = useState(null)
     const [driveMinutes, setDriveMinutes] = useState(null)
-    const [streetViewError, setStreetViewError] = useState(false)
-    const [streetViewLoading, setStreetViewLoading] = useState(true)
-    const [streetViewCoords, setStreetViewCoords] = useState(null)
+    const [photoUrl, setPhotoUrl] = useState(null)
+    const [photoLoading, setPhotoLoading] = useState(true)
 
     const startLat = Number(barangay?.latitude)
     const startLng = Number(barangay?.longitude)
@@ -137,61 +138,44 @@ export default function MapView({ evacuationCenter, barangay }) {
 
     useEffect(() => {
         let active = true
-
-        const loadStreetView = async () => {
-            setStreetViewLoading(true)
-            setStreetViewError(false)
-            setStreetViewCoords(null)
-
-            const lat = Number(evacuationCenter?.latitude)
-            const lng = Number(evacuationCenter?.longitude)
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                setStreetViewError(true)
-                setStreetViewLoading(false)
+        const fetchPhoto = async () => {
+            if (!barangay?.name) {
+                setPhotoLoading(false)
                 return
             }
-
-            const apiKey = "AIzaSyC9j536SRmPcVLYxWlgdeFHLIYr5nwdrIM"
-            const radii = [50, 200, 500, 1000]
-
+            setPhotoLoading(true)
             try {
-                for (const radius of radii) {
-                    const metadataUrl = `https://maps.googleapis.com/maps/api/streetview/metadata?location=${lat},${lng}&radius=${radius}&source=outdoor&key=${apiKey}`
-                    const response = await fetch(metadataUrl)
-                    const data = await response.json()
-                    if (!active) return
-
-                    if (data?.status === "OK" && data?.location?.lat && data?.location?.lng) {
-                        setStreetViewCoords({
-                            lat: data.location.lat,
-                            lng: data.location.lng,
-                        })
-                        setStreetViewLoading(false)
-                        return
-                    }
-                }
-
-                setStreetViewError(true)
-            } catch {
+                const response = await fetch(`${API_BASE}/evacuation-centers/photo/${encodeURIComponent(barangay.name)}`)
                 if (!active) return
-                setStreetViewError(true)
+                if (response.ok) {
+                    const data = await response.json()
+                    if (data && data.image_path) {
+                        const path = data.image_path
+                        const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+                        setPhotoUrl(fullUrl)
+                    } else {
+                        setPhotoUrl(null)
+                    }
+                } else {
+                    setPhotoUrl(null)
+                }
+            } catch (err) {
+                if (active) {
+                    setPhotoUrl(null)
+                }
             } finally {
-                if (active) setStreetViewLoading(false)
+                if (active) {
+                    setPhotoLoading(false)
+                }
             }
         }
-
-        loadStreetView()
-
+        fetchPhoto()
         return () => {
             active = false
         }
-    }, [evacuationCenter?.latitude, evacuationCenter?.longitude])
+    }, [barangay?.name])
 
-    const streetViewUrl = streetViewCoords
-        ? `https://maps.googleapis.com/maps/api/streetview?size=600x250&location=${streetViewCoords.lat},${streetViewCoords.lng}&heading=151.78&pitch=-0.76&source=outdoor&key=AIzaSyC9j536SRmPcVLYxWlgdeFHLIYr5nwdrIM`
-        : ""
     const navUrl = `https://www.google.com/maps/search/?api=1&query=${evacuationCenter.latitude},${evacuationCenter.longitude}`
-    const streetViewMapsUrl = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${streetViewCoords?.lat ?? evacuationCenter.latitude},${streetViewCoords?.lng ?? evacuationCenter.longitude}`
 
     const walkMinutes = driveMinutes ? Math.round(driveMinutes * 4) : null
 
@@ -220,8 +204,8 @@ export default function MapView({ evacuationCenter, barangay }) {
             </div>
 
             <div style={styles.mapWrap}>
-                {!mapReady && <div style={styles.loadingOverlay}>??? Loading map...</div>}
-                {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 52 : 0 }}>?? Fetching route...</div>}
+                {!mapReady && <div style={styles.loadingOverlay}>⏳ Loading map...</div>}
+                {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 52 : 0 }}>🧭 Fetching route...</div>}
                 <MapContainer
                     center={center}
                     zoom={15}
@@ -240,16 +224,16 @@ export default function MapView({ evacuationCenter, barangay }) {
                     />
                     <Marker position={[startLat, startLng]} icon={barangayIcon}>
                         <Popup>
-                            ?? <strong>Your Location</strong><br />
+                            📍 <strong>Your Location</strong><br />
                             Barangay {barangay.name}, Surigao City
                         </Popup>
                     </Marker>
                     <Marker position={[endLat, endLng]} icon={evacuationIcon}>
                         <Popup>
-                            ?? <strong>{evacuationCenter.name}</strong><br />
-                            ?? {evacuationCenter.address}<br />
-                            ?? Capacity: {evacuationCenter.capacity} persons<br />
-                            ? Active Evacuation Center
+                            🏫 <strong>{evacuationCenter.name}</strong><br />
+                            📍 {evacuationCenter.address}<br />
+                            👥 Capacity: {evacuationCenter.capacity} persons<br />
+                            🟢 Active Evacuation Center
                         </Popup>
                     </Marker>
                     {routeCoords.length > 1 && (
@@ -262,39 +246,39 @@ export default function MapView({ evacuationCenter, barangay }) {
             </div>
 
             <div style={styles.infoStrip}>
-                <div style={styles.infoItem}>?? Distance: <strong>{routeDistance ? `${routeDistance} km` : "—"}</strong></div>
-                <div style={styles.infoItem}>?? Drive: <strong>{driveMinutes ? `${driveMinutes} mins` : "—"}</strong></div>
-                <div style={styles.infoItem}>?? Walk: <strong>{walkMinutes ? `${walkMinutes} mins` : "—"}</strong></div>
+                <div style={styles.infoItem}>📏 Distance: <strong>{routeDistance ? `${routeDistance} km` : "—"}</strong></div>
+                <div style={styles.infoItem}>🚗 Drive: <strong>{driveMinutes ? `${driveMinutes} mins` : "—"}</strong></div>
+                <div style={styles.infoItem}>🚶 Walk: <strong>{walkMinutes ? `${walkMinutes} mins` : "—"}</strong></div>
             </div>
 
             <div style={styles.streetCard}>
-                <div style={styles.streetTitle}>{"\uD83D\uDCF7"} Evacuation Center — Street View</div>
-                <div style={styles.streetSub}>Ground level view of your evacuation destination</div>
-                {streetViewLoading ? (
-                    <div style={styles.streetFallback}>Looking for nearby Street View...</div>
-                ) : !streetViewError && streetViewUrl ? (
+                <div style={styles.streetTitle}>📷 Evacuation Center Photo</div>
+                <div style={styles.streetSub}>Representative photo of your evacuation destination</div>
+                {photoLoading ? (
+                    <div style={styles.streetFallback}>Loading photo...</div>
+                ) : photoUrl ? (
                     <img
-                        src={streetViewUrl}
-                        alt="Evacuation center street view"
+                        src={photoUrl}
+                        alt="Evacuation center"
                         style={styles.streetImage}
-                        onError={() => setStreetViewError(true)}
+                        onError={() => setPhotoUrl(null)}
                     />
                 ) : (
                     <div style={styles.streetFallback}>
-                        <div>No Street View nearby.</div>
-                        <div style={styles.streetFallbackSub}>Use the button below to open this location in Google Maps.</div>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>Photo coming soon</div>
+                        <div style={styles.streetFallbackSub}>An image of this evacuation center will be uploaded by the admin soon.</div>
                     </div>
                 )}
-                <div style={styles.streetCaption}>?? {evacuationCenter.name} — {evacuationCenter.address}</div>
+                <div style={styles.streetCaption}>ℹ️ {evacuationCenter.name} — {evacuationCenter.address}</div>
             </div>
 
             <button
                 type="button"
                 style={styles.navBtn}
-                onClick={() => window.open(streetViewError ? streetViewMapsUrl : navUrl, "_blank", "noopener,noreferrer")}
+                onClick={() => window.open(navUrl, "_blank", "noopener,noreferrer")}
             >
                 <Navigation size={16} />
-                {"\uD83E\uDDED"} {streetViewError ? "Open Street View in Google Maps" : "Open in Google Maps"}
+                {"\uD83E\uDDED"} Open in Google Maps
             </button>
         </div>
     )
@@ -410,8 +394,10 @@ const styles = {
         height: 250,
         borderRadius: 10,
         border: "0.5px solid #dbe3ef",
-        display: "grid",
-        placeItems: "center",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
         color: "#8b95a7",
         fontSize: 12,
         background: "#f8fafc",
