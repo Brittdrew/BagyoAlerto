@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import axios from "axios"
-import { Loader, Inbox, Filter, Radio, RefreshCw } from "lucide-react"
+import { Loader, Inbox, Filter, Radio, RefreshCw, Download } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
@@ -55,6 +55,48 @@ export default function AdminHistory() {
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
         : null
 
+    // --- Color helpers for temperature & humidity ---
+    const getTempColor = (val) => {
+        if (val == null) return "#999"
+        const t = parseFloat(val)
+        if (t < 20) return "#1565c0"
+        if (t <= 32) return "#1a1a2e"
+        if (t <= 36) return "#D85A30"
+        return "#A32D2D"
+    }
+    const getHumidColor = (val) => {
+        if (val == null) return "#999"
+        const h = parseFloat(val)
+        if (h < 60) return "#1a1a2e"
+        if (h <= 75) return "#EF9F27"
+        if (h <= 90) return "#D85A30"
+        return "#A32D2D"
+    }
+
+    // --- CSV Export ---
+    const handleExportCSV = () => {
+        const headers = ["ID", "Barangay", "Severity", "Wind (km/h)", "Rainfall (mm)", "Pressure (hPa)", "Temperature (°C)", "Humidity (%)", "Evacuation Center"]
+        const rows = filtered.map((rec) => [
+            rec.id,
+            rec.barangay?.name || "-",
+            (SEV[rec.typhoon_log?.severity_level] || SEV.low).label,
+            rec.typhoon_log?.wind_speed ?? "-",
+            rec.typhoon_log?.rainfall ?? "-",
+            rec.typhoon_log?.pressure ?? "-",
+            rec.typhoon_log?.temperature != null ? `${parseFloat(rec.typhoon_log.temperature).toFixed(1)}` : "-",
+            rec.typhoon_log?.humidity != null ? `${parseFloat(rec.typhoon_log.humidity).toFixed(1)}` : "-",
+            rec.evacuation_center?.name || "-",
+        ])
+        const csvContent = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(",")).join("\n")
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `bagyo-alerto-history-${new Date().toISOString().slice(0, 10)}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+    }
+
     const filtered = useMemo(() => {
         if (sevFilter === "all") return logs
         return logs.filter((l) => l.typhoon_log?.severity_level === sevFilter)
@@ -106,7 +148,12 @@ export default function AdminHistory() {
                         </div>
                     ))}
                 </div>
-                <div style={styles.count}>{filtered.length} record{filtered.length !== 1 ? "s" : ""}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={styles.count}>{filtered.length} record{filtered.length !== 1 ? "s" : ""}</div>
+                    <button onClick={handleExportCSV} disabled={filtered.length === 0} style={{ ...styles.exportBtn, opacity: filtered.length === 0 ? 0.4 : 1 }}>
+                        <Download size={13} /> Export CSV
+                    </button>
+                </div>
             </div>
 
             {error && <div style={styles.errorBox}>{error}</div>}
@@ -129,11 +176,13 @@ export default function AdminHistory() {
                                 <tr>
                                     <th style={styles.th}>ID</th>
                                     <th style={styles.th}>Barangay</th>
-                                    <th style={styles.th}>Evacuation Center</th>
                                     <th style={styles.th}>Severity</th>
                                     <th style={styles.th}>Wind (km/h)</th>
                                     <th style={styles.th}>Rainfall (mm)</th>
                                     <th style={styles.th}>Pressure (hPa)</th>
+                                    <th style={styles.th}>Temp. (°C)</th>
+                                    <th style={styles.th}>Humidity (%)</th>
+                                    <th style={styles.th}>Evac. Center</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -143,8 +192,7 @@ export default function AdminHistory() {
                                     return (
                                         <tr key={rec.id} style={styles.tr}>
                                             <td style={styles.td}>#{rec.id}</td>
-                                            <td style={styles.td}>{rec.barangay?.name || "-"}</td>
-                                            <td style={styles.td}>{rec.evacuation_center?.name || "-"}</td>
+                                            <td style={styles.td}>{rec.barangay?.name || "—"}</td>
                                             <td style={styles.td}>
                                                 <span
                                                     style={{
@@ -156,9 +204,16 @@ export default function AdminHistory() {
                                                     {cfg.label}
                                                 </span>
                                             </td>
-                                            <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "-"}</td>
-                                            <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "-"}</td>
-                                            <td style={styles.td}>{rec.typhoon_log?.pressure ?? "-"}</td>
+                                            <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "—"}</td>
+                                            <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "—"}</td>
+                                            <td style={styles.td}>{rec.typhoon_log?.pressure ?? "—"}</td>
+                                            <td style={{ ...styles.td, fontWeight: 600, color: getTempColor(rec.typhoon_log?.temperature) }}>
+                                                {rec.typhoon_log?.temperature != null ? `${parseFloat(rec.typhoon_log.temperature).toFixed(1)}°C` : "—"}
+                                            </td>
+                                            <td style={{ ...styles.td, fontWeight: 600, color: getHumidColor(rec.typhoon_log?.humidity) }}>
+                                                {rec.typhoon_log?.humidity != null ? `${parseFloat(rec.typhoon_log.humidity).toFixed(1)}%` : "—"}
+                                            </td>
+                                            <td style={styles.td}>{rec.evacuation_center?.name || "—"}</td>
                                         </tr>
                                     )
                                 })}
@@ -286,5 +341,18 @@ const styles = {
         color: "#555",
         cursor: "pointer",
         fontWeight: 500,
+    },
+    exportBtn: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "5px 12px",
+        borderRadius: 6,
+        border: "1px solid #c5cae9",
+        background: "#f0f4ff",
+        color: "#1a237e",
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer",
     },
 }

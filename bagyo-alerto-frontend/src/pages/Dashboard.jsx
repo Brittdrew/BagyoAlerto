@@ -3,13 +3,13 @@ import axios from "axios"
 import Select from "react-select"
 import { useNavigate } from "react-router-dom"
 import MapView from "../components/MapView"
-import WeatherTicker from "../components/WeatherTicker"
+
 import Sidebar from "../components/Sidebar"
 
 import { 
     Tornado, BarChart2, Clock, AlertTriangle, Info, Wind, 
     CloudRain, Gauge, Map, Edit3, Search, Route, Satellite, 
-    Radio, Loader, MapPin
+    Loader, MapPin, Thermometer, Droplets
 } from "lucide-react"
 
 // --- Constants ---------------------------------------------------------------
@@ -29,12 +29,7 @@ const RISK_COLORS = {
     low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D",
 }
 
-// Wind thresholds for trend bar color
-function windBarColor(v) {
-    if (v > 118) return "#E24B4A"
-    if (v > 88) return "#EF9F27"
-    return "#378ADD"
-}
+
 
 // --- Sub-components ----------------------------------------------------------
 
@@ -87,29 +82,71 @@ function TrendChart({ data }) {
       type: "bar",
       data: {
         labels: data.map(d => d.time),
-        datasets: [{
-          data: data.map(d => d.wind),
-          backgroundColor: data.map(d =>
-            d.wind >= 118 ? "#E24B4A" :
-            d.wind >= 88  ? "#EF9F27" :
-            "#378ADD"
-          ),
-          borderRadius: 4,
-          borderSkipped: false,
-        }]
+        datasets: [
+          {
+            type: "bar",
+            label: "Wind Speed",
+            data: data.map(d => d.wind),
+            backgroundColor: data.map(d =>
+              d.wind >= 118 ? "#E24B4A" :
+              d.wind >= 88  ? "#EF9F27" :
+              "#378ADD"
+            ),
+            borderRadius: 4,
+            borderSkipped: false,
+            yAxisID: "yWind",
+          },
+          {
+            type: "line",
+            label: "Temperature",
+            data: data.map(d => d.temp),
+            borderColor: "#EF9F27",
+            borderWidth: 2,
+            tension: 0.3,
+            fill: false,
+            pointBackgroundColor: "#EF9F27",
+            pointRadius: 3,
+            yAxisID: "yTemp",
+          }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: {
-          callbacks: { label: ctx => ` ${ctx.parsed.y} km/h` }
-        }},
+        plugins: {
+          legend: {
+            display: true,
+            position: "top",
+            labels: {
+              boxWidth: 10,
+              font: { size: 10 },
+              color: "#666"
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: context => {
+                const label = context.dataset.label || "";
+                const val = context.parsed.y;
+                return ` ${label}: ${val} ${context.dataset.yAxisID === "yWind" ? "km/h" : "°C"}`;
+              }
+            }
+          }
+        },
         scales: {
           x: { grid: { display: false }, ticks: { font: { size: 11 }, color: "#aaa" } },
-          y: {
+          yWind: {
+            type: "linear",
+            position: "left",
             grid: { color: "rgba(0,0,0,0.05)" },
             ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " km/h" },
             min: 0,
+          },
+          yTemp: {
+            type: "linear",
+            position: "right",
+            grid: { display: false },
+            ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " °C" }
           }
         }
       }
@@ -124,16 +161,16 @@ function TrendChart({ data }) {
     </div>
   )
 
-  return <div style={{ position: "relative", width: "100%", height: 120 }}>
-    <canvas ref={chartRef} role="img" aria-label="6-hour wind speed bar chart" />
+  return <div style={{ position: "relative", width: "100%", height: 140 }}>
+    <canvas ref={chartRef} role="img" aria-label="6-hour wind speed & temperature chart" />
   </div>
 }
 
-function SeverityGauge({ severity, confidence }) {
+function SeverityGauge({ severity, score }) {
     const cfg = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.low
-    const score = cfg.score
+    const displayScore = score ?? cfg.score
     // Gauge arc: total arc length ~141, offset controls fill
-    const filled = Math.round((score / 100) * 141)
+    const filled = Math.round((displayScore / 100) * 141)
     const offset = 141 - filled
 
     return (
@@ -143,14 +180,14 @@ function SeverityGauge({ severity, confidence }) {
                     <path d="M10 65 A45 45 0 0 1 100 65" fill="none" stroke="#f0f0f0" strokeWidth={9} strokeLinecap="round" />
                     <path d="M10 65 A45 45 0 0 1 100 65" fill="none" stroke={cfg.gaugeColor} strokeWidth={9} strokeLinecap="round"
                         strokeDasharray="141" strokeDashoffset={offset} style={{ transition: "stroke-dashoffset 0.6s ease" }} />
-                    <text x="55" y="55" textAnchor="middle" fontSize={18} fontWeight={600} fill={cfg.color}>{score}</text>
+                    <text x="55" y="55" textAnchor="middle" fontSize={18} fontWeight={600} fill={cfg.color}>{displayScore}</text>
                 </svg>
             </div>
             <div style={{ fontSize: 13, fontWeight: 600, color: cfg.color, textAlign: "center", lineHeight: 1.3 }}>
                 {cfg.label}
             </div>
             <div style={{ fontSize: 11, color: "#888", textAlign: "center", margin: "3px 0 6px" }}>
-                PAGASA {cfg.signal} · AI confidence: {confidence ?? "—"}%
+                PAGASA {cfg.signal} · 5-factor weighted score
             </div>
         </div>
     )
@@ -278,7 +315,7 @@ export default function Dashboard() {
 
     const [barangays, setBarangays] = useState([])
     const [selectedBarangay, setSelectedBarangay] = useState(null)
-    const [formData, setFormData] = useState({ wind_speed: "", rainfall: "", pressure: "", barangay_id: null })
+    const [formData, setFormData] = useState({ wind_speed: "", rainfall: "", pressure: "", temperature: "", humidity: "", barangay_id: null })
     const [weatherLoading, setWeatherLoading] = useState(false)
     const [weatherFetched, setWeatherFetched] = useState(false)
     const [lastUpdated, setLastUpdated] = useState(null)
@@ -288,7 +325,7 @@ export default function Dashboard() {
     const [assessError, setAssessError] = useState(null)
     const [recentLogs, setRecentLogs] = useState([])
     const [showMap, setShowMap] = useState(false)
-    const [sidebarActive, setSidebarActive] = useState("dashboard")
+
 
     const weatherTimer = useRef(null)
 
@@ -313,10 +350,11 @@ export default function Dashboard() {
         fetchRecentLogs()
 
         return () => { if (weatherTimer.current) clearInterval(weatherTimer.current) }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // -- Fetch live weather ------------------------------------------------------
-    const fetchWeather = async (option) => {
+    async function fetchWeather(option) {
         if (!option?.latitude || !option?.longitude) return
         setWeatherLoading(true)
         setWeatherFetched(false)
@@ -325,12 +363,12 @@ export default function Dashboard() {
                 axios.get(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&current=wind_speed_10m,precipitation,surface_pressure`
+                    `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,rain,surface_pressure`
                 ),
                 axios.get(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&hourly=wind_speed_10m&forecast_days=1`
+                    `&hourly=wind_speed_10m,temperature_2m&forecast_days=1`
                 ),
             ])
 
@@ -338,8 +376,10 @@ export default function Dashboard() {
             setFormData(f => ({
                 ...f,
                 wind_speed: cur.wind_speed_10m.toFixed(1),
-                rainfall: cur.precipitation.toFixed(1),
+                rainfall: cur.rain.toFixed(1),
                 pressure: cur.surface_pressure.toFixed(1),
+                temperature: cur.temperature_2m.toFixed(1),
+                humidity: cur.relative_humidity_2m.toFixed(1),
             }))
             setLastUpdated(new Date())
             setWeatherFetched(true)
@@ -351,7 +391,11 @@ export default function Dashboard() {
             for (let i = 5; i >= 0; i--) {
                 const h = ((nowH - i) + 24) % 24
                 const label = h === nowH ? "Now" : `${h % 12 || 12}${h < 12 ? "am" : "pm"}`
-                points.push({ time: label, wind: parseFloat(hourly.wind_speed_10m[h]?.toFixed(1) || 0) })
+                points.push({
+                    time: label,
+                    wind: parseFloat(hourly.wind_speed_10m[h]?.toFixed(1) || 0),
+                    temp: parseFloat(hourly.temperature_2m[h]?.toFixed(1) || 0)
+                })
             }
             setTrendData(points)
 
@@ -366,7 +410,7 @@ export default function Dashboard() {
     }
 
     // -- Fetch recent history ----------------------------------------------------
-    const fetchRecentLogs = async () => {
+    async function fetchRecentLogs() {
         try {
             const res = await axios.get(`${API_BASE}/recommendations`)
             setRecentLogs(res.data.slice(0, 4))
@@ -408,14 +452,47 @@ export default function Dashboard() {
     const wind = parseFloat(formData.wind_speed) || 0
     const rain = parseFloat(formData.rainfall) || 0
     const pressure = parseFloat(formData.pressure) || 0
+    const temperature = parseFloat(formData.temperature) || 0
+    const humidity = parseFloat(formData.humidity) || 0
 
-    const windPct = Math.min(100, Math.round((wind / 200) * 100))
-    const rainPct = Math.min(100, Math.round((rain / 50) * 100))
-    const pressurePct = pressure > 0 ? Math.min(100, Math.round(((1020 - pressure) / (1020 - 900)) * 100)) : 0
+    // Raw progress-bar percentages (for MetricCard fill bars)
+    const windPct      = Math.min(100, Math.round((wind / 200) * 100))
+    const rainPct      = Math.min(100, Math.round((rain / 50) * 100))
+    const pressurePct  = pressure > 0 ? Math.min(100, Math.round(((1020 - pressure) / (1020 - 900)) * 100)) : 0
+    const temperaturePct = Math.min(100, Math.max(0, Math.round((temperature / 50) * 100)))
+    const humidityPct  = Math.min(100, Math.max(0, Math.round(humidity)))
+
+    // -- 5-factor weighted composite score (0-100) --------------------------------
+    // Weights: Wind 30%, Rainfall 30%, Pressure 20%, Temperature 10%, Humidity 10%
+    // Each factor is normalised to 0-100 before weighting.
+
+    // Temperature danger: <20°C or >36°C is dangerous, peak at extremes
+    const tempDangerPct = (() => {
+        if (temperature <= 0) return 0
+        if (temperature < 20)  return Math.round(((20 - temperature) / 20) * 60)   // cold stress 0-60%
+        if (temperature <= 32) return 0                                              // safe zone
+        if (temperature <= 36) return Math.round(((temperature - 32) / 4) * 60)    // heat stress 0-60%
+        return Math.min(100, Math.round(60 + ((temperature - 36) / 10) * 40))      // dangerous >36°C
+    })()
+
+    // Humidity danger: higher = worse during typhoon conditions
+    const humidDangerPct = (() => {
+        if (humidity < 60)  return 0
+        if (humidity <= 75) return Math.round(((humidity - 60) / 15) * 33)
+        if (humidity <= 90) return Math.round(33 + ((humidity - 75) / 15) * 34)
+        return Math.min(100, Math.round(67 + ((humidity - 90) / 10) * 33))
+    })()
+
+    const compositeScore = result ? Math.min(100, Math.round(
+        windPct      * 0.30 +
+        rainPct      * 0.30 +
+        pressurePct  * 0.20 +
+        tempDangerPct  * 0.10 +
+        humidDangerPct * 0.10
+    )) : null
 
     const severity = result?.severity || null
     const sevCfg = severity ? SEVERITY_CONFIG[severity] : null
-    const confidence = result?.confidence ?? null
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
@@ -579,6 +656,16 @@ export default function Dashboard() {
                                 trend={pressure > 0 && pressure < 990 ? "up" : null} trendLabel="Dropping"
                                 barPct={pressurePct} barColor={pressure < 970 ? "#E24B4A" : pressure < 990 ? "#EF9F27" : "#D85A30"}
                             />
+                            <MetricCard
+                                icon={<Thermometer size={15} />} color="#D85A30" bg="#FAECE7"
+                                label="Temperature" value={formData.temperature} unit="°C"
+                                barPct={temperaturePct} barColor="#D85A30"
+                            />
+                            <MetricCard
+                                icon={<Droplets size={15} />} color="#185FA5" bg="#E6F1FB"
+                                label="Humidity" value={formData.humidity} unit="%"
+                                barPct={humidityPct} barColor="#378ADD"
+                            />
                         </div>
 
                         {/* Trend chart + Severity gauge */}
@@ -602,11 +689,13 @@ export default function Dashboard() {
                                 </div>
                                 {result ? (
                                     <>
-                                        <SeverityGauge severity={severity} confidence={confidence} />
+                                        <SeverityGauge severity={severity} score={compositeScore} />
                                         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
                                             <FactorBar label="Wind" pct={windPct} color="#378ADD" />
                                             <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
                                             <FactorBar label="Pressure" pct={pressurePct} color="#D85A30" />
+                                            <FactorBar label="Temp" pct={tempDangerPct} color="#EF9F27" />
+                                            <FactorBar label="Humidity" pct={humidDangerPct} color="#185FA5" />
                                         </div>
                                     </>
                                 ) : (
@@ -742,7 +831,7 @@ const styles = {
 
 
     // Metrics
-    metricsRow: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 },
+    metricsRow: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 },
     metricCard: { background: "white", borderRadius: 10, border: "0.5px solid #e8ecf0", padding: "10px 13px" },
     metricIconRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
     metricIconBox: { width: 30, height: 30, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center" },

@@ -12,6 +12,8 @@ class TyphoonLog extends Model
         'wind_speed',
         'rainfall',
         'pressure',
+        'temperature',
+        'humidity',
         'severity_level'
     ];
 }

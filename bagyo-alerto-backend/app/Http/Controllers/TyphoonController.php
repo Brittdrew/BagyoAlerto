@@ -19,9 +19,11 @@ class TyphoonController extends Controller
             'barangay_id' => 'required|integer'
         ]);
 
-        $windSpeed = $request->wind_speed;
-        $rainfall  = $request->rainfall;
-        $pressure  = $request->pressure;
+        $windSpeed    = $request->wind_speed;
+        $rainfall     = $request->rainfall;
+        $pressure     = $request->pressure;
+        $temperature  = $request->temperature;
+        $humidity     = $request->humidity;
 
         // AI Severity Scoring Logic
         $severity = $this->calculateSeverity($windSpeed, $rainfall, $pressure);
@@ -31,6 +33,8 @@ class TyphoonController extends Controller
             'wind_speed'     => $windSpeed,
             'rainfall'       => $rainfall,
             'pressure'       => $pressure,
+            'temperature'    => $temperature,
+            'humidity'       => $humidity,
             'severity_level' => $severity
         ]);
 

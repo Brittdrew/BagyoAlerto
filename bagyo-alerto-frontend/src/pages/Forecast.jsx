@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import axios from "axios"
 import Select from "react-select"
 import Sidebar from "../components/Sidebar"
+import BagyoBot from "../components/BagyoBot"
 import { 
     Tornado, MapPin, Wind, CloudRain, Gauge, Droplets, 
     RefreshCw, AlertTriangle, Satellite, Thermometer 
@@ -31,6 +32,11 @@ const WX_DESC = (code) => {
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const RISK_COLORS = { low: "#1D9E75", moderate: "#EF9F27", high: "#D85A30", critical: "#E24B4A" }
+
+const getBarangayDisplayName = (barangay) => {
+    if (!barangay || !barangay.name) return ""
+    return barangay.name.replace(/^Barangay\s+/i, "").trim()
+}
 
 const selectStyles = {
     control: (provided) => ({
@@ -243,6 +249,12 @@ export default function Forecast() {
                     </div>
 
                     <div style={styles.content}>
+                        <h2 style={selectedBarangay ? styles.dynamicHeading : styles.placeholderHeading}>
+                            {selectedBarangay
+                                ? `Current Weather in ${getBarangayDisplayName(selectedBarangay)}`
+                                : "Select a Barangay to view forecast"}
+                        </h2>
+
                         {loading && (
                             <div style={styles.loadingBox}>
                                 <RefreshCw size={24} style={{ animation: "spin 1.5s linear infinite", color: "#185FA5", marginBottom: 8 }} />
@@ -352,6 +364,7 @@ export default function Forecast() {
                     </div>
                 </main>
             </div>
+            <BagyoBot />
         </div>
     )
 }
@@ -385,4 +398,19 @@ const styles = {
 
     sectionHeader: { fontSize: 12, fontWeight: 700, color: "#1a237e", textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 8 },
     forecastGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10 },
+    dynamicHeading: {
+        fontSize: "18px",
+        fontWeight: "700",
+        color: "#1a237e",
+        margin: "0 0 4px 0",
+        letterSpacing: "-0.01em",
+    },
+    placeholderHeading: {
+        fontSize: "18px",
+        fontWeight: "600",
+        color: "#6b7280",
+        margin: "0 0 4px 0",
+        fontStyle: "italic",
+        letterSpacing: "-0.01em",
+    },
 }
