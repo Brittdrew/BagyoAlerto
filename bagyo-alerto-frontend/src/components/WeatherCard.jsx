@@ -10,14 +10,20 @@ export default function WeatherCard({ icon, label, value, unit, name, onChange }
     
     // For pressure, lower = worse. For wind/rain, higher = worse.
     const isPressure = name === 'pressure'
-    const pct = t ? (isPressure
-        ? Math.min(100, Math.max(0, ((1020 - num) / (1020 - 940)) * 100))
-        : Math.min(100, (num / (t.danger * 1.3)) * 100)) : 0
+    const isTemperature = name === 'temperature'
+    
+    const pct = isTemperature
+        ? Math.min(100, Math.max(0, ((num - 20) / (45 - 20)) * 100))
+        : (t ? (isPressure
+            ? Math.min(100, Math.max(0, ((1020 - num) / (1020 - 940)) * 100))
+            : Math.min(100, (num / (t.danger * 1.3)) * 100)) : 0)
         
-    const barColor = !t || !num ? '#ddd'
-        : (isPressure ? num < t.danger : num > t.danger) ? '#dc3545'
-        : (isPressure ? num < t.warn  : num > t.warn)  ? '#fd7e14'
-        : '#28a745'
+    const barColor = isTemperature
+        ? (num < 25 ? '#378ADD' : num <= 32 ? '#28a745' : '#dc3545')
+        : (!t || !num ? '#ddd'
+            : (isPressure ? num < t.danger : num > t.danger) ? '#dc3545'
+            : (isPressure ? num < t.warn  : num > t.warn)  ? '#fd7e14'
+            : '#28a745')
 
     return (
         <div style={styles.card}>

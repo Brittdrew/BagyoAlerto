@@ -16,13 +16,33 @@ import {
 const API_BASE = "http://127.0.0.1:8000/api"
 const WEATHER_REFRESH = 10 * 60 * 1000 // 10 minutes
 import { RefreshCw } from "lucide-react"
+const OPEN_METEO_CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
+
+function pickCurrentMetric(current, keys) {
+    for (const key of keys) {
+        const value = current?.[key]
+        if (value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value))) {
+            return Number(value)
+        }
+    }
+    return null
+}
+
+function toFixedOrEmpty(value, digits = 1) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return ""
+    return Number(value).toFixed(digits)
+}
+
+function metricDisplay(value) {
+    return value === null || value === undefined || value === "" ? "N/A" : value
+}
 
 // --- Severity config (maps your backend severity_level to UI) ----------------
 const SEVERITY_CONFIG = {
-    low: { label: "Low — Tropical Depression", color: "#1D9E75", gaugeColor: "#1D9E75", score: 22, signal: "Signal #1", alertBg: "#E1F5EE", alertBorder: "#5DCAA5", alertText: "#085041", dot: "#5DCAA5" },
-    moderate: { label: "Moderate — Tropical Storm", color: "#BA7517", gaugeColor: "#EF9F27", score: 45, signal: "Signal #2", alertBg: "#FAEEDA", alertBorder: "#EF9F27", alertText: "#633806", dot: "#EF9F27" },
-    high: { label: "High — Typhoon", color: "#D85A30", gaugeColor: "#D85A30", score: 68, signal: "Signal #3", alertBg: "#FAECE7", alertBorder: "#F0997B", alertText: "#4A1B0C", dot: "#D85A30" },
-    critical: { label: "Critical — Super Typhoon", color: "#A32D2D", gaugeColor: "#E24B4A", score: 92, signal: "Signal #4–5", alertBg: "#FCEBEB", alertBorder: "#F09595", alertText: "#501313", dot: "#E24B4A" },
+    low: { label: "Low - Tropical Depression", color: "#1D9E75", gaugeColor: "#1D9E75", score: 22, signal: "Signal #1", alertBg: "#E1F5EE", alertBorder: "#5DCAA5", alertText: "#085041", dot: "#5DCAA5" },
+    moderate: { label: "Moderate - Tropical Storm", color: "#BA7517", gaugeColor: "#EF9F27", score: 45, signal: "Signal #2", alertBg: "#FAEEDA", alertBorder: "#EF9F27", alertText: "#633806", dot: "#EF9F27" },
+    high: { label: "High - Typhoon", color: "#D85A30", gaugeColor: "#D85A30", score: 68, signal: "Signal #3", alertBg: "#FAECE7", alertBorder: "#F0997B", alertText: "#4A1B0C", dot: "#D85A30" },
+    critical: { label: "Critical - Super Typhoon", color: "#A32D2D", gaugeColor: "#E24B4A", score: 92, signal: "Signal #4-5", alertBg: "#FCEBEB", alertBorder: "#F09595", alertText: "#501313", dot: "#E24B4A" },
 }
 
 const RISK_COLORS = {
@@ -44,6 +64,7 @@ function LiveDot() {
 }
 
 function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, barPct, barColor }) {
+    const noData = value === "N/A" || value === "—" || value === "-"
     return (
         <div style={styles.metricCard}>
             <div style={styles.metricIconRow}>
@@ -57,8 +78,8 @@ function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, ba
                 )}
             </div>
             <div>
-                <span style={styles.metricVal}>{value ?? "—"}</span>
-                <span style={styles.metricUnit}> {unit}</span>
+                <span style={styles.metricVal}>{value ?? "-"}</span>
+                {!noData && <span style={styles.metricUnit}> {unit}</span>}
             </div>
             <div style={styles.metricLabel}>{label}</div>
             <div style={styles.metricBarTrack}>
@@ -260,7 +281,7 @@ function EvacRoutes({ evacuationCenter, severity }) {
                         Capacity: {evacuationCenter.capacity?.toLocaleString()} persons
                     </div>
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>
-                        {needsEvac ? "Mandatory evacuation recommended" : "Standby — monitor conditions"}
+                        {needsEvac ? "Mandatory evacuation recommended" : "Standby - monitor conditions"}
                     </div>
                 </div>
             </div>
@@ -294,7 +315,7 @@ function RecentHistory({ logs }) {
                         <div style={{ width: 8, height: 8, borderRadius: "50%", background: sevColor[sev] || "#ccc", flexShrink: 0 }} />
                         <span style={{ color: "#aaa", minWidth: 70, fontSize: 11 }}>{dateStr}</span>
                         <span style={{ flex: 1, fontWeight: 500, fontSize: 11, color: "#333" }}>
-                            {log.barangay?.name || "—"}
+                            {log.barangay?.name || "-"}
                         </span>
                         <span style={{
                             fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
@@ -316,6 +337,7 @@ export default function Dashboard() {
     const [barangays, setBarangays] = useState([])
     const [selectedBarangay, setSelectedBarangay] = useState(null)
     const [formData, setFormData] = useState({ wind_speed: "", rainfall: "", pressure: "", temperature: "", humidity: "", barangay_id: null })
+    const [extraWeather, setExtraWeather] = useState({ wind_gusts: "N/A" })
     const [weatherLoading, setWeatherLoading] = useState(false)
     const [weatherFetched, setWeatherFetched] = useState(false)
     const [lastUpdated, setLastUpdated] = useState(null)
@@ -358,29 +380,50 @@ export default function Dashboard() {
         if (!option?.latitude || !option?.longitude) return
         setWeatherLoading(true)
         setWeatherFetched(false)
+        setFormData(f => ({
+            ...f,
+            wind_speed: "",
+            rainfall: "",
+            pressure: "",
+            temperature: "",
+            humidity: "",
+        }))
+        setExtraWeather({ wind_gusts: "N/A" })
         try {
             const [currentRes, hourlyRes] = await Promise.all([
                 axios.get(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,rain,surface_pressure`
+                    `&current=${OPEN_METEO_CURRENT_FIELDS}` +
+                    `&timezone=Asia%2FManila`
                 ),
                 axios.get(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&hourly=wind_speed_10m,temperature_2m&forecast_days=1`
+                    `&hourly=wind_speed_10m,temperature_2m&forecast_days=1` +
+                    `&timezone=Asia%2FManila`
                 ),
             ])
 
             const cur = currentRes.data.current
+            const windVal = pickCurrentMetric(cur, ["wind_speed_10m"])
+            const rainVal = pickCurrentMetric(cur, ["precipitation", "rain"])
+            const pressureVal = pickCurrentMetric(cur, ["surface_pressure"])
+            const temperatureVal = pickCurrentMetric(cur, ["temperature_2m"])
+            const humidityVal = pickCurrentMetric(cur, ["relativehumidity_2m", "relative_humidity_2m"])
+            const gustVal = pickCurrentMetric(cur, ["windgusts_10m"])
+
             setFormData(f => ({
                 ...f,
-                wind_speed: cur.wind_speed_10m.toFixed(1),
-                rainfall: cur.rain.toFixed(1),
-                pressure: cur.surface_pressure.toFixed(1),
-                temperature: cur.temperature_2m.toFixed(1),
-                humidity: cur.relative_humidity_2m.toFixed(1),
+                wind_speed: toFixedOrEmpty(windVal, 1),
+                rainfall: toFixedOrEmpty(rainVal, 1),
+                pressure: toFixedOrEmpty(pressureVal, 1),
+                temperature: toFixedOrEmpty(temperatureVal, 1),
+                humidity: toFixedOrEmpty(humidityVal, 1),
             }))
+            setExtraWeather({
+                wind_gusts: metricDisplay(toFixedOrEmpty(gustVal, 1)),
+            })
             setLastUpdated(new Date())
             setWeatherFetched(true)
 
@@ -404,6 +447,7 @@ export default function Dashboard() {
             weatherTimer.current = setInterval(() => fetchWeather(option), WEATHER_REFRESH)
 
         } catch {
+            setExtraWeather({ wind_gusts: "N/A" })
             console.error("Weather fetch failed")
         }
         setWeatherLoading(false)
@@ -459,7 +503,8 @@ export default function Dashboard() {
     const windPct      = Math.min(100, Math.round((wind / 200) * 100))
     const rainPct      = Math.min(100, Math.round((rain / 50) * 100))
     const pressurePct  = pressure > 0 ? Math.min(100, Math.round(((1020 - pressure) / (1020 - 900)) * 100)) : 0
-    const temperaturePct = Math.min(100, Math.max(0, Math.round((temperature / 50) * 100)))
+    const tempPct      = Math.min(100, Math.max(0, Math.round(((temperature - 20) / (45 - 20)) * 100)))
+    const temperaturePct = tempPct
     const humidityPct  = Math.min(100, Math.max(0, Math.round(humidity)))
 
     // -- 5-factor weighted composite score (0-100) --------------------------------
@@ -621,17 +666,17 @@ export default function Dashboard() {
 
 
 
-                        {/* Alert banner — shows after assessment */}
+                        {/* Alert banner - shows after assessment */}
                         {result && alertBanner()}
 
-                        {/* No assessment yet — info bar */}
+                        {/* No assessment yet - info bar */}
                         {!result && (
                             <div style={{ background: "#EBF3FB", border: "0.5px solid #B5D4F4", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
                                 <Info size={16} style={{ color: "#0C447C" }} />
                                 <div style={{ fontSize: 12, color: "#0C447C" }}>
                                     {weatherFetched
                                         ? `Live weather loaded for ${selectedBarangay?.name}. Press Assess to evaluate severity.`
-                                        : "Select a barangay — weather data loads automatically."}
+                                        : "Select a barangay - weather data loads automatically."}
                                 </div>
                             </div>
                         )}
@@ -640,32 +685,49 @@ export default function Dashboard() {
                         <div style={styles.metricsRow}>
                             <MetricCard
                                 icon={<Wind size={15} />} color="#185FA5" bg="#E6F1FB"
-                                label="Wind speed" value={formData.wind_speed} unit="km/h"
+                                label="Wind speed" value={metricDisplay(formData.wind_speed)} unit="km/h"
                                 trend={wind > 88 ? "up" : null} trendLabel={wind > 118 ? "Danger" : "Warning"}
                                 barPct={windPct} barColor={wind > 118 ? "#E24B4A" : wind > 88 ? "#EF9F27" : "#378ADD"}
                             />
                             <MetricCard
                                 icon={<CloudRain size={15} />} color="#3B6D11" bg="#EAF3DE"
-                                label="Rainfall rate" value={formData.rainfall} unit="mm/hr"
+                                label="Rainfall rate" value={metricDisplay(formData.rainfall)} unit="mm/hr"
                                 trend={rain > 15 ? "up" : null} trendLabel={rain > 30 ? "Heavy" : "Moderate"}
                                 barPct={rainPct} barColor={rain > 30 ? "#E24B4A" : rain > 15 ? "#EF9F27" : "#639922"}
                             />
                             <MetricCard
                                 icon={<Gauge size={15} />} color="#993C1D" bg="#FAECE7"
-                                label="Atmos. pressure" value={formData.pressure} unit="hPa"
+                                label="Atmos. pressure" value={metricDisplay(formData.pressure)} unit="hPa"
                                 trend={pressure > 0 && pressure < 990 ? "up" : null} trendLabel="Dropping"
                                 barPct={pressurePct} barColor={pressure < 970 ? "#E24B4A" : pressure < 990 ? "#EF9F27" : "#D85A30"}
                             />
                             <MetricCard
                                 icon={<Thermometer size={15} />} color="#D85A30" bg="#FAECE7"
-                                label="Temperature" value={formData.temperature} unit="°C"
+                                label="Temperature" value={metricDisplay(formData.temperature)} unit="°C"
                                 barPct={temperaturePct} barColor="#D85A30"
                             />
                             <MetricCard
                                 icon={<Droplets size={15} />} color="#185FA5" bg="#E6F1FB"
-                                label="Humidity" value={formData.humidity} unit="%"
+                                label="Humidity" value={metricDisplay(formData.humidity)} unit="%"
                                 barPct={humidityPct} barColor="#378ADD"
                             />
+                        </div>
+
+                        <div style={{ ...styles.card, padding: "9px 12px" }}>
+                            <div style={{ ...styles.cardHeader, marginBottom: 6 }}>
+                                <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
+                                    <Info size={13} style={{ color: "#555" }} /> Bonus weather details
+                                </div>
+                                <span style={{ fontSize: 11, color: "#888" }}>Open-Meteo current</span>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+                                <div style={{ background: "#f8f9fc", border: "1px solid #eef1f5", borderRadius: 8, padding: "8px 10px" }}>
+                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: 0.4 }}>Wind Gusts</div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a2e", marginTop: 2 }}>
+                                        {extraWeather.wind_gusts} {extraWeather.wind_gusts === "N/A" ? "" : "km/h"}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         {/* Trend chart + Severity gauge */}
@@ -675,7 +737,7 @@ export default function Dashboard() {
                                     <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
                                         <BarChart2 size={13} style={{ color: "#555" }} /> 6-hour wind trend
                                     </div>
-                                    <span onClick={() => navigate("/history")} style={styles.cardAction}>View history ›</span>
+                                    <span onClick={() => navigate("/history")} style={styles.cardAction}>View history &gt;</span>
                                 </div>
                                 <TrendChart data={trendData} />
                             </div>
@@ -694,8 +756,8 @@ export default function Dashboard() {
                                             <FactorBar label="Wind" pct={windPct} color="#378ADD" />
                                             <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
                                             <FactorBar label="Pressure" pct={pressurePct} color="#D85A30" />
-                                            <FactorBar label="Temp" pct={tempDangerPct} color="#EF9F27" />
-                                            <FactorBar label="Humidity" pct={humidDangerPct} color="#185FA5" />
+                                            <FactorBar label="Temp" pct={tempPct} color="#EF9F27" />
+                                            <FactorBar label="Humidity" pct={humidityPct} color="#185FA5" />
                                         </div>
                                     </>
                                 ) : (
@@ -707,7 +769,7 @@ export default function Dashboard() {
                             </div>
                         </div>
 
-                        {/* Manual input row — allows override */}
+                        {/* Manual input row - allows override */}
                         <div style={styles.card}>
                             <div style={styles.cardHeader}>
                                 <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
@@ -886,4 +948,7 @@ const selectStyles = {
     singleValue: b => ({ ...b, color: "#1a237e", fontWeight: 600, fontSize: 12 }),
     menu: b => ({ ...b, zIndex: 9999 }),
 }
+
+
+
 

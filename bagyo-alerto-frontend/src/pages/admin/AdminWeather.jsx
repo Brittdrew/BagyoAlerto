@@ -6,6 +6,8 @@ import {
     CloudRain,
     Gauge,
     Thermometer,
+    Droplets,
+    Zap,
     Inbox,
     Sun,
     CloudSun,
@@ -19,6 +21,7 @@ import AdminLayout from "../../components/AdminLayout"
 
 const API_BASE = "http://127.0.0.1:8000/api"
 const REFRESH_MS = 10 * 60 * 1000
+const CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
 
 const RISK_COLORS = {
     low: { bg: "#E1F5EE", color: "#085041", border: "#1D9E75" },
@@ -31,7 +34,7 @@ const SEV_STYLES = {
     low: { label: "LOW", signal: "Signal #1", color: "#1D9E75", bg: "#E1F5EE", border: "#1D9E75", text: "#085041" },
     moderate: { label: "MODERATE", signal: "Signal #2", color: "#BA7517", bg: "#FAEEDA", border: "#EF9F27", text: "#633806" },
     high: { label: "HIGH", signal: "Signal #3", color: "#D85A30", bg: "#FAECE7", border: "#D85A30", text: "#4A1B0C" },
-    critical: { label: "CRITICAL", signal: "Signal #4–5", color: "#E24B4A", bg: "#FCEBEB", border: "#E24B4A", text: "#501313" },
+    critical: { label: "CRITICAL", signal: "Signal #4-5", color: "#E24B4A", bg: "#FCEBEB", border: "#E24B4A", text: "#501313" },
 }
 
 function getWeatherIcon(code, size = 28) {
@@ -56,6 +59,44 @@ function getWeatherDesc(code) {
     return "Mild"
 }
 
+function readNumeric(current, keys) {
+    for (const key of keys) {
+        const value = current?.[key]
+        if (value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value))) {
+            return Number(value)
+        }
+    }
+    return null
+}
+
+function toFixedOrNA(value, digits = 1) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return "N/A"
+    return Number(value).toFixed(digits)
+}
+
+function clampPct(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return 0
+    return Math.min(100, Math.max(0, Math.round(Number(value))))
+}
+
+function getHumidityStyle(humidity) {
+    if (humidity === null || humidity === undefined || Number.isNaN(Number(humidity))) {
+        return { color: "#888", bar: "#d0d7de" }
+    }
+    if (humidity < 60) return { color: "#1D9E75", bar: "#1D9E75" }
+    if (humidity <= 80) return { color: "#BA7517", bar: "#EF9F27" }
+    return { color: "#D85A30", bar: "#D85A30" }
+}
+
+function getTemperatureStyle(temp) {
+    if (temp === null || temp === undefined || Number.isNaN(Number(temp))) {
+        return { color: "#888", bar: "#d0d7de" }
+    }
+    if (temp < 25) return { color: "#1565c0", bar: "#378ADD" }
+    if (temp <= 32) return { color: "#1D9E75", bar: "#1D9E75" }
+    return { color: "#D85A30", bar: "#D85A30" }
+}
+
 /** PAGASA wind-based AI severity (admin monitor thresholds) */
 function calculateWindSeverity(windKmh) {
     const w = parseFloat(windKmh) || 0
@@ -78,11 +119,11 @@ async function fetchBarangayWeather(barangay) {
     const url =
         `https://api.open-meteo.com/v1/forecast` +
         `?latitude=${barangay.latitude}&longitude=${barangay.longitude}` +
-        `&current=wind_speed_10m,precipitation,surface_pressure,temperature_2m,weathercode` +
+        `&current=${CURRENT_FIELDS}` +
         `&timezone=Asia%2FManila`
     const res = await axios.get(url)
     const current = res.data.current
-    const wind = current.wind_speed_10m
+    const wind = readNumeric(current, ["wind_speed_10m"]) ?? 0
     const severity = calculateWindSeverity(wind)
     return {
         status: "success",
@@ -94,7 +135,7 @@ async function fetchBarangayWeather(barangay) {
 }
 
 function formatTime(d) {
-    if (!d) return "—"
+    if (!d) return "-"
     return d.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 
@@ -115,7 +156,24 @@ function SkeletonCard() {
             </div>
             <div style={{ ...styles.skel, height: 36, borderRadius: 8, marginTop: 12 }} />
             <div style={{ fontSize: 12, color: "#888", marginTop: 12, textAlign: "center" }}>
-                ⏳ Fetching weather...
+                Fetching weather...
+            </div>
+        </div>
+    )
+}
+
+function MetricItem({ icon, label, value, unit, color = "#1a1a2e", barPct = 0, barColor = "#378ADD", span = 1 }) {
+    return (
+        <div style={{ ...styles.metricCell, gridColumn: `span ${span}` }}>
+            <div style={styles.metricLabel}>
+                {icon}
+                {label}
+            </div>
+            <div style={{ ...styles.metricValue, color }}>
+                {value} {value === "N/A" ? "" : unit}
+            </div>
+            <div style={styles.metricBarTrack}>
+                <div style={{ ...styles.metricBarFill, width: `${barPct}%`, background: barColor }} />
             </div>
         </div>
     )
@@ -151,7 +209,15 @@ function WeatherCard({ entry }) {
         )
     }
 
-    const code = weather.weathercode
+    const code = weather?.weathercode
+    const wind = readNumeric(weather, ["wind_speed_10m"])
+    const rain = readNumeric(weather, ["precipitation", "rain"])
+    const pressure = readNumeric(weather, ["surface_pressure"])
+    const temperature = readNumeric(weather, ["temperature_2m"])
+    const humidity = readNumeric(weather, ["relativehumidity_2m", "relative_humidity_2m"])
+    const gust = readNumeric(weather, ["windgusts_10m"])
+    const tempStyle = getTemperatureStyle(temperature)
+    const humidStyle = getHumidityStyle(humidity)
 
     return (
         <div style={{ ...styles.card, borderLeft: `4px solid ${borderColor}` }}>
@@ -168,33 +234,63 @@ function WeatherCard({ entry }) {
                 </span>
             </div>
 
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                {getWeatherIcon(code, 22)}
+                <span style={{ fontSize: 12, color: "#5b6470", fontWeight: 600 }}>{getWeatherDesc(code)}</span>
+            </div>
+
             <div style={styles.metricGrid}>
-                <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}><Thermometer size={12} /> Temperature</div>
-                    <div style={styles.metricValue}>{Math.round(weather.temperature_2m)}°C</div>
-                </div>
-                <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}><Wind size={12} /> Wind Speed</div>
-                    <div style={styles.metricValue}>{weather.wind_speed_10m} km/h</div>
-                </div>
-                <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}><CloudRain size={12} /> Rainfall</div>
-                    <div style={styles.metricValue}>{weather.precipitation} mm/hr</div>
-                </div>
-                <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}><Gauge size={12} /> Pressure</div>
-                    <div style={styles.metricValue}>{Math.round(weather.surface_pressure)} hPa</div>
-                </div>
-                <div style={{ ...styles.metricCell, gridColumn: "span 1" }}>
-                    <div style={styles.metricLabel}>Condition</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                        {getWeatherIcon(code, 24)}
-                    </div>
-                </div>
-                <div style={styles.metricCell}>
-                    <div style={styles.metricLabel}>Outlook</div>
-                    <div style={{ ...styles.metricValue, fontSize: 12 }}>{getWeatherDesc(code)}</div>
-                </div>
+                <MetricItem
+                    icon={<Wind size={12} />}
+                    label="Wind Speed"
+                    value={toFixedOrNA(wind, 1)}
+                    unit="km/h"
+                    barPct={clampPct((wind ?? 0) / 2)}
+                    barColor={wind >= 88 ? "#EF9F27" : "#378ADD"}
+                />
+                <MetricItem
+                    icon={<CloudRain size={12} />}
+                    label="Rainfall"
+                    value={toFixedOrNA(rain, 1)}
+                    unit="mm/hr"
+                    barPct={clampPct((rain ?? 0) * 2)}
+                    barColor={rain >= 30 ? "#E24B4A" : rain >= 15 ? "#EF9F27" : "#639922"}
+                />
+                <MetricItem
+                    icon={<Gauge size={12} />}
+                    label="Pressure"
+                    value={toFixedOrNA(pressure, 0)}
+                    unit="hPa"
+                    barPct={pressure ? clampPct(((1020 - pressure) / 120) * 100) : 0}
+                    barColor={pressure && pressure < 990 ? "#EF9F27" : "#D85A30"}
+                />
+                <MetricItem
+                    icon={<Thermometer size={12} />}
+                    label="Temperature"
+                    value={toFixedOrNA(temperature, 1)}
+                    unit="°C"
+                    color={tempStyle.color}
+                    barPct={clampPct(Math.min(100, Math.max(0, (((temperature ?? 0) - 20) / (45 - 20)) * 100)))}
+                    barColor={tempStyle.bar}
+                />
+                <MetricItem
+                    icon={<Droplets size={12} />}
+                    label="Humidity"
+                    value={toFixedOrNA(humidity, 0)}
+                    unit="%"
+                    color={humidStyle.color}
+                    barPct={clampPct(humidity ?? 0)}
+                    barColor={humidStyle.bar}
+                    span={2}
+                />
+                <MetricItem
+                    icon={<Zap size={12} />}
+                    label="Wind Gusts"
+                    value={toFixedOrNA(gust, 1)}
+                    unit="km/h"
+                    barPct={clampPct((gust ?? 0) / 2)}
+                    barColor={gust >= 88 ? "#EF9F27" : "#378ADD"}
+                />
             </div>
 
             <div style={{
@@ -207,7 +303,7 @@ function WeatherCard({ entry }) {
                 <span>
                     <strong>AI Severity: {severity.label}</strong>
                     {" · "}{severity.signal}
-                    {" · "}Wind {weather.wind_speed_10m} km/h
+                    {" · "}Wind {toFixedOrNA(wind, 1)} km/h
                 </span>
             </div>
 
@@ -215,7 +311,6 @@ function WeatherCard({ entry }) {
         </div>
     )
 }
-
 export default function AdminWeather() {
     const [entries, setEntries] = useState([])
     const [lastUpdated, setLastUpdated] = useState(null)
@@ -306,7 +401,7 @@ export default function AdminWeather() {
             <div style={styles.hero}>
                 <div style={styles.heroInner}>
                     <div>
-                        <h1 style={styles.heroTitle}>🌦️ Live Weather Monitor</h1>
+                        <h1 style={styles.heroTitle}>{"\u{1F326}\uFE0F Live Weather Monitor"}</h1>
                         <p style={styles.heroSub}>
                             Real-time weather monitoring for all barangays in Surigao City
                         </p>
@@ -363,7 +458,7 @@ export default function AdminWeather() {
                 )}
 
                 <div style={styles.footerNote}>
-                    Auto-refreshes every 10 minutes · Data via Open-Meteo · PAGASA wind thresholds for AI severity
+                    Auto-refreshes every 10 minutes · Data via Open-Meteo · 5 core metrics + gusts and feels-like
                 </div>
             </div>
         </AdminLayout>
@@ -463,8 +558,7 @@ const styles = {
     },
     metricGrid: {
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gridTemplateRows: "repeat(3, auto)",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         gap: 10,
     },
     metricCell: {
@@ -488,6 +582,18 @@ const styles = {
         fontSize: 15,
         fontWeight: 700,
         color: "#1a1a2e",
+    },
+    metricBarTrack: {
+        height: 3,
+        borderRadius: 999,
+        marginTop: 7,
+        background: "#e6ebf1",
+        overflow: "hidden",
+    },
+    metricBarFill: {
+        height: "100%",
+        borderRadius: 999,
+        transition: "width 0.3s ease",
     },
     sevBanner: {
         display: "flex",
@@ -548,3 +654,5 @@ const styles = {
         marginTop: 24,
     },
 }
+
+
