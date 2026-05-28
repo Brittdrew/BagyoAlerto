@@ -499,42 +499,24 @@ export default function Dashboard() {
     const temperature = parseFloat(formData.temperature) || 0
     const humidity = parseFloat(formData.humidity) || 0
 
-    // Raw progress-bar percentages (for MetricCard fill bars)
-    const windPct      = Math.min(100, Math.round((wind / 200) * 100))
-    const rainPct      = Math.min(100, Math.round((rain / 50) * 100))
-    const pressurePct  = pressure > 0 ? Math.min(100, Math.round(((1020 - pressure) / (1020 - 900)) * 100)) : 0
-    const tempPct      = Math.min(100, Math.max(0, Math.round(((temperature - 20) / (45 - 20)) * 100)))
+    // Progress-bar percentages — corrected PH-baseline formulas (match backend)
+    const clamp = (val) => Math.min(Math.max(val, 0), 100)
+    const windPct      = Math.round(clamp((wind - 30) / 190 * 100))
+    const pressurePct  = Math.round(clamp((1013 - pressure) / 43 * 100))
+    const rainPct      = Math.round(clamp(rain / 60 * 100))
+    const humidityPct  = Math.round(clamp((humidity - 85) / 15 * 100))
+    const tempPct      = Math.round(clamp((30 - temperature) / 6 * 100))
     const temperaturePct = tempPct
-    const humidityPct  = Math.min(100, Math.max(0, Math.round(humidity)))
 
-    // -- 5-factor weighted composite score (0-100) --------------------------------
-    // Weights: Wind 30%, Rainfall 30%, Pressure 20%, Temperature 10%, Humidity 10%
-    // Each factor is normalised to 0-100 before weighting.
-
-    // Temperature danger: <20°C or >36°C is dangerous, peak at extremes
-    const tempDangerPct = (() => {
-        if (temperature <= 0) return 0
-        if (temperature < 20)  return Math.round(((20 - temperature) / 20) * 60)   // cold stress 0-60%
-        if (temperature <= 32) return 0                                              // safe zone
-        if (temperature <= 36) return Math.round(((temperature - 32) / 4) * 60)    // heat stress 0-60%
-        return Math.min(100, Math.round(60 + ((temperature - 36) / 10) * 40))      // dangerous >36°C
-    })()
-
-    // Humidity danger: higher = worse during typhoon conditions
-    const humidDangerPct = (() => {
-        if (humidity < 60)  return 0
-        if (humidity <= 75) return Math.round(((humidity - 60) / 15) * 33)
-        if (humidity <= 90) return Math.round(33 + ((humidity - 75) / 15) * 34)
-        return Math.min(100, Math.round(67 + ((humidity - 90) / 10) * 33))
-    })()
-
-    const compositeScore = result ? Math.min(100, Math.round(
-        windPct      * 0.30 +
-        rainPct      * 0.30 +
-        pressurePct  * 0.20 +
-        tempDangerPct  * 0.10 +
-        humidDangerPct * 0.10
-    )) : null
+    // -- 5-factor weighted composite score (0–100) — matches backend weights -----
+    const finalScore = Math.round(
+        (windPct     * 0.35) +
+        (pressurePct * 0.30) +
+        (rainPct     * 0.20) +
+        (humidityPct * 0.10) +
+        (tempPct     * 0.05)
+    )
+    const compositeScore = result ? finalScore : null
 
     const severity = result?.severity || null
     const sevCfg = severity ? SEVERITY_CONFIG[severity] : null

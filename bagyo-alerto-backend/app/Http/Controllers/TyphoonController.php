@@ -80,64 +80,44 @@ class TyphoonController extends Controller
     }
 
     // AI Scoring Function
-    private function calculateSeverity($windSpeed, $rainfall, $pressure, $temperature = null, $humidity = null)
+    private function calculateSeverity($wind_speed, $rainfall, $pressure, $temperature = 30, $humidity = 85)
     {
-        $wind = (float) $windSpeed;
-        $rain = (float) $rainfall;
-        $pres = (float) $pressure;
-        $temp = (float) ($temperature ?? 0);
-        $humid = (float) ($humidity ?? 0);
+        // Wind: calm baseline 30 km/h, extreme 220 km/h
+        $windScore = min(max(($wind_speed - 30) / 190 * 100, 0), 100);
 
-        $windPct = min(100, max(0, round(($wind / 200) * 100)));
-        $rainPct = min(100, max(0, round(($rain / 50) * 100)));
-        $pressurePct = $pres > 0
-            ? min(100, max(0, round(((1020 - $pres) / (1020 - 900)) * 100)))
-            : 0;
+        // Pressure: 1013 hPa = safe baseline, dangerous below 970 hPa
+        $pressureScore = min(max((1013 - $pressure) / 43 * 100, 0), 100);
 
-        $tempDangerPct = 0;
-        if ($temp > 0) {
-            if ($temp < 20) {
-                $tempDangerPct = round(((20 - $temp) / 20) * 60);
-            } elseif ($temp <= 32) {
-                $tempDangerPct = 0;
-            } elseif ($temp <= 36) {
-                $tempDangerPct = round((($temp - 32) / 4) * 60);
-            } else {
-                $tempDangerPct = min(100, round(60 + (($temp - 36) / 10) * 40));
-            }
-        }
+        // Rainfall: 60 mm/hr = extreme
+        $rainScore = min(max($rainfall / 60 * 100, 0), 100);
 
-        $humidDangerPct = 0;
-        if ($humid >= 60 && $humid <= 75) {
-            $humidDangerPct = round((($humid - 60) / 15) * 33);
-        } elseif ($humid > 75 && $humid <= 90) {
-            $humidDangerPct = round(33 + (($humid - 75) / 15) * 34);
-        } elseif ($humid > 90) {
-            $humidDangerPct = min(100, round(67 + (($humid - 90) / 10) * 33));
-        }
+        // Humidity: 85% = PH ambient baseline, below 85% scores 0
+        $humidityScore = min(max(($humidity - 85) / 15 * 100, 0), 100);
 
-        $score = round(
-            $windPct * 0.30 +
-            $rainPct * 0.30 +
-            $pressurePct * 0.20 +
-            $tempDangerPct * 0.10 +
-            $humidDangerPct * 0.10
-        );
+        // Temperature: only flags when cold inflow drops below 30°C
+        $tempScore = min(max((30 - $temperature) / 6 * 100, 0), 100);
 
-        if ($score >= 75) return 'critical';
-        if ($score >= 50) return 'high';
-        if ($score >= 25) return 'moderate';
+        // Weighted final score
+        $score = ($windScore * 0.35)
+               + ($pressureScore * 0.30)
+               + ($rainScore * 0.20)
+               + ($humidityScore * 0.10)
+               + ($tempScore * 0.05);
+
+        // Classification
+        if ($score >= 55) return 'critical';
+        if ($score >= 25) return 'high';
+        if ($score >= 10) return 'moderate';
         return 'low';
     }
 
     private function getSeverityMessage($severity)
     {
         $messages = [
-            'low'      => 'PAGASA Signal #1 — Tropical cyclone winds expected within 36 hours. Stay alert and monitor updates.',
-            'moderate' => 'PAGASA Signal #2 — Destructive winds expected within 24 hours. Prepare for possible evacuation.',
-            'high'     => 'PAGASA Signal #3 — Very destructive winds expected within 18 hours. Evacuate now!',
-            'critical' => 'PAGASA Signal #4-5 — Catastrophic winds expected within 12 hours. IMMEDIATE EVACUATION REQUIRED!',
+            'normal'  => 'No Tropical Cyclone Signal — Conditions are normal. No significant threat at this time.',
+            'watch'   => 'Low Pressure Area / Tropical Cyclone Watch — Monitor weather updates closely. Prepare early precautions.',
+            'typhoon' => 'Typhoon Signal Active — Destructive winds and heavy rainfall expected. Follow evacuation orders immediately.',
         ];
-        return $messages[$severity];
+        return $messages[$severity] ?? 'Severity level unknown.';
     }
 }

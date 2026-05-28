@@ -19,6 +19,8 @@ import {
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 
+// ─── UNCHANGED: All data/logic constants ───────────────────────────────────────
+
 const API_BASE = "http://127.0.0.1:8000/api"
 const REFRESH_MS = 10 * 60 * 1000
 const CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
@@ -36,6 +38,8 @@ const SEV_STYLES = {
     high: { label: "HIGH", signal: "Signal #3", color: "#D85A30", bg: "#FAECE7", border: "#D85A30", text: "#4A1B0C" },
     critical: { label: "CRITICAL", signal: "Signal #4-5", color: "#E24B4A", bg: "#FCEBEB", border: "#E24B4A", text: "#501313" },
 }
+
+// ─── UNCHANGED: All helper functions ──────────────────────────────────────────
 
 function getWeatherIcon(code, size = 28) {
     const s = { flexShrink: 0 }
@@ -97,7 +101,6 @@ function getTemperatureStyle(temp) {
     return { color: "#D85A30", bar: "#D85A30" }
 }
 
-/** PAGASA wind-based AI severity (admin monitor thresholds) */
 function calculateWindSeverity(windKmh) {
     const w = parseFloat(windKmh) || 0
     if (w > 170) return SEV_STYLES.critical
@@ -139,28 +142,7 @@ function formatTime(d) {
     return d.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 
-function SkeletonCard() {
-    return (
-        <div style={styles.card}>
-            <div style={styles.skeletonHeader}>
-                <div style={{ ...styles.skel, width: "55%", height: 18 }} />
-                <div style={{ ...styles.skel, width: 70, height: 22, borderRadius: 20 }} />
-            </div>
-            <div style={styles.metricGrid}>
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div key={i} style={styles.metricCell}>
-                        <div style={{ ...styles.skel, width: "40%", height: 10, marginBottom: 8 }} />
-                        <div style={{ ...styles.skel, width: "70%", height: 16 }} />
-                    </div>
-                ))}
-            </div>
-            <div style={{ ...styles.skel, height: 36, borderRadius: 8, marginTop: 12 }} />
-            <div style={{ fontSize: 12, color: "#888", marginTop: 12, textAlign: "center" }}>
-                Fetching weather...
-            </div>
-        </div>
-    )
-}
+// ─── UNCHANGED: MetricItem component ─────────────────────────────────────────
 
 function MetricItem({ icon, label, value, unit, color = "#1a1a2e", barPct = 0, barColor = "#378ADD", span = 1 }) {
     return (
@@ -179,29 +161,108 @@ function MetricItem({ icon, label, value, unit, color = "#1a1a2e", barPct = 0, b
     )
 }
 
-function WeatherCard({ entry }) {
+// ─── NEW: Skeleton for station list item ──────────────────────────────────────
+
+function SkeletonListItem() {
+    return (
+        <div style={styles.stationItem}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ ...styles.skel, width: "55%", height: 13, borderRadius: 4 }} />
+                <div style={{ ...styles.skel, width: 8, height: 8, borderRadius: "50%" }} />
+            </div>
+            <div style={{ ...styles.skel, width: "70%", height: 10, borderRadius: 4, marginTop: 5 }} />
+        </div>
+    )
+}
+
+// ─── NEW: Station list item (left panel) ──────────────────────────────────────
+
+function StationListItem({ entry, isActive, onClick }) {
+    const { barangay, status, weather, severity } = entry
+    const wind = status === "success" ? readNumeric(weather, ["wind_speed_10m"]) : null
+    const temp = status === "success" ? readNumeric(weather, ["temperature_2m"]) : null
+    const sevKey = entry.severityKey || "low"
+
+    const dotColor = {
+        low: "#1D9E75",
+        moderate: "#BA7517",
+        high: "#D85A30",
+        critical: "#E24B4A",
+    }[sevKey] || "#ccc"
+
+    return (
+        <div
+            style={{
+                ...styles.stationItem,
+                ...(isActive ? styles.stationItemActive : {}),
+            }}
+            onClick={onClick}
+        >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={styles.stationName}>{barangay.name}</span>
+                <span style={{
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: status === "loading" ? "#ccc" : status === "error" ? "#E24B4A" : dotColor,
+                    flexShrink: 0,
+                }} />
+            </div>
+            <div style={styles.stationMeta}>
+                {status === "loading" && "Fetching..."}
+                {status === "error" && "Unavailable"}
+                {status === "success" && `${toFixedOrNA(temp, 1)}°C · ${toFixedOrNA(wind, 1)} km/h`}
+            </div>
+        </div>
+    )
+}
+
+// ─── NEW: Detail panel (right panel) ──────────────────────────────────────────
+
+function DetailPanel({ entry }) {
+    if (!entry) {
+        return (
+            <div style={styles.detailEmpty}>
+                <MapPin size={32} color="#ccc" />
+                <p style={{ color: "#aaa", marginTop: 10, fontSize: 13 }}>Select a barangay to view details</p>
+            </div>
+        )
+    }
+
     const { barangay, status, weather, severity, fetchedAt, error } = entry
     const risk = RISK_COLORS[barangay.risk_level] || RISK_COLORS.low
-    const borderColor = status === "success" ? severity?.border : status === "error" ? "#E24B4A" : "#e0e0e0"
 
     if (status === "loading") {
-        return <SkeletonCard />
+        return (
+            <div style={styles.detailPanel}>
+                <div style={{ ...styles.skel, width: "40%", height: 22, borderRadius: 6, marginBottom: 8 }} />
+                <div style={{ ...styles.skel, width: "25%", height: 14, borderRadius: 4, marginBottom: 16 }} />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                    {[1, 2, 3, 4, 5, 6].map(i => (
+                        <div key={i} style={styles.metricCell}>
+                            <div style={{ ...styles.skel, width: "50%", height: 10, marginBottom: 6, borderRadius: 4 }} />
+                            <div style={{ ...styles.skel, width: "70%", height: 16, borderRadius: 4 }} />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )
     }
 
     if (status === "error") {
         return (
-            <div style={{ ...styles.card, borderLeft: `4px solid #E24B4A` }}>
-                <div style={styles.cardHeader}>
+            <div style={styles.detailPanel}>
+                <div style={styles.detailHeader}>
                     <div>
-                        <div style={styles.cardTitle}>{barangay.name}</div>
-                        <div style={styles.cardCity}>{barangay.city}</div>
+                        <div style={styles.detailTitle}>{barangay.name}</div>
+                        <div style={styles.detailCity}>
+                            <MapPin size={11} style={{ marginRight: 3 }} />{barangay.city}
+                        </div>
                     </div>
                     <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}` }}>
                         {barangay.risk_level}
                     </span>
                 </div>
                 <div style={styles.errorBody}>
-                    <AlertTriangle size={20} color="#E24B4A" />
+                    <AlertTriangle size={18} color="#E24B4A" />
                     <span>{error || "Failed to fetch weather"}</span>
                 </div>
                 <div style={styles.fetchedAt}>Last attempt: {formatTime(fetchedAt)}</div>
@@ -220,50 +281,39 @@ function WeatherCard({ entry }) {
     const humidStyle = getHumidityStyle(humidity)
 
     return (
-        <div style={{ ...styles.card, borderLeft: `4px solid ${borderColor}` }}>
-            <div style={styles.cardHeader}>
+        <div style={styles.detailPanel}>
+            {/* Header */}
+            <div style={styles.detailHeader}>
                 <div>
-                    <div style={styles.cardTitle}>{barangay.name}</div>
-                    <div style={styles.cardCity}>
-                        <MapPin size={11} style={{ marginRight: 4, verticalAlign: "middle" }} />
-                        {barangay.city}
+                    <div style={styles.detailTitle}>{barangay.name}</div>
+                    <div style={styles.detailCity}>
+                        <MapPin size={11} style={{ marginRight: 3 }} />{barangay.city}
                     </div>
                 </div>
-                <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}` }}>
-                    {barangay.risk_level}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                    <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}` }}>
+                        {barangay.risk_level}
+                    </span>
+                    <span style={{
+                        fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
+                        background: severity.bg, color: severity.text, border: `1px solid ${severity.border}`,
+                        textTransform: "uppercase",
+                    }}>
+                        {severity.label}
+                    </span>
+                </div>
+            </div>
+
+            {/* Condition chip */}
+            <div style={styles.conditionChip}>
+                {getWeatherIcon(code, 16)}
+                <span style={{ fontSize: 12, color: "#5b6470", fontWeight: 600, marginLeft: 6 }}>
+                    {getWeatherDesc(code)} · {severity.signal}
                 </span>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                {getWeatherIcon(code, 22)}
-                <span style={{ fontSize: 12, color: "#5b6470", fontWeight: 600 }}>{getWeatherDesc(code)}</span>
-            </div>
-
-            <div style={styles.metricGrid}>
-                <MetricItem
-                    icon={<Wind size={12} />}
-                    label="Wind Speed"
-                    value={toFixedOrNA(wind, 1)}
-                    unit="km/h"
-                    barPct={clampPct((wind ?? 0) / 2)}
-                    barColor={wind >= 88 ? "#EF9F27" : "#378ADD"}
-                />
-                <MetricItem
-                    icon={<CloudRain size={12} />}
-                    label="Rainfall"
-                    value={toFixedOrNA(rain, 1)}
-                    unit="mm/hr"
-                    barPct={clampPct((rain ?? 0) * 2)}
-                    barColor={rain >= 30 ? "#E24B4A" : rain >= 15 ? "#EF9F27" : "#639922"}
-                />
-                <MetricItem
-                    icon={<Gauge size={12} />}
-                    label="Pressure"
-                    value={toFixedOrNA(pressure, 0)}
-                    unit="hPa"
-                    barPct={pressure ? clampPct(((1020 - pressure) / 120) * 100) : 0}
-                    barColor={pressure && pressure < 990 ? "#EF9F27" : "#D85A30"}
-                />
+            {/* Metrics */}
+            <div style={styles.detailMetricGrid}>
                 <MetricItem
                     icon={<Thermometer size={12} />}
                     label="Temperature"
@@ -281,7 +331,22 @@ function WeatherCard({ entry }) {
                     color={humidStyle.color}
                     barPct={clampPct(humidity ?? 0)}
                     barColor={humidStyle.bar}
-                    span={2}
+                />
+                <MetricItem
+                    icon={<Gauge size={12} />}
+                    label="Pressure"
+                    value={toFixedOrNA(pressure, 0)}
+                    unit="hPa"
+                    barPct={pressure ? clampPct(((1020 - pressure) / 120) * 100) : 0}
+                    barColor={pressure && pressure < 990 ? "#EF9F27" : "#D85A30"}
+                />
+                <MetricItem
+                    icon={<Wind size={12} />}
+                    label="Wind Speed"
+                    value={toFixedOrNA(wind, 1)}
+                    unit="km/h"
+                    barPct={clampPct((wind ?? 0) / 2)}
+                    barColor={wind >= 88 ? "#EF9F27" : "#378ADD"}
                 />
                 <MetricItem
                     icon={<Zap size={12} />}
@@ -291,8 +356,17 @@ function WeatherCard({ entry }) {
                     barPct={clampPct((gust ?? 0) / 2)}
                     barColor={gust >= 88 ? "#EF9F27" : "#378ADD"}
                 />
+                <MetricItem
+                    icon={<CloudRain size={12} />}
+                    label="Rainfall"
+                    value={toFixedOrNA(rain, 1)}
+                    unit="mm/hr"
+                    barPct={clampPct((rain ?? 0) * 2)}
+                    barColor={rain >= 30 ? "#E24B4A" : rain >= 15 ? "#EF9F27" : "#639922"}
+                />
             </div>
 
+            {/* Severity banner */}
             <div style={{
                 ...styles.sevBanner,
                 background: severity.bg,
@@ -311,12 +385,18 @@ function WeatherCard({ entry }) {
         </div>
     )
 }
+
+// ─── MAIN PAGE COMPONENT ──────────────────────────────────────────────────────
+
 export default function AdminWeather() {
     const [entries, setEntries] = useState([])
     const [lastUpdated, setLastUpdated] = useState(null)
     const [refreshing, setRefreshing] = useState(false)
     const [barangaysLoading, setBarangaysLoading] = useState(true)
     const [barangaysError, setBarangaysError] = useState(null)
+    const [selectedId, setSelectedId] = useState(null)
+
+    // ─── UNCHANGED: All data fetching logic ───────────────────────────────────
 
     const loadAllWeather = useCallback(async (barangays, isManual = false) => {
         if (!barangays?.length) return
@@ -331,6 +411,7 @@ export default function AdminWeather() {
             error: null,
         }))
         setEntries(initial)
+        if (!selectedId && barangays.length > 0) setSelectedId(barangays[0].id)
 
         const results = await Promise.all(
             barangays.map(async (b) => {
@@ -354,7 +435,7 @@ export default function AdminWeather() {
         setEntries(results)
         setLastUpdated(new Date())
         setRefreshing(false)
-    }, [])
+    }, [selectedId])
 
     const fetchBarangays = useCallback(async (isManual = false) => {
         setBarangaysError(null)
@@ -382,26 +463,37 @@ export default function AdminWeather() {
 
     const handleRefresh = () => fetchBarangays(true)
 
+    // ─── Derived state ─────────────────────────────────────────────────────────
+
     const monitoringCount = entries.length
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleString("en-PH", {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
+            month: "short", day: "numeric",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
         })
         : null
 
     const showSkeletons = barangaysLoading && entries.length === 0
     const isEmpty = !barangaysLoading && !barangaysError && entries.length === 0
+    const selectedEntry = entries.find(e => e.barangay.id === selectedId) || entries[0] || null
+
+    // Summary stats
+    const successEntries = entries.filter(e => e.status === "success")
+    const alertCount = entries.filter(e => e.severityKey === "high" || e.severityKey === "critical").length
+    const avgTemp = successEntries.length
+        ? (successEntries.reduce((s, e) => s + (readNumeric(e.weather, ["temperature_2m"]) ?? 0), 0) / successEntries.length).toFixed(1)
+        : null
+    const avgWind = successEntries.length
+        ? (successEntries.reduce((s, e) => s + (readNumeric(e.weather, ["wind_speed_10m"]) ?? 0), 0) / successEntries.length).toFixed(1)
+        : null
 
     return (
         <AdminLayout>
+            {/* ── Hero header (same style, trimmed padding) ── */}
             <div style={styles.hero}>
                 <div style={styles.heroInner}>
                     <div>
-                        <h1 style={styles.heroTitle}>{"\u{1F326}\uFE0F Live Weather Monitor"}</h1>
+                        <h1 style={styles.heroTitle}>Live Weather Monitor</h1>
                         <p style={styles.heroSub}>
                             Real-time weather monitoring for all barangays in Surigao City
                         </p>
@@ -410,10 +502,11 @@ export default function AdminWeather() {
                                 Monitoring {monitoringCount} barangay{monitoringCount !== 1 ? "s" : ""}
                             </span>
                             {lastUpdatedStr && (
-                                <span style={styles.heroPill}>
-                                    Last updated: {lastUpdatedStr}
-                                </span>
+                                <span style={styles.heroPill}>Last updated: {lastUpdatedStr}</span>
                             )}
+                            <span style={{ ...styles.heroPill, background: "rgba(29,158,117,0.25)", border: "1px solid rgba(29,158,117,0.4)" }}>
+                                ● Live
+                            </span>
                         </div>
                     </div>
                     <div
@@ -424,10 +517,7 @@ export default function AdminWeather() {
                             cursor: refreshing || barangaysLoading ? "not-allowed" : "pointer",
                         }}
                     >
-                        <RefreshCw
-                            size={16}
-                            style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}
-                        />
+                        <RefreshCw size={16} style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }} />
                         {refreshing ? "Refreshing..." : "Refresh Now"}
                     </div>
                 </div>
@@ -436,12 +526,35 @@ export default function AdminWeather() {
             <div style={styles.content}>
                 {barangaysError && <div style={styles.errorBox}>{barangaysError}</div>}
 
-                {showSkeletons && (
-                    <div style={styles.grid}>
-                        {[1, 2, 3, 4, 5, 6].map((i) => <SkeletonCard key={i} />)}
+                {/* ── Summary stat row ── */}
+                {!isEmpty && (
+                    <div style={styles.summaryRow}>
+                        <div style={styles.statCard}>
+                            <div style={styles.statLabel}><MapPin size={11} /> Barangays</div>
+                            <div style={styles.statValue}>{monitoringCount}</div>
+                            <div style={styles.statSub}>All monitored</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={styles.statLabel}><Thermometer size={11} /> Avg temp</div>
+                            <div style={{ ...styles.statValue, color: "#1D9E75" }}>{avgTemp ? `${avgTemp}°C` : "—"}</div>
+                            <div style={styles.statSub}>Across stations</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={styles.statLabel}><Wind size={11} /> Avg wind</div>
+                            <div style={styles.statValue}>{avgWind ? `${avgWind} km/h` : "—"}</div>
+                            <div style={styles.statSub}>Surface level</div>
+                        </div>
+                        <div style={styles.statCard}>
+                            <div style={styles.statLabel}><AlertTriangle size={11} /> Active alerts</div>
+                            <div style={{ ...styles.statValue, color: alertCount > 0 ? "#D85A30" : "#1D9E75" }}>
+                                {alertCount > 0 ? alertCount : "None"}
+                            </div>
+                            <div style={styles.statSub}>{alertCount > 0 ? "Needs attention" : "All clear"}</div>
+                        </div>
                     </div>
                 )}
 
+                {/* ── Empty state ── */}
                 {isEmpty && (
                     <div style={styles.empty}>
                         <Inbox size={40} color="#ccc" />
@@ -449,11 +562,33 @@ export default function AdminWeather() {
                     </div>
                 )}
 
-                {!showSkeletons && !isEmpty && entries.length > 0 && (
-                    <div style={styles.grid}>
-                        {entries.map((entry) => (
-                            <WeatherCard key={entry.barangay.id} entry={entry} />
-                        ))}
+                {/* ── Main split panel ── */}
+                {!isEmpty && (
+                    <div style={styles.splitPanel}>
+                        {/* Left: station list */}
+                        <div style={styles.stationList}>
+                            <div style={styles.stationListHeader}>
+                                Stations ({monitoringCount})
+                            </div>
+                            <div style={styles.stationScroll}>
+                                {showSkeletons
+                                    ? [1, 2, 3, 4, 5].map(i => <SkeletonListItem key={i} />)
+                                    : entries.map(entry => (
+                                        <StationListItem
+                                            key={entry.barangay.id}
+                                            entry={entry}
+                                            isActive={selectedId === entry.barangay.id}
+                                            onClick={() => setSelectedId(entry.barangay.id)}
+                                        />
+                                    ))
+                                }
+                            </div>
+                        </div>
+
+                        {/* Right: detail panel */}
+                        <div style={styles.detailWrapper}>
+                            <DetailPanel entry={selectedEntry} />
+                        </div>
                     </div>
                 )}
 
@@ -465,7 +600,10 @@ export default function AdminWeather() {
     )
 }
 
+// ─── STYLES ───────────────────────────────────────────────────────────────────
+
 const styles = {
+    // ── Hero (unchanged from original) ──
     hero: {
         margin: "-28px -32px 24px",
         background: "linear-gradient(135deg, #1a237e 0%, #283593 50%, #3949ab 100%)",
@@ -473,186 +611,169 @@ const styles = {
         boxShadow: "0 4px 16px rgba(26,35,126,0.25)",
     },
     heroInner: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        gap: 20,
-        flexWrap: "wrap",
+        display: "flex", justifyContent: "space-between",
+        alignItems: "flex-start", gap: 20, flexWrap: "wrap",
     },
-    heroTitle: {
-        margin: 0,
-        fontSize: 24,
-        fontWeight: 700,
-        color: "#fff",
-    },
-    heroSub: {
-        margin: "8px 0 0",
-        fontSize: 14,
-        color: "rgba(255,255,255,0.85)",
-        maxWidth: 480,
-    },
-    heroMeta: {
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 8,
-        marginTop: 14,
-    },
+    heroTitle: { margin: 0, fontSize: 24, fontWeight: 700, color: "#fff" },
+    heroSub: { margin: "8px 0 0", fontSize: 14, color: "rgba(255,255,255,0.85)", maxWidth: 480 },
+    heroMeta: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 },
     heroPill: {
-        fontSize: 12,
-        color: "#fff",
+        fontSize: 12, color: "#fff",
         background: "rgba(255,255,255,0.15)",
-        padding: "5px 12px",
-        borderRadius: 20,
+        padding: "5px 12px", borderRadius: 20,
         border: "1px solid rgba(255,255,255,0.2)",
+        display: "flex", alignItems: "center", gap: 5,
     },
     refreshBtn: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        background: "#fff",
-        color: "#1a237e",
-        padding: "10px 18px",
-        borderRadius: 8,
-        fontSize: 13,
-        fontWeight: 600,
-        flexShrink: 0,
+        display: "inline-flex", alignItems: "center", gap: 8,
+        background: "#fff", color: "#1a237e",
+        padding: "10px 18px", borderRadius: 8,
+        fontSize: 13, fontWeight: 600, flexShrink: 0,
     },
+
+    // ── Page content ──
     content: { marginTop: 0 },
-    grid: {
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-        gap: 16,
+
+    // ── Summary stat row ──
+    summaryRow: {
+        display: "grid", gridTemplateColumns: "repeat(4,1fr)",
+        gap: 12, marginBottom: 16,
     },
-    card: {
+    statCard: {
+        background: "#fff", border: "1px solid #e8ecf0",
+        borderRadius: 12, padding: "12px 16px",
+    },
+    statLabel: {
+        fontSize: 10, fontWeight: 600, textTransform: "uppercase",
+        letterSpacing: 0.5, color: "#888",
+        display: "flex", alignItems: "center", gap: 4, marginBottom: 4,
+    },
+    statValue: { fontSize: 20, fontWeight: 700, color: "#1a1a2e" },
+    statSub: { fontSize: 10, color: "#aaa", marginTop: 2 },
+
+    // ── Split panel layout ──
+    splitPanel: {
+        display: "grid",
+        gridTemplateColumns: "220px 1fr",
+        gap: 0,
         background: "#fff",
-        borderRadius: 16,
-        padding: "18px 20px",
-        boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
         border: "1px solid #e8ecf0",
-        borderLeftWidth: 4,
+        borderRadius: 16,
+        overflow: "hidden",
+        minHeight: 500,
     },
-    cardHeader: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "flex-start",
-        marginBottom: 14,
-        gap: 10,
+
+    // ── Station list (left) ──
+    stationList: {
+        borderRight: "1px solid #e8ecf0",
+        display: "flex", flexDirection: "column",
     },
-    cardTitle: {
-        fontSize: 16,
-        fontWeight: 700,
-        color: "#1a237e",
+    stationListHeader: {
+        padding: "10px 16px",
+        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+        letterSpacing: 0.6, color: "#aaa",
+        borderBottom: "1px solid #e8ecf0",
+        background: "#fafbfc",
     },
-    cardCity: {
-        fontSize: 11,
-        color: "#888",
-        marginTop: 3,
+    stationScroll: { flex: 1, overflowY: "auto" },
+    stationItem: {
+        padding: "10px 16px",
+        borderBottom: "1px solid #f0f2f5",
+        borderLeft: "3px solid transparent",
+        cursor: "pointer",
+        transition: "background 0.1s",
     },
-    riskBadge: {
-        fontSize: 10,
-        fontWeight: 700,
-        textTransform: "uppercase",
-        padding: "4px 10px",
-        borderRadius: 20,
-        flexShrink: 0,
+    stationItemActive: {
+        background: "#f0f4ff",
+        borderLeft: "3px solid #1a237e",
     },
-    metricGrid: {
+    stationName: { fontSize: 13, fontWeight: 600, color: "#1a1a2e" },
+    stationMeta: { fontSize: 11, color: "#888", marginTop: 3 },
+
+    // ── Detail panel (right) ──
+    detailWrapper: { flex: 1 },
+    detailPanel: { padding: "20px 24px" },
+    detailEmpty: {
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        height: "100%", padding: 40,
+    },
+    detailHeader: {
+        display: "flex", justifyContent: "space-between",
+        alignItems: "flex-start", marginBottom: 12,
+    },
+    detailTitle: { fontSize: 20, fontWeight: 700, color: "#1a237e" },
+    detailCity: {
+        fontSize: 11, color: "#888", marginTop: 4,
+        display: "flex", alignItems: "center",
+    },
+    conditionChip: {
+        display: "inline-flex", alignItems: "center",
+        background: "#f8f9fc", border: "1px solid #e8ecf0",
+        borderRadius: 20, padding: "5px 12px",
+        marginBottom: 16,
+    },
+    detailMetricGrid: {
         display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-        gap: 10,
+        gridTemplateColumns: "repeat(3, minmax(0,1fr))",
+        gap: 10, marginBottom: 14,
     },
+
+    // ── Metric cells (unchanged from original) ──
     metricCell: {
-        background: "#f8f9fc",
-        borderRadius: 10,
-        padding: "10px 12px",
-        border: "1px solid #eef1f5",
+        background: "#f8f9fc", borderRadius: 10,
+        padding: "10px 12px", border: "1px solid #eef1f5",
     },
     metricLabel: {
-        fontSize: 10,
-        fontWeight: 600,
-        color: "#888",
-        textTransform: "uppercase",
-        letterSpacing: 0.4,
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        marginBottom: 4,
+        fontSize: 10, fontWeight: 600, color: "#888",
+        textTransform: "uppercase", letterSpacing: 0.4,
+        display: "flex", alignItems: "center", gap: 4, marginBottom: 4,
     },
-    metricValue: {
-        fontSize: 15,
-        fontWeight: 700,
-        color: "#1a1a2e",
-    },
+    metricValue: { fontSize: 15, fontWeight: 700, color: "#1a1a2e" },
     metricBarTrack: {
-        height: 3,
-        borderRadius: 999,
-        marginTop: 7,
-        background: "#e6ebf1",
-        overflow: "hidden",
+        height: 3, borderRadius: 999, marginTop: 7,
+        background: "#e6ebf1", overflow: "hidden",
     },
     metricBarFill: {
-        height: "100%",
-        borderRadius: 999,
+        height: "100%", borderRadius: 999,
         transition: "width 0.3s ease",
     },
+
+    // ── Severity banner (unchanged from original) ──
     sevBanner: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        marginTop: 14,
-        padding: "10px 12px",
-        borderRadius: 8,
-        fontSize: 11,
-        lineHeight: 1.4,
+        display: "flex", alignItems: "center", gap: 8,
+        marginTop: 14, padding: "10px 12px",
+        borderRadius: 8, fontSize: 11, lineHeight: 1.4,
     },
-    fetchedAt: {
-        fontSize: 10,
-        color: "#aaa",
-        marginTop: 10,
-        textAlign: "right",
-    },
+
+    // ── Misc (unchanged from original) ──
+    fetchedAt: { fontSize: 10, color: "#aaa", marginTop: 10, textAlign: "right" },
     errorBody: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "20px 0",
-        color: "#a32d2d",
-        fontSize: 13,
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "20px 0", color: "#a32d2d", fontSize: 13,
+    },
+    riskBadge: {
+        fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+        padding: "4px 10px", borderRadius: 20, flexShrink: 0,
     },
     skel: {
         background: "linear-gradient(90deg, #eee 25%, #f5f5f5 50%, #eee 75%)",
         backgroundSize: "200% 100%",
         animation: "shimmer 1.2s ease-in-out infinite",
         borderRadius: 6,
-    },
-    skeletonHeader: {
-        display: "flex",
-        justifyContent: "space-between",
-        marginBottom: 14,
+        display: "block",
     },
     empty: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: 60,
-        background: "#fff",
-        borderRadius: 12,
-        border: "1px solid #e8ecf0",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", padding: 60,
+        background: "#fff", borderRadius: 12, border: "1px solid #e8ecf0",
     },
     errorBox: {
-        background: "#fcebeb",
-        color: "#a32d2d",
-        padding: "12px 16px",
-        borderRadius: 8,
-        marginBottom: 16,
-        fontSize: 13,
+        background: "#fcebeb", color: "#a32d2d",
+        padding: "12px 16px", borderRadius: 8,
+        marginBottom: 16, fontSize: 13,
     },
     footerNote: {
-        textAlign: "center",
-        fontSize: 11,
-        color: "#aaa",
-        marginTop: 24,
+        textAlign: "center", fontSize: 11, color: "#aaa", marginTop: 24,
     },
 }
-
-
