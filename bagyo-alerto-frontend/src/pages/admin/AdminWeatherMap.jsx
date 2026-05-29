@@ -53,7 +53,7 @@ export default function AdminWeatherMap() {
         <AdminLayout>
             <div style={styles.pageShell}>
                 <section style={styles.hero}>
-                    <div style={styles.heroTitle}>🗺️ Live Weather Map</div>
+                    <div style={styles.heroTitle}>Live Weather Map</div>
                     <div style={styles.heroSubtitle}>Real-time typhoon and weather tracking — Surigao City, Surigao del Norte</div>
                     <div style={styles.liveBadge}>● LIVE</div>
                 </section>

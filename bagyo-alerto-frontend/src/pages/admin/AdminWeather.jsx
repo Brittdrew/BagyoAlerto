@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import axios from "axios"
 import {
     RefreshCw,
@@ -18,6 +18,18 @@ import {
     AlertTriangle,
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet"
+import L from "leaflet"
+import markerIcon from "leaflet/dist/images/marker-icon.png"
+import markerShadow from "leaflet/dist/images/marker-shadow.png"
+import "leaflet/dist/leaflet.css"
+
+// Fix default marker icon broken image issue in React Vite
+delete L.Icon.Default.prototype._getIconUrl
+L.Icon.Default.mergeOptions({
+    iconUrl: markerIcon,
+    shadowUrl: markerShadow,
+})
 
 // ─── UNCHANGED: All data/logic constants ───────────────────────────────────────
 
@@ -142,6 +154,20 @@ function formatTime(d) {
     return d.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 
+// ─── DISTANCE CALCULATION ────────────────────────────────────────────────────
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    // Haversine formula - returns distance in kilometers
+    const R = 6371 // Earth radius in km
+    const dLat = ((lat2 - lat1) * Math.PI) / 180
+    const dLon = ((lon2 - lon1) * Math.PI) / 180
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+}
+
 // ─── UNCHANGED: MetricItem component ─────────────────────────────────────────
 
 function MetricItem({ icon, label, value, unit, color = "#1a1a2e", barPct = 0, barColor = "#378ADD", span = 1 }) {
@@ -215,9 +241,192 @@ function StationListItem({ entry, isActive, onClick }) {
     )
 }
 
+// ─── NEW: Map panel component using React Leaflet ────────────────────────────
+
+function MapPanel({ entry, evacuationCenter }) {
+    const [tileLayer, setTileLayer] = useState("street")
+
+    if (!entry) {
+        return (
+            <div style={{ ...styles.mapContainer, background: "#f8f9fc" }}>
+                <p style={{ color: "#aaa", fontSize: 13 }}>Select a barangay to view location</p>
+            </div>
+        )
+    }
+
+    const { barangay, status, weather } = entry
+    const wind = status === "success" ? readNumeric(weather, ["wind_speed_10m"]) : null
+    const severity = entry.severity || { label: "N/A", signal: "N/A", bg: "#E1F5EE", text: "#085041", border: "#1D9E75" }
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_KEY
+
+    // Get tile URL based on current layer
+    let tileUrl = ""
+    let tileAttribution = ""
+    if (tileLayer === "street") {
+        tileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        tileAttribution = "&copy; OpenStreetMap contributors"
+    } else if (tileLayer === "satellite") {
+        tileUrl = apiKey
+            ? `https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}&key=${apiKey}`
+            : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        tileAttribution = apiKey ? "&copy; Google Maps" : "&copy; Esri, DigitalGlobe, Earthstar Geographics"
+    } else if (tileLayer === "hybrid") {
+        tileUrl = apiKey
+            ? `https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}&key=${apiKey}`
+            : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        tileAttribution = apiKey ? "&copy; Google Maps" : "&copy; OpenStreetMap contributors"
+    }
+
+    const handleToggleTileLayer = () => {
+        const layerOrder = ["street", "satellite", "hybrid", "street"]
+        const currentIndex = layerOrder.indexOf(tileLayer)
+        let nextLayer = layerOrder[currentIndex + 1] || "street"
+
+        // Skip hybrid if API key not available
+        if (nextLayer === "hybrid" && !apiKey) {
+            nextLayer = "street"
+        }
+
+        setTileLayer(nextLayer)
+    }
+
+    const getNextLayerName = () => {
+        const layerOrder = ["street", "satellite", "hybrid", "street"]
+        const currentIndex = layerOrder.indexOf(tileLayer)
+        let nextLayer = layerOrder[currentIndex + 1] || "street"
+
+        if (nextLayer === "hybrid" && !apiKey) {
+            nextLayer = "street"
+        }
+
+        const labels = { street: "Satellite", satellite: "Hybrid", hybrid: "Street" }
+        return labels[nextLayer] || "Satellite"
+    }
+
+    // Key prop forces React to remount map when barangay changes
+    const mapKey = `${barangay.id}-${evacuationCenter?.id || 'none'}`
+
+    const code = weather?.weathercode || 0
+    const weatherDesc = getWeatherDesc(code)
+    const distance = evacuationCenter
+        ? calculateDistance(barangay.latitude, barangay.longitude, evacuationCenter.latitude, evacuationCenter.longitude)
+        : 0
+
+    return (
+        <div style={{ marginTop: 16 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: "#1a1a2e", marginBottom: 10 }}>
+                Barangay Location & Evacuation Center
+            </h3>
+            <div style={{ position: "relative" }}>
+                <MapContainer
+                    key={mapKey}
+                    center={[barangay.latitude, barangay.longitude]}
+                    zoom={14}
+                    style={{
+                        height: "350px",
+                        width: "100%",
+                        borderRadius: 12,
+                        border: "1px solid #e8ecf0",
+                        overflow: "hidden",
+                    }}
+                >
+                    <TileLayer url={tileUrl} attribution={tileAttribution} maxZoom={20} />
+                    
+                    {/* Barangay marker (blue circle) */}
+                    <CircleMarker
+                        center={[barangay.latitude, barangay.longitude]}
+                        radius={8}
+                        fillColor="#1a237e"
+                        color="#fff"
+                        weight={2}
+                        opacity={1}
+                        fillOpacity={0.85}
+                    >
+                        <Popup>
+                            <div style={{ fontSize: 12, color: "#1a1a2e", fontWeight: 600 }}>
+                                {barangay.name}
+                            </div>
+                            <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                                Wind: {toFixedOrNA(wind, 1)} km/h
+                            </div>
+                            <div
+                                style={{
+                                    marginTop: 6,
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    padding: "3px 8px",
+                                    borderRadius: 12,
+                                    background: severity.bg,
+                                    color: severity.text,
+                                    border: `1px solid ${severity.border}`,
+                                    display: "inline-block",
+                                    textTransform: "uppercase",
+                                }}
+                            >
+                                {severity.label}
+                            </div>
+                        </Popup>
+                    </CircleMarker>
+
+                    {/* Evacuation center marker (red circle) */}
+                    {evacuationCenter && (
+                        <CircleMarker
+                            center={[evacuationCenter.latitude, evacuationCenter.longitude]}
+                            radius={8}
+                            fillColor="#D85A30"
+                            color="#fff"
+                            weight={2}
+                            opacity={1}
+                            fillOpacity={0.85}
+                        >
+                            <Popup>
+                                <div style={{ fontSize: 12, color: "#1a1a2e", fontWeight: 600 }}>
+                                    {evacuationCenter.name}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                                    Distance: {distance.toFixed(2)} km
+                                </div>
+                            </Popup>
+                        </CircleMarker>
+                    )}
+                </MapContainer>
+
+                <button
+                    onClick={handleToggleTileLayer}
+                    style={styles.mapToggleBtn}
+                    title={`Switch to ${getNextLayerName()} view`}
+                >
+                    {getNextLayerName()}
+                </button>
+            </div>
+            <div style={styles.mapInfoStrip}>
+                <span style={styles.mapInfoItem}>
+                    <MapPin size={12} /> {barangay.name}, {barangay.city}
+                </span>
+                {evacuationCenter && (
+                    <>
+                        <span style={{ color: "#ccc" }}>|</span>
+                        <span style={styles.mapInfoItem}>
+                            🏫 {evacuationCenter.name}
+                        </span>
+                        <span style={{ color: "#ccc" }}>|</span>
+                        <span style={styles.mapInfoItem}>
+                            📏 {distance.toFixed(1)} km away
+                        </span>
+                    </>
+                )}
+                <span style={{ color: "#ccc" }}>|</span>
+                <span style={styles.mapInfoItem}>
+                    🌤 {weatherDesc} · {severity.signal}
+                </span>
+            </div>
+        </div>
+    )
+}
+
 // ─── NEW: Detail panel (right panel) ──────────────────────────────────────────
 
-function DetailPanel({ entry }) {
+function DetailPanel({ entry, evacuationCenter }) {
     if (!entry) {
         return (
             <div style={styles.detailEmpty}>
@@ -381,6 +590,9 @@ function DetailPanel({ entry }) {
                 </span>
             </div>
 
+            {/* Map Panel */}
+            <MapPanel entry={entry} evacuationCenter={evacuationCenter} />
+
             <div style={styles.fetchedAt}>Fetched at {formatTime(fetchedAt)}</div>
         </div>
     )
@@ -395,6 +607,8 @@ export default function AdminWeather() {
     const [barangaysLoading, setBarangaysLoading] = useState(true)
     const [barangaysError, setBarangaysError] = useState(null)
     const [selectedId, setSelectedId] = useState(null)
+    const [evacuationCenters, setEvacuationCenters] = useState([])
+    const [evacuationCentersLoading, setEvacuationCentersLoading] = useState(false)
 
     // ─── UNCHANGED: All data fetching logic ───────────────────────────────────
 
@@ -455,11 +669,23 @@ export default function AdminWeather() {
         setBarangaysLoading(false)
     }, [loadAllWeather])
 
+    const fetchEvacuationCenters = useCallback(async () => {
+        setEvacuationCentersLoading(true)
+        try {
+            const res = await axios.get(`${API_BASE}/evacuation-centers`)
+            setEvacuationCenters(res.data || [])
+        } catch {
+            setEvacuationCenters([])
+        }
+        setEvacuationCentersLoading(false)
+    }, [])
+
     useEffect(() => {
         fetchBarangays()
+        fetchEvacuationCenters()
         const timer = setInterval(() => fetchBarangays(false), REFRESH_MS)
         return () => clearInterval(timer)
-    }, [fetchBarangays])
+    }, [fetchBarangays, fetchEvacuationCenters])
 
     const handleRefresh = () => fetchBarangays(true)
 
@@ -476,6 +702,11 @@ export default function AdminWeather() {
     const showSkeletons = barangaysLoading && entries.length === 0
     const isEmpty = !barangaysLoading && !barangaysError && entries.length === 0
     const selectedEntry = entries.find(e => e.barangay.id === selectedId) || entries[0] || null
+
+    // Find evacuation center for selected barangay
+    const selectedEvacuationCenter = selectedEntry
+        ? evacuationCenters.find(ec => ec.barangay_id === selectedEntry.barangay.id)
+        : null
 
     // Summary stats
     const successEntries = entries.filter(e => e.status === "success")
@@ -587,7 +818,7 @@ export default function AdminWeather() {
 
                         {/* Right: detail panel */}
                         <div style={styles.detailWrapper}>
-                            <DetailPanel entry={selectedEntry} />
+                            <DetailPanel entry={selectedEntry} evacuationCenter={selectedEvacuationCenter} />
                         </div>
                     </div>
                 )}
@@ -775,5 +1006,40 @@ const styles = {
     },
     footerNote: {
         textAlign: "center", fontSize: 11, color: "#aaa", marginTop: 24,
+    },
+
+    // ── Map panel ──
+    mapContainer: {
+        height: 350,
+        width: "100%",
+        borderRadius: 12,
+        background: "#f0f2f5",
+        /* Fix 4: Leaflet container CSS */
+    },
+    mapToggleBtn: {
+        position: "absolute",
+        top: 12,
+        right: 12,
+        background: "#fff",
+        color: "#1a237e",
+        border: "1px solid #e8ecf0",
+        padding: "8px 14px",
+        borderRadius: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: "pointer",
+        zIndex: 400,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+        transition: "all 0.2s ease",
+        outline: "none",
+    },
+    mapInfoStrip: {
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
+        padding: "12px 0", marginTop: 12,
+        fontSize: 11, color: "#666", borderTop: "1px solid #e8ecf0",
+        paddingTop: 12,
+    },
+    mapInfoItem: {
+        display: "flex", alignItems: "center", gap: 4,
     },
 }
