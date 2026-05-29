@@ -28,7 +28,7 @@ class TyphoonController extends Controller
         $humidity     = $request->humidity;
 
         // AI Severity Scoring Logic
-        $severity = $this->calculateSeverity($windSpeed, $rainfall, $pressure, $temperature, $humidity);
+        list($severity, $score, $rank) = $this->calculateSeverity($windSpeed, $rainfall, $pressure, $temperature, $humidity);
 
         // Log the typhoon data
         $log = TyphoonLog::create([
@@ -74,7 +74,8 @@ class TyphoonController extends Controller
 
         return response()->json([
             'severity'          => $severity,
-            'message'           => $this->getSeverityMessage($severity),
+            'score'             => $score,
+            'message'           => $this->getSeverityMessage($rank),
             'evacuation_center' => $center
         ]);
     }
@@ -104,20 +105,68 @@ class TyphoonController extends Controller
                + ($humidityScore * 0.10)
                + ($tempScore * 0.05);
 
-        // Classification
-        if ($score >= 55) return 'critical';
-        if ($score >= 25) return 'high';
-        if ($score >= 10) return 'moderate';
-        return 'low';
+        $score = (int) round($score);
+
+        // Initial Classification Rank based on Score
+        if ($score <= 24) {
+            $rank = 0;
+        } elseif ($score <= 39) {
+            $rank = 1;
+        } elseif ($score <= 54) {
+            $rank = 2;
+        } elseif ($score <= 70) {
+            $rank = 3;
+        } elseif ($score <= 85) {
+            $rank = 4;
+        } else {
+            $rank = 5;
+        }
+
+        // Hard overrides — only upgrade, never downgrade
+        if ($wind_speed >= 220) {
+            $rank = max($rank, 5); // force "Signal 4-5"
+        } elseif ($wind_speed >= 120) {
+            $rank = max($rank, 4); // force minimum "Signal 2-3"
+        } elseif ($wind_speed >= 60) {
+            $rank = max($rank, 3); // force minimum "Signal 1"
+        } elseif ($wind_speed >= 45) {
+            $rank = max($rank, 2); // force minimum "Elevated"
+        }
+
+        if ($rainfall >= 30) {
+            $rank = max($rank, 3); // force minimum "Signal 1"
+        } elseif ($rainfall >= 7.5) {
+            $rank = max($rank, 2); // force minimum "Elevated"
+        }
+
+        if ($pressure <= 970) {
+            $rank = max($rank, 3); // force minimum "Signal 1"
+        } elseif ($pressure <= 990) {
+            $rank = max($rank, 1); // force minimum "Watch"
+        }
+
+        // Map final rank back to severity categories
+        if ($rank === 0) {
+            $severity = 'low';
+        } elseif ($rank <= 2) {
+            $severity = 'moderate';
+        } elseif ($rank === 3) {
+            $severity = 'high';
+        } else {
+            $severity = 'critical';
+        }
+
+        return [$severity, $score, $rank];
     }
 
-    private function getSeverityMessage($severity)
+    private function getSeverityMessage($rank)
     {
-        $messages = [
-            'normal'  => 'No Tropical Cyclone Signal — Conditions are normal. No significant threat at this time.',
-            'watch'   => 'Low Pressure Area / Tropical Cyclone Watch — Monitor weather updates closely. Prepare early precautions.',
-            'typhoon' => 'Typhoon Signal Active — Destructive winds and heavy rainfall expected. Follow evacuation orders immediately.',
-        ];
-        return $messages[$severity] ?? 'Severity level unknown.';
+        if ($rank === 0) {
+            return 'No Tropical Cyclone Signal — Conditions are normal. No significant threat at this time.';
+        } elseif ($rank <= 2) {
+            return 'Low Pressure Area / Tropical Cyclone Watch — Monitor weather updates closely. Prepare early precautions.';
+        } else {
+            return 'Typhoon Signal Active — Destructive winds and heavy rainfall expected. Follow evacuation orders immediately.';
+        }
     }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+﻿import { useState, useEffect, useRef } from "react"
 import axios from "axios"
 import Select from "react-select"
 import { useNavigate } from "react-router-dom"
@@ -6,10 +6,10 @@ import MapView from "../components/MapView"
 
 import Sidebar from "../components/Sidebar"
 
-import { 
-    Tornado, BarChart2, Clock, AlertTriangle, Info, Wind, 
-    CloudRain, Gauge, Map, Edit3, Search, Route, Satellite, 
-    Loader, MapPin, Thermometer, Droplets
+import {
+    Tornado, BarChart2, Clock, AlertTriangle, Info, Wind,
+    CloudRain, Gauge, Map, Edit3, Search, Route, Satellite,
+    Loader, MapPin, Thermometer, Droplets, X
 } from "lucide-react"
 
 // --- Constants ---------------------------------------------------------------
@@ -38,11 +38,137 @@ function metricDisplay(value) {
 }
 
 // --- Severity config (maps your backend severity_level to UI) ----------------
-const SEVERITY_CONFIG = {
-    low: { label: "Low - Tropical Depression", color: "#1D9E75", gaugeColor: "#1D9E75", score: 22, signal: "Signal #1", alertBg: "#E1F5EE", alertBorder: "#5DCAA5", alertText: "#085041", dot: "#5DCAA5" },
-    moderate: { label: "Moderate - Tropical Storm", color: "#BA7517", gaugeColor: "#EF9F27", score: 45, signal: "Signal #2", alertBg: "#FAEEDA", alertBorder: "#EF9F27", alertText: "#633806", dot: "#EF9F27" },
-    high: { label: "High - Typhoon", color: "#D85A30", gaugeColor: "#D85A30", score: 68, signal: "Signal #3", alertBg: "#FAECE7", alertBorder: "#F0997B", alertText: "#4A1B0C", dot: "#D85A30" },
-    critical: { label: "Critical - Super Typhoon", color: "#A32D2D", gaugeColor: "#E24B4A", score: 92, signal: "Signal #4-5", alertBg: "#FCEBEB", alertBorder: "#F09595", alertText: "#501313", dot: "#E24B4A" },
+export function calculateSeverityScore(wind, rain, pressure, temp, humidity) {
+    const clamp = (val) => Math.min(Math.max(val, 0), 100);
+    const windPct = clamp((wind - 30) / 190 * 100);
+    const pressurePct = clamp((1013 - pressure) / 43 * 100);
+    const rainPct = clamp(rain / 60 * 100);
+    const humidityPct = clamp((humidity - 85) / 15 * 100);
+    const tempPct = clamp((30 - temp) / 6 * 100);
+    return Math.round(
+        (windPct * 0.35) +
+        (pressurePct * 0.30) +
+        (rainPct * 0.20) +
+        (humidityPct * 0.10) +
+        (tempPct * 0.05)
+    );
+}
+
+export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
+    const s = score !== null && score !== undefined ? score : 0;
+    let rank = 0;
+    if (s <= 24) rank = 0;
+    else if (s <= 39) rank = 1;
+    else if (s <= 54) rank = 2;
+    else if (s <= 70) rank = 3;
+    else if (s <= 85) rank = 4;
+    else rank = 5;
+
+    // Hard overrides — only upgrade, never downgrade
+    if (wind >= 220) {
+        rank = Math.max(rank, 5);
+    } else if (wind >= 120) {
+        rank = Math.max(rank, 4);
+    } else if (wind >= 60) {
+        rank = Math.max(rank, 3);
+    } else if (wind >= 45) {
+        rank = Math.max(rank, 2);
+    }
+
+    if (rain >= 30) {
+        rank = Math.max(rank, 3);
+    } else if (rain >= 7.5) {
+        rank = Math.max(rank, 2);
+    }
+
+    if (pressure <= 970) {
+        rank = Math.max(rank, 3);
+    } else if (pressure <= 990) {
+        rank = Math.max(rank, 1);
+    }
+
+    const configs = [
+        {
+            label: "Normal / Clear",
+            signal: "No signal",
+            color: "#1D9E75",
+            gaugeColor: "#1D9E75",
+            alertBg: "#E1F5EE",
+            alertBorder: "#5DCAA5",
+            alertText: "#085041",
+            dot: "#5DCAA5",
+            bg: "#E1F5EE",
+            border: "#9FE1CB",
+            text: "#085041"
+        },
+        {
+            label: "Watch / LPA",
+            signal: "Low Pressure Area",
+            color: "#BA7517",
+            gaugeColor: "#EF9F27",
+            alertBg: "#FAEEDA",
+            alertBorder: "#EF9F27",
+            alertText: "#633806",
+            dot: "#EF9F27",
+            bg: "#FAEEDA",
+            border: "#FAC775",
+            text: "#633806"
+        },
+        {
+            label: "Elevated Alert",
+            signal: "Pre-Signal 1",
+            color: "#BA7517",
+            gaugeColor: "#EF9F27",
+            alertBg: "#FAEEDA",
+            alertBorder: "#EF9F27",
+            alertText: "#633806",
+            dot: "#EF9F27",
+            bg: "#FAEEDA",
+            border: "#FAC775",
+            text: "#633806"
+        },
+        {
+            label: "PAGASA Signal 1",
+            signal: "Signal 1",
+            color: "#D85A30",
+            gaugeColor: "#D85A30",
+            alertBg: "#FAECE7",
+            alertBorder: "#F0997B",
+            alertText: "#4A1B0C",
+            dot: "#D85A30",
+            bg: "#FAECE7",
+            border: "#F0997B",
+            text: "#4A1B0C"
+        },
+        {
+            label: "PAGASA Signal 2–3",
+            signal: "Signal 2–3",
+            color: "#A32D2D",
+            gaugeColor: "#E24B4A",
+            alertBg: "#FCEBEB",
+            alertBorder: "#F09595",
+            alertText: "#501313",
+            dot: "#E24B4A",
+            bg: "#FCEBEB",
+            border: "#F09595",
+            text: "#501313"
+        },
+        {
+            label: "PAGASA Signal 4–5",
+            signal: "Signal 4–5",
+            color: "#A32D2D",
+            gaugeColor: "#E24B4A",
+            alertBg: "#FCEBEB",
+            alertBorder: "#F09595",
+            alertText: "#501313",
+            dot: "#E24B4A",
+            bg: "#FCEBEB",
+            border: "#F09595",
+            text: "#501313"
+        }
+    ];
+
+    return configs[rank];
 }
 
 const RISK_COLORS = {
@@ -63,15 +189,84 @@ function LiveDot() {
     )
 }
 
-function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, barPct, barColor }) {
+function getOverrideInputBorderColor(name, value) {
+    if (value === "" || isNaN(parseFloat(value))) return "#e0e0e0";
+    const val = parseFloat(value);
+    if (name === "wind_speed" && val >= 60) return "#E24B4A";
+    if (name === "rainfall" && val >= 30) return "#E24B4A";
+    if (name === "pressure" && val <= 989) return "#E24B4A";
+    if (name === "humidity" && val >= 95) return "#E24B4A";
+    return "#e0e0e0";
+}
+
+function getCardBadgeAndBorder(name, value) {
+    if (value === null || value === undefined || value === "" || value === "N/A" || value === "—" || value === "-") {
+        return { badge: null, border: null, barColor: null };
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) {
+        return { badge: null, border: null, barColor: null };
+    }
+
+    if (name === "wind_speed") {
+        if (num < 45) return { badge: null, border: null, barColor: "#378ADD" };
+        if (num <= 59) return { badge: "Watch", border: "#EF9F27", barColor: "#EF9F27" };
+        if (num <= 119) return { badge: "Signal 1", border: "#E24B4A", barColor: "#E24B4A" };
+        if (num <= 169) return { badge: "Signal 2", border: "#E24B4A", barColor: "#E24B4A" };
+        if (num <= 219) return { badge: "Signal 3", border: "#E24B4A", barColor: "#E24B4A" };
+        if (num <= 299) return { badge: "Signal 4", border: "#A32D2D", barColor: "#A32D2D" };
+        return { badge: "Signal 5", border: "#A32D2D", barColor: "#A32D2D" };
+    }
+    if (name === "rainfall") {
+        if (num < 7.5) return { badge: null, border: null, barColor: "#639922" };
+        if (num <= 14.9) return { badge: "Heavy Rain", border: "#EF9F27", barColor: "#EF9F27" };
+        if (num <= 29.9) return { badge: "Intense Rain", border: "#D85A30", barColor: "#D85A30" };
+        return { badge: "Extreme Rain", border: "#E24B4A", barColor: "#E24B4A" };
+    }
+    if (name === "pressure") {
+        if (num > 1000) return { badge: null, border: null, barColor: "#D85A30" };
+        if (num >= 990 && num <= 999) return { badge: "Low Pressure", border: "#EF9F27", barColor: "#EF9F27" };
+        if (num >= 970 && num <= 989) return { badge: "Very Low Pressure", border: "#E24B4A", barColor: "#E24B4A" };
+        if (num < 970) return { badge: "Danger - Typhoon Core", border: "#A32D2D", barColor: "#A32D2D" };
+    }
+    if (name === "humidity") {
+        if (num < 85) return { badge: null, border: null, barColor: "#378ADD" };
+        if (num <= 94) return { badge: "Very Humid", border: "#EF9F27", barColor: "#EF9F27" };
+        return { badge: "Saturated Air", border: "#E24B4A", barColor: "#E24B4A" };
+    }
+    if (name === "temperature") {
+        if (num >= 24) return { badge: null, border: null, barColor: "#D85A30" };
+        return { badge: "Cold Inflow", border: "#EF9F27", barColor: "#EF9F27" };
+    }
+
+    return { badge: null, border: null, barColor: null };
+}
+
+function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, barPct, barColor, badge, borderColor }) {
     const noData = value === "N/A" || value === "—" || value === "-"
+    const displayBorder = borderColor ? `1.5px solid ${borderColor}` : "0.5px solid #e8ecf0"
     return (
-        <div style={styles.metricCard}>
+        <div style={{ ...styles.metricCard, border: displayBorder }}>
             <div style={styles.metricIconRow}>
                 <div style={{ ...styles.metricIconBox, background: bg }}>
                     <span style={{ fontSize: 15, color }}>{icon}</span>
                 </div>
-                {trend && (
+                {badge ? (
+                    <span style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        background: borderColor ? `${borderColor}12` : "#f0f0f0",
+                        color: borderColor || "#555",
+                        border: `1px solid ${borderColor || "#ddd"}`,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 2
+                    }}>
+                        {badge}
+                    </span>
+                ) : trend && (
                     <span style={{ fontSize: 10, fontWeight: 600, color: trend === "up" ? "#A32D2D" : "#0F6E56", display: "flex", alignItems: "center", gap: 2 }}>
                         {trend === "up" ? "▲" : "▼"} {trendLabel}
                     </span>
@@ -90,106 +285,106 @@ function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, ba
 }
 
 function TrendChart({ data }) {
-  const chartRef = useRef(null)
-  const instanceRef = useRef(null)
+    const chartRef = useRef(null)
+    const instanceRef = useRef(null)
 
-  useEffect(() => {
-    if (!data || data.length === 0) return
-    if (instanceRef.current) instanceRef.current.destroy()
+    useEffect(() => {
+        if (!data || data.length === 0) return
+        if (instanceRef.current) instanceRef.current.destroy()
 
-    const ctx = chartRef.current.getContext("2d")
+        const ctx = chartRef.current.getContext("2d")
 
-    instanceRef.current = new window.Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: data.map(d => d.time),
-        datasets: [
-          {
+        instanceRef.current = new window.Chart(ctx, {
             type: "bar",
-            label: "Wind Speed",
-            data: data.map(d => d.wind),
-            backgroundColor: data.map(d =>
-              d.wind >= 118 ? "#E24B4A" :
-              d.wind >= 88  ? "#EF9F27" :
-              "#378ADD"
-            ),
-            borderRadius: 4,
-            borderSkipped: false,
-            yAxisID: "yWind",
-          },
-          {
-            type: "line",
-            label: "Temperature",
-            data: data.map(d => d.temp),
-            borderColor: "#EF9F27",
-            borderWidth: 2,
-            tension: 0.3,
-            fill: false,
-            pointBackgroundColor: "#EF9F27",
-            pointRadius: 3,
-            yAxisID: "yTemp",
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: true,
-            position: "top",
-            labels: {
-              boxWidth: 10,
-              font: { size: 10 },
-              color: "#666"
+            data: {
+                labels: data.map(d => d.time),
+                datasets: [
+                    {
+                        type: "bar",
+                        label: "Wind Speed",
+                        data: data.map(d => d.wind),
+                        backgroundColor: data.map(d =>
+                            d.wind >= 118 ? "#E24B4A" :
+                                d.wind >= 88 ? "#EF9F27" :
+                                    "#378ADD"
+                        ),
+                        borderRadius: 4,
+                        borderSkipped: false,
+                        yAxisID: "yWind",
+                    },
+                    {
+                        type: "line",
+                        label: "Temperature",
+                        data: data.map(d => d.temp),
+                        borderColor: "#EF9F27",
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: false,
+                        pointBackgroundColor: "#EF9F27",
+                        pointRadius: 3,
+                        yAxisID: "yTemp",
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: "top",
+                        labels: {
+                            boxWidth: 10,
+                            font: { size: 10 },
+                            color: "#666"
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: context => {
+                                const label = context.dataset.label || "";
+                                const val = context.parsed.y;
+                                return ` ${label}: ${val} ${context.dataset.yAxisID === "yWind" ? "km/h" : "°C"}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 11 }, color: "#aaa" } },
+                    yWind: {
+                        type: "linear",
+                        position: "left",
+                        grid: { color: "rgba(0,0,0,0.05)" },
+                        ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " km/h" },
+                        min: 0,
+                    },
+                    yTemp: {
+                        type: "linear",
+                        position: "right",
+                        grid: { display: false },
+                        ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " °C" }
+                    }
+                }
             }
-          },
-          tooltip: {
-            callbacks: {
-              label: context => {
-                const label = context.dataset.label || "";
-                const val = context.parsed.y;
-                return ` ${label}: ${val} ${context.dataset.yAxisID === "yWind" ? "km/h" : "°C"}`;
-              }
-            }
-          }
-        },
-        scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 11 }, color: "#aaa" } },
-          yWind: {
-            type: "linear",
-            position: "left",
-            grid: { color: "rgba(0,0,0,0.05)" },
-            ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " km/h" },
-            min: 0,
-          },
-          yTemp: {
-            type: "linear",
-            position: "right",
-            grid: { display: false },
-            ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " °C" }
-          }
-        }
-      }
-    })
+        })
 
-    return () => { if (instanceRef.current) instanceRef.current.destroy() }
-  }, [data])
+        return () => { if (instanceRef.current) instanceRef.current.destroy() }
+    }, [data])
 
-  if (!data || data.length === 0) return (
-    <div style={{ height: 72, display: "flex", alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 12 }}>
-      No trend data yet
+    if (!data || data.length === 0) return (
+        <div style={{ height: 72, display: "flex", alignItems: "center", justifyContent: "center", color: "#aaa", fontSize: 12 }}>
+            No trend data yet
+        </div>
+    )
+
+    return <div style={{ position: "relative", width: "100%", height: 140 }}>
+        <canvas ref={chartRef} role="img" aria-label="6-hour wind speed & temperature chart" />
     </div>
-  )
-
-  return <div style={{ position: "relative", width: "100%", height: 140 }}>
-    <canvas ref={chartRef} role="img" aria-label="6-hour wind speed & temperature chart" />
-  </div>
 }
 
-function SeverityGauge({ severity, score }) {
-    const cfg = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.low
-    const displayScore = score ?? cfg.score
+function SeverityGauge({ score, wind = 0, rain = 0, pressure = 1013 }) {
+    const displayScore = score ?? 0
+    const cfg = getSeverityConfig(displayScore, wind, rain, pressure)
     // Gauge arc: total arc length ~141, offset controls fill
     const filled = Math.round((displayScore / 100) * 141)
     const offset = 141 - filled
@@ -208,7 +403,7 @@ function SeverityGauge({ severity, score }) {
                 {cfg.label}
             </div>
             <div style={{ fontSize: 11, color: "#888", textAlign: "center", margin: "3px 0 6px" }}>
-                PAGASA {cfg.signal} · 5-factor weighted score
+                {cfg.signal.startsWith("Signal") ? "PAGASA " : ""}{cfg.signal} · 5-factor weighted score
             </div>
         </div>
     )
@@ -291,10 +486,6 @@ function EvacRoutes({ evacuationCenter, severity }) {
 
 function RecentHistory({ logs }) {
     const recent = (logs || []).slice(0, 4)
-    const sevColor = { low: "#5DCAA5", moderate: "#EF9F27", high: "#D85A30", critical: "#E24B4A" }
-    const sevLabel = { low: "Low", moderate: "Mod", high: "High", critical: "Crit" }
-    const sevBg = { low: "#E1F5EE", moderate: "#FAEEDA", high: "#FAECE7", critical: "#FCEBEB" }
-    const sevText = { low: "#085041", moderate: "#633806", high: "#4A1B0C", critical: "#501313" }
 
     return (
         <div style={styles.historyCard}>
@@ -307,21 +498,29 @@ function RecentHistory({ logs }) {
                 <p style={{ fontSize: 12, color: "#aaa", padding: "8px 0" }}>No assessments yet.</p>
             )}
             {recent.map((log, i) => {
-                const sev = log.typhoon_log?.severity_level || "low"
+                const tLog = log.typhoon_log
+                const score = tLog ? calculateSeverityScore(
+                    parseFloat(tLog.wind_speed) || 0,
+                    parseFloat(tLog.rainfall) || 0,
+                    parseFloat(tLog.pressure) || 0,
+                    parseFloat(tLog.temperature) || 0,
+                    parseFloat(tLog.humidity) || 0
+                ) : 0
+                const cfg = getSeverityConfig(score)
                 const date = new Date(log.recommended_at)
                 const dateStr = date.toLocaleDateString("en-PH", { month: "short", year: "numeric" })
                 return (
                     <div key={log.id} style={{ ...styles.histRow, borderBottom: i < recent.length - 1 ? "0.5px solid #f0f0f0" : "none" }}>
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: sevColor[sev] || "#ccc", flexShrink: 0 }} />
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: cfg.dot || "#ccc", flexShrink: 0 }} />
                         <span style={{ color: "#aaa", minWidth: 70, fontSize: 11 }}>{dateStr}</span>
                         <span style={{ flex: 1, fontWeight: 500, fontSize: 11, color: "#333" }}>
                             {log.barangay?.name || "-"}
                         </span>
                         <span style={{
                             fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
-                            background: sevBg[sev], color: sevText[sev]
+                            background: cfg.bg, color: cfg.text
                         }}>
-                            {sevLabel[sev]}
+                            {cfg.label}
                         </span>
                     </div>
                 )
@@ -347,6 +546,7 @@ export default function Dashboard() {
     const [assessError, setAssessError] = useState(null)
     const [recentLogs, setRecentLogs] = useState([])
     const [showMap, setShowMap] = useState(false)
+    const [confirmModalOpen, setConfirmModalOpen] = useState(false)
 
 
     const weatherTimer = useRef(null)
@@ -492,6 +692,24 @@ export default function Dashboard() {
         setAssessing(false)
     }
 
+    const handleAssessClick = () => {
+        if (isBtnDisabled) return
+        if (maxRank >= 3) {
+            setConfirmModalOpen(true)
+        } else {
+            handleAssess()
+        }
+    }
+
+    const handleConfirmSubmit = () => {
+        setConfirmModalOpen(false)
+        handleAssess()
+    }
+
+    const handleCancelSubmit = () => {
+        setConfirmModalOpen(false)
+    }
+
     // -- Derived UI values --------------------------------------------------------
     const wind = parseFloat(formData.wind_speed) || 0
     const rain = parseFloat(formData.rainfall) || 0
@@ -499,27 +717,82 @@ export default function Dashboard() {
     const temperature = parseFloat(formData.temperature) || 0
     const humidity = parseFloat(formData.humidity) || 0
 
+    const hasWind = formData.wind_speed !== "" && !isNaN(parseFloat(formData.wind_speed))
+    const hasRain = formData.rainfall !== "" && !isNaN(parseFloat(formData.rainfall))
+    const hasPressure = formData.pressure !== "" && !isNaN(parseFloat(formData.pressure))
+    const hasHumidity = formData.humidity !== "" && !isNaN(parseFloat(formData.humidity))
+    const hasTemp = formData.temperature !== "" && !isNaN(parseFloat(formData.temperature))
+
+    let maxRank = 0
+    if (hasWind) {
+        const windVal = parseFloat(formData.wind_speed)
+        let r = 0
+        if (windVal >= 300) r = 5
+        else if (windVal >= 220) r = 5
+        else if (windVal >= 170) r = 4
+        else if (windVal >= 120) r = 4
+        else if (windVal >= 60) r = 3
+        else if (windVal >= 45) r = 1
+        maxRank = Math.max(maxRank, r)
+    }
+    if (hasRain) {
+        const rainVal = parseFloat(formData.rainfall)
+        let r = 0
+        if (rainVal >= 30) r = 3
+        else if (rainVal >= 15) r = 2
+        else if (rainVal >= 7.5) r = 1
+        maxRank = Math.max(maxRank, r)
+    }
+    if (hasPressure) {
+        const pressureVal = parseFloat(formData.pressure)
+        let r = 0
+        if (pressureVal < 970) r = 5
+        else if (pressureVal <= 989) r = 3
+        else if (pressureVal <= 999) r = 1
+        maxRank = Math.max(maxRank, r)
+    }
+    if (hasHumidity) {
+        const humidityVal = parseFloat(formData.humidity)
+        let r = 0
+        if (humidityVal >= 95) r = 3
+        else if (humidityVal >= 85) r = 1
+        maxRank = Math.max(maxRank, r)
+    }
+    if (hasTemp) {
+        const tempVal = parseFloat(formData.temperature)
+        let r = 0
+        if (tempVal < 24) r = 1
+        maxRank = Math.max(maxRank, r)
+    }
+
+    const isBtnDisabled = assessing || !formData.barangay_id
+
+    let conditionLabel = ""
+    if (maxRank === 3) conditionLabel = "Signal 1"
+    else if (maxRank === 4) conditionLabel = "Signal 2–3"
+    else if (maxRank === 5) conditionLabel = "Signal 4–5"
+
     // Progress-bar percentages — corrected PH-baseline formulas (match backend)
     const clamp = (val) => Math.min(Math.max(val, 0), 100)
-    const windPct      = Math.round(clamp((wind - 30) / 190 * 100))
-    const pressurePct  = Math.round(clamp((1013 - pressure) / 43 * 100))
-    const rainPct      = Math.round(clamp(rain / 60 * 100))
-    const humidityPct  = Math.round(clamp((humidity - 85) / 15 * 100))
-    const tempPct      = Math.round(clamp((30 - temperature) / 6 * 100))
+    const windPct = Math.round(clamp((wind - 30) / 190 * 100))
+    const pressurePct = Math.round(clamp((1013 - pressure) / 43 * 100))
+    const rainPct = Math.round(clamp(rain / 60 * 100))
+    const humidityPct = Math.round(clamp((humidity - 85) / 15 * 100))
+    const tempPct = Math.round(clamp((30 - temperature) / 6 * 100))
     const temperaturePct = tempPct
 
     // -- 5-factor weighted composite score (0–100) — matches backend weights -----
     const finalScore = Math.round(
-        (windPct     * 0.35) +
+        (windPct * 0.35) +
         (pressurePct * 0.30) +
-        (rainPct     * 0.20) +
+        (rainPct * 0.20) +
         (humidityPct * 0.10) +
-        (tempPct     * 0.05)
+        (tempPct * 0.05)
     )
-    const compositeScore = result ? finalScore : null
+    const compositeScore = result ? (result.score ?? finalScore) : null
 
     const severity = result?.severity || null
-    const sevCfg = severity ? SEVERITY_CONFIG[severity] : null
+    const sevCfg = compositeScore !== null ? getSeverityConfig(compositeScore, wind, rain, pressure) : null
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
@@ -535,11 +808,11 @@ export default function Dashboard() {
                 borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10,
             }}>
                 <span style={{ fontSize: 18, display: "flex", alignItems: "center" }}>
-                    {severity === "low" ? <Info size={18} style={{ color: cfg.alertText }} /> : <AlertTriangle size={18} style={{ color: cfg.alertText }} />}
+                    {compositeScore <= 24 ? <Info size={18} style={{ color: cfg.alertText }} /> : <AlertTriangle size={18} style={{ color: cfg.alertText }} />}
                 </span>
                 <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: cfg.alertText }}>
-                        {cfg.signal} · {cfg.label}
+                        {cfg.signal.startsWith("Signal") ? "PAGASA " : ""}{cfg.signal} · {cfg.label}
                     </div>
                     <div style={{ fontSize: 11, color: cfg.alertText, opacity: 0.85, marginTop: 2 }}>
                         {result.message}
@@ -549,11 +822,25 @@ export default function Dashboard() {
         )
     }
 
+    const windCardStyle = getCardBadgeAndBorder("wind_speed", formData.wind_speed)
+    const rainCardStyle = getCardBadgeAndBorder("rainfall", formData.rainfall)
+    const pressureCardStyle = getCardBadgeAndBorder("pressure", formData.pressure)
+    const tempCardStyle = getCardBadgeAndBorder("temperature", formData.temperature)
+    const humidityCardStyle = getCardBadgeAndBorder("humidity", formData.humidity)
+
     return (
         <div style={styles.page}>
             <style>{`
         @keyframes bagyoPulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
         @keyframes ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+        @keyframes pulseBtn {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(163, 45, 45, 0.7); }
+            70% { transform: scale(1.03); box-shadow: 0 0 0 8px rgba(163, 45, 45, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(163, 45, 45, 0); }
+        }
+        .bagyo-pulse-btn {
+            animation: pulseBtn 1.5s infinite;
+        }
         .bagyo-nav:hover { background: rgba(255,255,255,0.08) !important; }
         .bagyo-sidebar-item:hover { background: #f5f7ff !important; color: #185FA5 !important; }
         .bagyo-assess:hover:not(:disabled) { opacity: 0.88 !important; transform: translateY(-1px); }
@@ -565,58 +852,58 @@ export default function Dashboard() {
             {/* -- Main Layout -------------------------------------------------- */}
             <div style={styles.layout}>
 
-            {/* -- Sidebar ---------------------------------------------------- */}
-            <Sidebar activePage="dashboard">
-                <div style={styles.navSection}>Barangay</div>
+                {/* -- Sidebar ---------------------------------------------------- */}
+                <Sidebar activePage="dashboard">
+                    <div style={styles.navSection}>Barangay</div>
 
-                <div style={{ padding: "0 12px 12px" }}>
-                    <div style={styles.barangayLabel}>Active barangay</div>
-                    <Select
-                        options={barangays}
-                        value={selectedBarangay}
-                        onChange={handleBarangayChange}
-                        placeholder="Select barangay..."
-                        isSearchable
-                        menuPortalTarget={document.body}
-                        styles={selectStyles}
-                    />
-                    {selectedBarangay?.riskLevel && (
-                        <div style={{
-                            marginTop: 8, fontSize: 11, fontWeight: 600, padding: "3px 10px",
-                            borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 5, color: "white",
-                            background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
-                        }}>
-                            <AlertTriangle size={12} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
-                        </div>
-                    )}
-                </div>
-
-                {/* Weather status in sidebar */}
-                <div style={{ padding: "0 12px", marginTop: "auto", paddingBottom: 16 }}>
-                    <div style={{
-                        background: weatherFetched ? "#E1F5EE" : "#f5f5f5",
-                        borderRadius: 8, padding: "8px 10px", fontSize: 11,
-                        color: weatherFetched ? "#085041" : "#aaa",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                    }}>
-                        {weatherLoading ? (
-                            <>
-                                <Loader size={12} style={{ animation: "spin 1.5s linear infinite" }} />
-                                <span>Fetching weather...</span>
-                            </>
-                        ) : weatherFetched ? (
-                            <>
-                                <Satellite size={12} style={{ color: "#1D9E75" }} />
-                                <span>Live · Updated {lastUpdatedStr}</span>
-                            </>
-                        ) : (
-                            "Select a barangay"
+                    <div style={{ padding: "0 12px 12px" }}>
+                        <div style={styles.barangayLabel}>Active barangay</div>
+                        <Select
+                            options={barangays}
+                            value={selectedBarangay}
+                            onChange={handleBarangayChange}
+                            placeholder="Select barangay..."
+                            isSearchable
+                            menuPortalTarget={document.body}
+                            styles={selectStyles}
+                        />
+                        {selectedBarangay?.riskLevel && (
+                            <div style={{
+                                marginTop: 8, fontSize: 11, fontWeight: 600, padding: "3px 10px",
+                                borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 5, color: "white",
+                                background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
+                            }}>
+                                <AlertTriangle size={12} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
+                            </div>
                         )}
                     </div>
-                </div>
-            </Sidebar>
+
+                    {/* Weather status in sidebar */}
+                    <div style={{ padding: "0 12px", marginTop: "auto", paddingBottom: 16 }}>
+                        <div style={{
+                            background: weatherFetched ? "#E1F5EE" : "#f5f5f5",
+                            borderRadius: 8, padding: "8px 10px", fontSize: 11,
+                            color: weatherFetched ? "#085041" : "#aaa",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                        }}>
+                            {weatherLoading ? (
+                                <>
+                                    <Loader size={12} style={{ animation: "spin 1.5s linear infinite" }} />
+                                    <span>Fetching weather...</span>
+                                </>
+                            ) : weatherFetched ? (
+                                <>
+                                    <Satellite size={12} style={{ color: "#1D9E75" }} />
+                                    <span>Live · Updated {lastUpdatedStr}</span>
+                                </>
+                            ) : (
+                                "Select a barangay"
+                            )}
+                        </div>
+                    </div>
+                </Sidebar>
 
                 {/* -- Main Content ----------------------------------------------- */}
                 <main style={styles.main}>
@@ -669,29 +956,34 @@ export default function Dashboard() {
                                 icon={<Wind size={15} />} color="#185FA5" bg="#E6F1FB"
                                 label="Wind speed" value={metricDisplay(formData.wind_speed)} unit="km/h"
                                 trend={wind > 88 ? "up" : null} trendLabel={wind > 118 ? "Danger" : "Warning"}
-                                barPct={windPct} barColor={wind > 118 ? "#E24B4A" : wind > 88 ? "#EF9F27" : "#378ADD"}
+                                barPct={windPct} barColor={windCardStyle.barColor || "#ddd"}
+                                badge={windCardStyle.badge} borderColor={windCardStyle.border}
                             />
                             <MetricCard
                                 icon={<CloudRain size={15} />} color="#3B6D11" bg="#EAF3DE"
                                 label="Rainfall rate" value={metricDisplay(formData.rainfall)} unit="mm/hr"
                                 trend={rain > 15 ? "up" : null} trendLabel={rain > 30 ? "Heavy" : "Moderate"}
-                                barPct={rainPct} barColor={rain > 30 ? "#E24B4A" : rain > 15 ? "#EF9F27" : "#639922"}
+                                barPct={rainPct} barColor={rainCardStyle.barColor || "#ddd"}
+                                badge={rainCardStyle.badge} borderColor={rainCardStyle.border}
                             />
                             <MetricCard
                                 icon={<Gauge size={15} />} color="#993C1D" bg="#FAECE7"
                                 label="Atmos. pressure" value={metricDisplay(formData.pressure)} unit="hPa"
                                 trend={pressure > 0 && pressure < 990 ? "up" : null} trendLabel="Dropping"
-                                barPct={pressurePct} barColor={pressure < 970 ? "#E24B4A" : pressure < 990 ? "#EF9F27" : "#D85A30"}
+                                barPct={pressurePct} barColor={pressureCardStyle.barColor || "#ddd"}
+                                badge={pressureCardStyle.badge} borderColor={pressureCardStyle.border}
                             />
                             <MetricCard
                                 icon={<Thermometer size={15} />} color="#D85A30" bg="#FAECE7"
                                 label="Temperature" value={metricDisplay(formData.temperature)} unit="°C"
-                                barPct={temperaturePct} barColor="#D85A30"
+                                barPct={temperaturePct} barColor={tempCardStyle.barColor || "#ddd"}
+                                badge={tempCardStyle.badge} borderColor={tempCardStyle.border}
                             />
                             <MetricCard
                                 icon={<Droplets size={15} />} color="#185FA5" bg="#E6F1FB"
                                 label="Humidity" value={metricDisplay(formData.humidity)} unit="%"
-                                barPct={humidityPct} barColor="#378ADD"
+                                barPct={humidityPct} barColor={humidityCardStyle.barColor || "#ddd"}
+                                badge={humidityCardStyle.badge} borderColor={humidityCardStyle.border}
                             />
                         </div>
 
@@ -733,7 +1025,7 @@ export default function Dashboard() {
                                 </div>
                                 {result ? (
                                     <>
-                                        <SeverityGauge severity={severity} score={compositeScore} />
+                                        <SeverityGauge score={compositeScore} wind={wind} rain={rain} pressure={pressure} />
                                         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
                                             <FactorBar label="Wind" pct={windPct} color="#378ADD" />
                                             <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
@@ -772,22 +1064,34 @@ export default function Dashboard() {
                                         <input
                                             type="number" name={name} value={formData[name]}
                                             onChange={handleChange} placeholder={placeholder}
-                                            style={styles.input}
+                                            style={{
+                                                ...styles.input,
+                                                border: `1.5px solid ${getOverrideInputBorderColor(name, formData[name])}`,
+                                            }}
                                         />
                                     </div>
                                 ))}
                                 <button
-                                    className="bagyo-assess"
-                                    onClick={handleAssess}
-                                    disabled={assessing || !formData.barangay_id}
+                                    className={`bagyo-assess ${(!isBtnDisabled && (maxRank === 4 || maxRank === 5)) ? "bagyo-pulse-btn" : ""}`}
+                                    onClick={handleAssessClick}
+                                    disabled={isBtnDisabled}
                                     style={{
                                         ...styles.assessBtn,
-                                        background: assessing || !formData.barangay_id ? "#ccc" : "linear-gradient(135deg, #1a237e, #1565c0)",
-                                        cursor: assessing || !formData.barangay_id ? "not-allowed" : "pointer",
+                                        background: isBtnDisabled
+                                            ? "#ccc"
+                                            : maxRank === 1 || maxRank === 2
+                                                ? "#EF9F27"
+                                                : maxRank === 3
+                                                    ? "#E24B4A"
+                                                    : maxRank === 4 || maxRank === 5
+                                                        ? "#A32D2D"
+                                                        : "linear-gradient(135deg, #1a237e, #1565c0)",
+                                        cursor: isBtnDisabled ? "not-allowed" : "pointer",
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 5,
                                         justifyContent: "center",
+                                        border: "none",
                                     }}
                                 >
                                     {assessing ? (
@@ -796,7 +1100,12 @@ export default function Dashboard() {
                                         </>
                                     ) : (
                                         <>
-                                            <Search size={13} /> Assess
+                                            {maxRank === 0 && <><Search size={13} /> Assess</>}
+                                            {maxRank === 1 && "Assess - Watch Level"}
+                                            {maxRank === 2 && "Assess - Elevated"}
+                                            {maxRank === 3 && "Assess - Signal 1 Detected"}
+                                            {maxRank === 4 && "Assess - Signal 2–3"}
+                                            {maxRank === 5 && "URGENT - Assess Now"}
                                         </>
                                     )}
                                 </button>
@@ -837,6 +1146,42 @@ export default function Dashboard() {
                     </div>
                 </main>
             </div>
+
+            {confirmModalOpen && (
+                <div style={styles.overlay} onClick={handleCancelSubmit}>
+                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.modalHeader}>
+                            <h2 style={{ ...styles.modalTitle, color: "#a32d2d", display: "flex", alignItems: "center", gap: 6 }}>
+                                <AlertTriangle size={18} /> Confirm Assessment
+                            </h2>
+                            <div onClick={handleCancelSubmit} style={styles.closeBtn}><X size={18} /></div>
+                        </div>
+                        <div style={{ ...styles.modalBody, fontSize: 14, color: "#333", lineHeight: 1.5 }}>
+                            <p style={{ margin: "0 0 10px 0" }}>
+                                Weather data indicates <strong>{conditionLabel}</strong> conditions.
+                            </p>
+                            <p style={{ margin: "0 0 10px 0" }}>
+                                Submitting this assessment will notify barangay officials.
+                            </p>
+                            <p style={{ margin: 0, fontWeight: 600 }}>Proceed?</p>
+                        </div>
+                        <div style={styles.modalFooter}>
+                            <button
+                                onClick={handleCancelSubmit}
+                                style={styles.cancelBtn}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmSubmit}
+                                style={styles.saveBtn}
+                            >
+                                Yes, Submit Assessment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
@@ -922,6 +1267,18 @@ const styles = {
         borderRadius: 8, fontSize: 13, fontWeight: 700,
         transition: "opacity 0.2s, transform 0.15s", whiteSpace: "nowrap",
     },
+    overlay: {
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+    },
+    modal: { background: "#fff", borderRadius: 12, width: "100%", maxWidth: 480, boxShadow: "0 8px 32px rgba(0,0,0,0.2)" },
+    modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 20px", borderBottom: "1px solid #eee" },
+    modalTitle: { margin: 0, fontSize: 16, fontWeight: 600, color: "#1a237e" },
+    closeBtn: { cursor: "pointer", color: "#888", padding: 4, display: "flex", alignItems: "center" },
+    modalBody: { padding: "20px" },
+    modalFooter: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid #eee" },
+    cancelBtn: { padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer", color: "#666", border: "1px solid #ddd", background: "#fff" },
+    saveBtn: { padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "#a32d2d", color: "#fff", border: "none" },
 }
 
 const selectStyles = {

@@ -3,39 +3,56 @@ import axios from "axios"
 import { useNavigate } from "react-router-dom"
 import { Tornado, BarChart2, Clock, RefreshCw, Download, Search, Loader, AlertTriangle, Inbox, MapPin, School, Trash2 } from "lucide-react"
 import Sidebar from "../components/Sidebar"
+import { calculateSeverityScore, getSeverityConfig } from "./Dashboard"
 
 const API_BASE = "http://127.0.0.1:8000/api"
 const PAGE_SIZE = 8
 
 // ─── Severity config ──────────────────────────────────────────────────────────
-const SEV = {
-    low: { label: "Low", signal: "Signal #1", dot: "#1D9E75", bg: "#E1F5EE", text: "#085041", border: "#9FE1CB" },
-    moderate: { label: "Moderate", signal: "Signal #2", dot: "#EF9F27", bg: "#FAEEDA", text: "#633806", border: "#FAC775" },
-    high: { label: "High", signal: "Signal #3", dot: "#D85A30", bg: "#FAECE7", text: "#4A1B0C", border: "#F0997B" },
-    critical: { label: "Critical", signal: "Signal #4–5", dot: "#E24B4A", bg: "#FCEBEB", text: "#501313", border: "#F09595" },
-}
+function SeverityBadge({ log }) {
+    const tLog = log?.typhoon_log
+    const score = tLog ? calculateSeverityScore(
+        parseFloat(tLog.wind_speed) || 0,
+        parseFloat(tLog.rainfall) || 0,
+        parseFloat(tLog.pressure) || 0,
+        parseFloat(tLog.temperature) || 0,
+        parseFloat(tLog.humidity) || 0
+    ) : 0
+    const cfg = getSeverityConfig(
+        score,
+        tLog ? parseFloat(tLog.wind_speed) || 0 : 0,
+        tLog ? parseFloat(tLog.rainfall) || 0 : 0,
+        tLog ? parseFloat(tLog.pressure) || 1013 : 1013
+    )
 
-function SeverityBadge({ severity }) {
-    const cfg = SEV[severity] || SEV.low
+    const signalLabel = cfg.signal.startsWith("Signal") ? `PAGASA ${cfg.signal}` : cfg.signal
+
     return (
-        <div>
+        <div style={{ display: "inline-flex", flexDirection: "column", gap: 3 }}>
+            {/* Main badge — same pill style for ALL severities */}
             <span style={{
                 display: "inline-flex", alignItems: "center", gap: 5,
                 fontSize: 11, fontWeight: 600, padding: "3px 9px",
                 borderRadius: 20, background: cfg.bg, color: cfg.text,
                 border: `0.5px solid ${cfg.border}`,
+                whiteSpace: "nowrap",
             }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: cfg.dot, display: "inline-block", flexShrink: 0 }} />
+                <span style={{
+                    width: 7, height: 7, borderRadius: "50%",
+                    background: cfg.dot, display: "inline-block", flexShrink: 0
+                }} />
                 {cfg.label}
             </span>
-            <div style={{ marginTop: 3 }}>
-                <span style={{
-                    fontSize: 10, color: "#888", background: "#f5f5f5",
-                    padding: "2px 7px", borderRadius: 10, border: "0.5px solid #e8e8e8",
-                }}>
-                    PAGASA {cfg.signal}
-                </span>
-            </div>
+            {/* Signal sub-label */}
+            <span style={{
+                fontSize: 10, color: "#888", background: "#f5f5f5",
+                padding: "2px 7px", borderRadius: 10,
+                border: "0.5px solid #e8e8e8",
+                whiteSpace: "nowrap",
+                display: "inline-block",
+            }}>
+                {signalLabel}
+            </span>
         </div>
     )
 }
@@ -100,20 +117,36 @@ export default function History() {
             "Temperature (°C)", "Humidity (%)",   // ← NEW
             "Evacuation Center"
         ]
-        const rows = filtered.map((log, i) => [
-            filtered.length - i,
-            log.barangay?.name || "—",
-            log.barangay?.city || "—",
-            formatDate(log.recommended_at),
-            log.typhoon_log?.severity_level || "—",
-            SEV[log.typhoon_log?.severity_level]?.signal || "—",
-            log.typhoon_log?.wind_speed || "—",
-            log.typhoon_log?.rainfall || "—",
-            log.typhoon_log?.pressure || "—",
-            log.typhoon_log?.temperature ?? "—",   // ← NEW
-            log.typhoon_log?.humidity ?? "—",       // ← NEW
-            log.evacuation_center?.name || "—",
-        ])
+        const rows = filtered.map((log, i) => {
+            const tLog = log.typhoon_log
+            const score = tLog ? calculateSeverityScore(
+                parseFloat(tLog.wind_speed) || 0,
+                parseFloat(tLog.rainfall) || 0,
+                parseFloat(tLog.pressure) || 0,
+                parseFloat(tLog.temperature) || 0,
+                parseFloat(tLog.humidity) || 0
+            ) : 0
+            const cfg = getSeverityConfig(
+                score,
+                tLog ? parseFloat(tLog.wind_speed) || 0 : 0,
+                tLog ? parseFloat(tLog.rainfall) || 0 : 0,
+                tLog ? parseFloat(tLog.pressure) || 1013 : 1013
+            )
+            return [
+                filtered.length - i,
+                log.barangay?.name || "—",
+                log.barangay?.city || "—",
+                formatDate(log.recommended_at),
+                cfg.label,
+                (cfg.signal.startsWith("Signal") ? "PAGASA " : "") + cfg.signal,
+                log.typhoon_log?.wind_speed || "—",
+                log.typhoon_log?.rainfall || "—",
+                log.typhoon_log?.pressure || "—",
+                log.typhoon_log?.temperature ?? "—",
+                log.typhoon_log?.humidity ?? "—",
+                log.evacuation_center?.name || "—",
+            ]
+        })
         const csv = [headers, ...rows].map(r => r.join(",")).join("\n")
         const blob = new Blob([csv], { type: "text/csv" })
         const url = URL.createObjectURL(blob)
@@ -229,11 +262,20 @@ export default function History() {
                     {/* Severity legend */}
                     <div style={styles.sbSection}>Severity legend</div>
                     <div style={{ padding: "0 12px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-                        {Object.entries(SEV).map(([key, cfg]) => (
-                            <div key={key} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "#555" }}>
+                        {[
+                            { label: "Normal / Clear", signal: "No signal", dot: "#5DCAA5" },
+                            { label: "Watch / LPA", signal: "Low Pressure Area", dot: "#EF9F27" },
+                            { label: "Elevated Alert", signal: "Pre-Signal 1", dot: "#EF9F27" },
+                            { label: "PAGASA Signal 1", signal: "Signal 1", dot: "#D85A30" },
+                            { label: "PAGASA Signal 2–3", signal: "Signal 2–3", dot: "#E24B4A" },
+                            { label: "PAGASA Signal 4–5", signal: "Signal 4–5", dot: "#E24B4A" }
+                        ].map((cfg, idx) => (
+                            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "#555" }}>
                                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: cfg.dot, flexShrink: 0 }} />
                                 <span style={{ flex: 1 }}>{cfg.label}</span>
-                                <span style={{ fontSize: 10, color: "#aaa" }}>{cfg.signal}</span>
+                                <span style={{ fontSize: 10, color: "#aaa" }}>
+                                    {cfg.signal.startsWith("Signal") ? "PAGASA " : ""}{cfg.signal}
+                                </span>
                             </div>
                         ))}
                     </div>
@@ -354,135 +396,118 @@ export default function History() {
                         {/* ── Table ─────────────────────────────────────────────── */}
                         {!loading && !error && filtered.length > 0 && (
                             <div style={styles.tableWrap}>
+                                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                                    <thead>
+                                        <tr style={{ background: "#f8f9fb", borderBottom: "0.5px solid #e8ecf0" }}>
+                                            <th style={styles.th}>#</th>
+                                            <th style={styles.th}>Barangay / date</th>
+                                            <th style={styles.th}>Severity</th>
+                                            <th style={styles.th}>Wind</th>
+                                            <th style={styles.th}>Rainfall</th>
+                                            <th style={styles.th}>Pressure</th>
+                                            <th style={styles.th}>Temp.</th>
+                                            <th style={styles.th}>Humidity</th>
+                                            <th style={styles.th}>Evac. center</th>
+                                            <th style={styles.th}>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginated.map((log, i) => {
+                                            const globalIndex = filtered.length - ((currentPage - 1) * PAGE_SIZE) - i
+                                            const sev = log.typhoon_log?.severity_level || "low"
+                                            const hasEvac = !!log.evacuation_center?.name
 
-                                {/* Table header — now includes Temp & Humidity */}
-                                <div style={styles.tableHead}>
-                                    <div style={styles.th}>#</div>
-                                    <div style={styles.th}>Barangay / date</div>
-                                    <div style={styles.th}>Severity</div>
-                                    <div style={styles.th}>Wind</div>
-                                    <div style={styles.th}>Rainfall</div>
-                                    <div style={styles.th}>Pressure</div>
-                                    <div style={styles.th}>Temp.</div>       {/* ← NEW */}
-                                    <div style={styles.th}>Humidity</div>    {/* ← NEW */}
-                                    <div style={styles.th}>Evac. center</div>
-                                    <div style={styles.th}>Action</div>
-                                </div>
+                                            const temp = log.typhoon_log?.temperature
+                                            const tempColor = temp == null ? "#aaa"
+                                                : temp >= 36 ? "#A32D2D"
+                                                    : temp >= 32 ? "#D85A30"
+                                                        : temp < 20 ? "#1565c0"
+                                                            : "#1a1a2e"
 
-                                {/* Table rows */}
-                                {paginated.map((log, i) => {
-                                    const globalIndex = filtered.length - ((currentPage - 1) * PAGE_SIZE) - i
-                                    const sev = log.typhoon_log?.severity_level || "low"
-                                    const hasEvac = !!log.evacuation_center?.name
+                                            const humidity = log.typhoon_log?.humidity
+                                            const humidityColor = humidity == null ? "#aaa"
+                                                : humidity >= 90 ? "#A32D2D"
+                                                    : humidity >= 75 ? "#D85A30"
+                                                        : humidity >= 60 ? "#EF9F27"
+                                                            : "#1a1a2e"
 
-                                    // ── Temperature color coding ──────────────────
-                                    const temp = log.typhoon_log?.temperature
-                                    const tempColor = temp == null ? "#aaa"
-                                        : temp >= 36 ? "#A32D2D"
-                                            : temp >= 32 ? "#D85A30"
-                                                : temp < 20 ? "#1565c0"
-                                                    : "#1a1a2e"
-
-                                    // ── Humidity color coding ─────────────────────
-                                    const humidity = log.typhoon_log?.humidity
-                                    const humidityColor = humidity == null ? "#aaa"
-                                        : humidity >= 90 ? "#A32D2D"
-                                            : humidity >= 75 ? "#D85A30"
-                                                : humidity >= 60 ? "#EF9F27"
-                                                    : "#1a1a2e"
-
-                                    return (
-                                        <div
-                                            key={log.id}
-                                            className="h-row"
-                                            style={{
-                                                ...styles.tableRow,
-                                                borderBottom: i < paginated.length - 1 ? "0.5px solid #f0f4f8" : "none",
-                                                opacity: deletingId === log.id ? 0.4 : 1,
-                                                transition: "opacity 0.2s",
-                                            }}
-                                        >
-                                            {/* # */}
-                                            <div style={styles.rowNum}>{globalIndex}</div>
-
-                                            {/* Barangay + date */}
-                                            <div>
-                                                <div style={{ ...styles.rowBname, display: "flex", alignItems: "center", gap: 4 }}>
-                                                    <MapPin size={12} style={{ color: "#888" }} /> {log.barangay?.name || "—"}{log.barangay?.city ? `, ${log.barangay.city}` : ""}
-                                                </div>
-                                                <div style={{ ...styles.rowBdate, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
-                                                    <Clock size={11} style={{ color: "#bbb" }} /> {formatDateShort(log.recommended_at)} · {formatTime(log.recommended_at)}
-                                                </div>
-                                            </div>
-
-                                            {/* Severity badge */}
-                                            <SeverityBadge severity={sev} />
-
-                                            {/* Wind */}
-                                            <div>
-                                                <div style={styles.metricVal}>{log.typhoon_log?.wind_speed ?? "—"}</div>
-                                                <div style={styles.metricUnit}>km/h</div>
-                                            </div>
-
-                                            {/* Rainfall */}
-                                            <div>
-                                                <div style={styles.metricVal}>{log.typhoon_log?.rainfall ?? "—"}</div>
-                                                <div style={styles.metricUnit}>mm/hr</div>
-                                            </div>
-
-                                            {/* Pressure */}
-                                            <div>
-                                                <div style={styles.metricVal}>{log.typhoon_log?.pressure ?? "—"}</div>
-                                                <div style={styles.metricUnit}>hPa</div>
-                                            </div>
-
-                                            {/* Temperature ← NEW */}
-                                            <div>
-                                                <div style={{ ...styles.metricVal, color: tempColor }}>
-                                                    {temp != null ? temp : "—"}
-                                                </div>
-                                                <div style={styles.metricUnit}>°C</div>
-                                            </div>
-
-                                            {/* Humidity ← NEW */}
-                                            <div>
-                                                <div style={{ ...styles.metricVal, color: humidityColor }}>
-                                                    {humidity != null ? humidity : "—"}
-                                                </div>
-                                                <div style={styles.metricUnit}>%</div>
-                                            </div>
-
-                                            {/* Evacuation center */}
-                                            <div style={{ fontSize: 11, color: hasEvac ? "#555" : "#bbb" }}>
-                                                {hasEvac ? (
-                                                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                            <School size={12} style={{ color: "#666" }} /> {log.evacuation_center.name}
-                                                        </div>
-                                                        {log.evacuation_center.distance !== undefined && log.evacuation_center.distance !== null && (
-                                                            <div style={{ fontSize: 10, color: "#1565c0", fontWeight: 600, paddingLeft: 16 }}>
-                                                                📍 {parseFloat(log.evacuation_center.distance).toFixed(1)} km away
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                ) : "— None needed"}
-                                            </div>
-
-                                            {/* Delete */}
-                                            <div>
-                                                <button
-                                                    className="h-del"
-                                                    onClick={() => handleDelete(log.id)}
-                                                    disabled={!!deletingId}
-                                                    style={styles.deleteBtn}
-                                                    title="Delete record"
+                                            return (
+                                                <tr
+                                                    key={log.id}
+                                                    className="h-row"
+                                                    style={{
+                                                        opacity: deletingId === log.id ? 0.4 : 1,
+                                                        transition: "opacity 0.2s",
+                                                    }}
                                                 >
-                                                    <Trash2 size={11} /> Delete
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
+                                                    <td style={styles.td}><span style={styles.rowNum}>{globalIndex}</span></td>
+                                                    <td style={styles.td}>
+                                                        <div style={{ display: "inline-flex", flexDirection: "column", gap: 2 }}>
+                                                            <div style={{ ...styles.rowBname, display: "flex", alignItems: "center", gap: 4 }}>
+                                                                <MapPin size={12} style={{ color: "#888" }} /> {log.barangay?.name || "—"}{log.barangay?.city ? `, ${log.barangay.city}` : ""}
+                                                            </div>
+                                                            <div style={{ ...styles.rowBdate, display: "flex", alignItems: "center", gap: 4 }}>
+                                                                <Clock size={11} style={{ color: "#bbb" }} /> {formatDateShort(log.recommended_at)} · {formatTime(log.recommended_at)}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td style={styles.td}><SeverityBadge log={log} /></td>
+                                                    <td style={styles.td}>
+                                                        <div style={styles.metricVal}>{log.typhoon_log?.wind_speed ?? "—"}</div>
+                                                        <div style={styles.metricUnit}>km/h</div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={styles.metricVal}>{log.typhoon_log?.rainfall ?? "—"}</div>
+                                                        <div style={styles.metricUnit}>mm/hr</div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={styles.metricVal}>{log.typhoon_log?.pressure ?? "—"}</div>
+                                                        <div style={styles.metricUnit}>hPa</div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={{ ...styles.metricVal, color: tempColor }}>
+                                                            {temp != null ? temp : "—"}
+                                                        </div>
+                                                        <div style={styles.metricUnit}>°C</div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={{ ...styles.metricVal, color: humidityColor }}>
+                                                            {humidity != null ? humidity : "—"}
+                                                        </div>
+                                                        <div style={styles.metricUnit}>%</div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <div style={{ fontSize: 11, color: hasEvac ? "#555" : "#bbb" }}>
+                                                            {hasEvac ? (
+                                                                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                                                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                                                        <School size={12} style={{ color: "#666" }} /> {log.evacuation_center.name}
+                                                                    </div>
+                                                                    {log.evacuation_center.distance !== undefined && log.evacuation_center.distance !== null && (
+                                                                        <div style={{ fontSize: 10, color: "#1565c0", fontWeight: 600, paddingLeft: 16 }}>
+                                                                            📍 {parseFloat(log.evacuation_center.distance).toFixed(1)} km away
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            ) : "— None needed"}
+                                                        </div>
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <button
+                                                            className="h-del"
+                                                            onClick={() => handleDelete(log.id)}
+                                                            disabled={!!deletingId}
+                                                            style={styles.deleteBtn}
+                                                            title="Delete record"
+                                                        >
+                                                            <Trash2 size={11} /> Delete
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
 
                                 {/* Pagination */}
                                 <div style={styles.pagination}>
@@ -581,10 +606,18 @@ const styles = {
 
     tableWrap: { background: "white", borderRadius: 12, border: "0.5px solid #e8ecf0", overflow: "hidden" },
 
-    // ← Updated grid to include Temp + Humidity columns
-    tableHead: { display: "grid", gridTemplateColumns: "36px 1.6fr 110px 70px 70px 75px 65px 70px 130px 72px", padding: "8px 16px", background: "#f8f9fb", borderBottom: "0.5px solid #e8ecf0", alignItems: "center" },
-    th: { fontSize: 10, fontWeight: 600, color: "#bbb", textTransform: "uppercase", letterSpacing: "0.06em" },
-    tableRow: { display: "grid", gridTemplateColumns: "36px 1.6fr 110px 70px 70px 75px 65px 70px 130px 72px", padding: "10px 16px", alignItems: "center", transition: "background 0.1s" },
+    // Table styles
+    th: {
+        textAlign: "left", padding: "8px 16px",
+        fontSize: 10, fontWeight: 600, color: "#bbb",
+        textTransform: "uppercase", letterSpacing: "0.06em",
+    },
+    td: {
+        padding: "10px 16px",
+        fontSize: 13,
+        color: "#1a1a2e",
+        verticalAlign: "middle",
+    },
 
     rowNum: { fontSize: 11, color: "#bbb", fontWeight: 600 },
     rowBname: { fontSize: 12, fontWeight: 600, color: "#1a1a2e" },

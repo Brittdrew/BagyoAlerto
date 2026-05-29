@@ -3,16 +3,20 @@ import axios from "axios"
 import { Loader, Inbox, Filter, Radio, RefreshCw, Download } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
+import { calculateSeverityScore, getSeverityConfig } from "../Dashboard"
 
 const API_BASE = "http://127.0.0.1:8000/api"
 const POLL_MS = 5000
 const PAGE_SIZE = 8
 
-const SEV = {
-    low: { label: "Low", color: "#1D9E75", bg: "#E1F5EE" },
-    moderate: { label: "Moderate", color: "#BA7517", bg: "#FAEEDA" },
-    high: { label: "High", color: "#D85A30", bg: "#FAECE7" },
-    critical: { label: "Critical", color: "#A32D2D", bg: "#FCEBEB" },
+const FILTER_LABELS = {
+    all: "All",
+    normal: "Normal",
+    watch: "Watch",
+    elevated: "Elevated",
+    signal1: "Signal 1",
+    signal2_3: "Signal 2–3",
+    signal4_5: "Signal 4–5",
 }
 
 export default function AdminHistory() {
@@ -76,17 +80,33 @@ export default function AdminHistory() {
     // --- CSV Export ---
     const handleExportCSV = () => {
         const headers = ["ID", "Barangay", "Severity", "Wind (km/h)", "Rainfall (mm)", "Pressure (hPa)", "Temperature (°C)", "Humidity (%)", "Evacuation Center"]
-        const rows = filtered.map((rec) => [
-            rec.id,
-            rec.barangay?.name || "-",
-            (SEV[rec.typhoon_log?.severity_level] || SEV.low).label,
-            rec.typhoon_log?.wind_speed ?? "-",
-            rec.typhoon_log?.rainfall ?? "-",
-            rec.typhoon_log?.pressure ?? "-",
-            rec.typhoon_log?.temperature != null ? `${parseFloat(rec.typhoon_log.temperature).toFixed(1)}` : "-",
-            rec.typhoon_log?.humidity != null ? `${parseFloat(rec.typhoon_log.humidity).toFixed(1)}` : "-",
-            rec.evacuation_center?.name || "-",
-        ])
+        const rows = filtered.map((rec) => {
+            const tLog = rec.typhoon_log
+            const score = tLog ? calculateSeverityScore(
+                parseFloat(tLog.wind_speed) || 0,
+                parseFloat(tLog.rainfall) || 0,
+                parseFloat(tLog.pressure) || 0,
+                parseFloat(tLog.temperature) || 0,
+                parseFloat(tLog.humidity) || 0
+            ) : 0
+            const cfg = getSeverityConfig(
+                score,
+                tLog ? parseFloat(tLog.wind_speed) || 0 : 0,
+                tLog ? parseFloat(tLog.rainfall) || 0 : 0,
+                tLog ? parseFloat(tLog.pressure) || 1013 : 1013
+            )
+            return [
+                rec.id,
+                rec.barangay?.name || "-",
+                cfg.label,
+                rec.typhoon_log?.wind_speed ?? "-",
+                rec.typhoon_log?.rainfall ?? "-",
+                rec.typhoon_log?.pressure ?? "-",
+                rec.typhoon_log?.temperature != null ? `${parseFloat(rec.typhoon_log.temperature).toFixed(1)}` : "-",
+                rec.typhoon_log?.humidity != null ? `${parseFloat(rec.typhoon_log.humidity).toFixed(1)}` : "-",
+                rec.evacuation_center?.name || "-",
+            ]
+        })
         const csvContent = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(",")).join("\n")
         const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
         const url = URL.createObjectURL(blob)
@@ -98,8 +118,31 @@ export default function AdminHistory() {
     }
 
     const filtered = useMemo(() => {
-        if (sevFilter === "all") return logs
-        return logs.filter((l) => l.typhoon_log?.severity_level === sevFilter)
+        return logs.filter((log) => {
+            const tLog = log.typhoon_log
+            if (!tLog) return false
+            const score = calculateSeverityScore(
+                parseFloat(tLog.wind_speed) || 0,
+                parseFloat(tLog.rainfall) || 0,
+                parseFloat(tLog.pressure) || 0,
+                parseFloat(tLog.temperature) || 0,
+                parseFloat(tLog.humidity) || 0
+            )
+            const cfg = getSeverityConfig(
+                score,
+                parseFloat(tLog.wind_speed) || 0,
+                parseFloat(tLog.rainfall) || 0,
+                parseFloat(tLog.pressure) || 1013
+            )
+            if (sevFilter === "all") return true
+            if (sevFilter === "normal") return cfg.label === "Normal / Clear"
+            if (sevFilter === "watch") return cfg.label === "Watch / LPA"
+            if (sevFilter === "elevated") return cfg.label === "Elevated Alert"
+            if (sevFilter === "signal1") return cfg.label === "PAGASA Signal 1"
+            if (sevFilter === "signal2_3") return cfg.label === "PAGASA Signal 2–3"
+            if (sevFilter === "signal4_5") return cfg.label === "PAGASA Signal 4–5"
+            return true
+        })
     }, [logs, sevFilter])
 
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
@@ -133,7 +176,7 @@ export default function AdminHistory() {
                 <div style={styles.filterRow}>
                     <Filter size={14} color="#888" />
                     <span style={styles.filterLabel}>Severity:</span>
-                    {["all", "low", "moderate", "high", "critical"].map((s) => (
+                    {["all", "normal", "watch", "elevated", "signal1", "signal2_3", "signal4_5"].map((s) => (
                         <div
                             key={s}
                             onClick={() => setSevFilter(s)}
@@ -144,7 +187,7 @@ export default function AdminHistory() {
                                 border: sevFilter === s ? "1px solid #1a237e" : "1px solid #ddd",
                             }}
                         >
-                            {s === "all" ? "All" : SEV[s]?.label || s}
+                            {FILTER_LABELS[s]}
                         </div>
                     ))}
                 </div>
@@ -187,23 +230,35 @@ export default function AdminHistory() {
                             </thead>
                             <tbody>
                                 {paginated.map((rec) => {
-                                    const sev = rec.typhoon_log?.severity_level || "low"
-                                    const cfg = SEV[sev] || SEV.low
-                                    return (
-                                        <tr key={rec.id} style={styles.tr}>
-                                            <td style={styles.td}>#{rec.id}</td>
-                                            <td style={styles.td}>{rec.barangay?.name || "—"}</td>
-                                            <td style={styles.td}>
-                                                <span
-                                                    style={{
-                                                        ...styles.badge,
-                                                        background: cfg.bg,
-                                                        color: cfg.color,
-                                                    }}
-                                                >
-                                                    {cfg.label}
-                                                </span>
-                                            </td>
+                                     const tLog = rec.typhoon_log
+                                     const score = tLog ? calculateSeverityScore(
+                                         parseFloat(tLog.wind_speed) || 0,
+                                         parseFloat(tLog.rainfall) || 0,
+                                         parseFloat(tLog.pressure) || 0,
+                                         parseFloat(tLog.temperature) || 0,
+                                         parseFloat(tLog.humidity) || 0
+                                     ) : 0
+                                     const cfg = getSeverityConfig(
+                                         score,
+                                         tLog ? parseFloat(tLog.wind_speed) || 0 : 0,
+                                         tLog ? parseFloat(tLog.rainfall) || 0 : 0,
+                                         tLog ? parseFloat(tLog.pressure) || 1013 : 1013
+                                     )
+                                     return (
+                                         <tr key={rec.id} style={styles.tr}>
+                                             <td style={styles.td}>#{rec.id}</td>
+                                             <td style={styles.td}>{rec.barangay?.name || "—"}</td>
+                                             <td style={styles.td}>
+                                                 <span
+                                                     style={{
+                                                         ...styles.badge,
+                                                         background: cfg.bg,
+                                                         color: cfg.color,
+                                                     }}
+                                                 >
+                                                     {cfg.label}
+                                                 </span>
+                                             </td>
                                             <td style={styles.td}>{rec.typhoon_log?.wind_speed ?? "—"}</td>
                                             <td style={styles.td}>{rec.typhoon_log?.rainfall ?? "—"}</td>
                                             <td style={styles.td}>{rec.typhoon_log?.pressure ?? "—"}</td>
