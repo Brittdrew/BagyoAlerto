@@ -23,6 +23,10 @@ Route::delete('/recommendations/{id}', [RecommendationController::class, 'destro
 
 // Chat Q&A endpoint
 Route::post('/chat', [ChatController::class, 'ask']);
+Route::get('/chat/history', [ChatController::class, 'history']);
+Route::get('/chat/history/{barangay}', [ChatController::class, 'historyByBarangay']);
+Route::delete('/chat/history/{id}', [ChatController::class, 'deleteLog']);
+Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
 
 // Admin authentication
 Route::post('/admin/login', [AdminController::class, 'login']);

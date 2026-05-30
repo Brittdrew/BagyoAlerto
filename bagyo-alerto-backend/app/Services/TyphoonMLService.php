@@ -94,8 +94,15 @@ class TyphoonMLService
      * official wind thresholds. The result can only be RAISED, never lowered.
      * This guarantees wind speed is never ignored.
      */
-    private function windOverride(string $mlPrediction, float $wind): string
+    private function windOverride(string $mlPrediction, float $wind, float $rainfall = 0, float $pressure = 1013): string
     {
+        // CALM CONDITIONS OVERRIDE
+        // If all conditions are clearly normal, force Normal regardless of ML vote.
+        // This prevents ML from overcalling Watch/Elevated on calm days.
+        if ($wind < 30 && $rainfall < 1.0 && $pressure > 1005) {
+            return 'Normal';
+        }
+
         // Determine minimum signal based on wind speed alone
         $windSignal = 'Normal';
         foreach (self::SIGNAL_THRESHOLDS as $signal => [$min, $max]) {
@@ -129,15 +136,25 @@ class TyphoonMLService
         $rawSamples = [
             // --- NORMAL (wind < 30 km/h) ---
             [5,  0.0, 1015, 31, 70],
+            [5,  0.0, 1016, 31, 68],
+            [8,  0.0, 1015, 31, 69],
             [10, 0.0, 1013, 30, 75],
+            [10, 0.0, 1014, 30, 72],
             [12, 0.0, 1014, 30, 72],
             [15, 0.0, 1011, 29, 72],
+            [15, 0.0, 1012, 30, 73],
             [18, 0.0, 1012, 29, 73],
+            [18, 0.0, 1013, 30, 71],
             [20, 0.5, 1010, 28, 74],
+            [20, 0.0, 1011, 29, 74],
             [22, 0.0, 1010, 28, 73],
+            [22, 0.0, 1011, 29, 72],
             [25, 1.0, 1009, 29, 76],
+            [25, 0.0, 1010, 29, 75],
             [27, 1.0, 1010, 29, 75],
             [28, 1.5, 1009, 28, 76],
+            [28, 0.0, 1006, 30, 74],
+            [29, 0.5, 1007, 30, 75],
 
             // --- WATCH (30–44 km/h) ---
             [30, 1.5, 1008, 28, 78],
@@ -230,7 +247,9 @@ class TyphoonMLService
         ];
 
         $labels = [
-            // Normal (10)
+            // Normal (20)
+            'Normal','Normal','Normal','Normal','Normal',
+            'Normal','Normal','Normal','Normal','Normal',
             'Normal','Normal','Normal','Normal','Normal',
             'Normal','Normal','Normal','Normal','Normal',
             // Watch (7)
@@ -294,7 +313,8 @@ class TyphoonMLService
         $mlResult = $mlPrediction[0];
 
         // Apply wind override — wind speed can only raise the signal, never lower it
-        return $this->windOverride($mlResult, $wind);
+        // Also passes rainfall and pressure for calm conditions check
+        return $this->windOverride($mlResult, $wind, $rainfall, $pressure);
     }
 
     public function getConfidence($prediction): string
