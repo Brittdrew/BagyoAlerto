@@ -793,6 +793,9 @@ export default function Dashboard() {
 
     const severity = result?.severity || null
     const sevCfg = compositeScore !== null ? getSeverityConfig(compositeScore, wind, rain, pressure) : null
+    const ruleBasedLabel = result?.classification || sevCfg?.label
+    const mlPrediction = result?.ml_prediction || "Unavailable"
+    const mlExplanation = result?.ml_explanation || "Train the model to show an ML explanation."
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
@@ -1025,7 +1028,20 @@ export default function Dashboard() {
                                 </div>
                                 {result ? (
                                     <>
-                                        <SeverityGauge score={compositeScore} wind={wind} rain={rain} pressure={pressure} />
+                                        <div style={styles.mlCompareGrid}>
+                                            <div style={styles.mlCompareBox}>
+                                                <div style={styles.mlCompareLabel}>Rule-Based</div>
+                                                <div style={styles.mlCompareScore}>Score: {compositeScore}</div>
+                                                <div style={{ ...styles.mlCompareResult, color: sevCfg.color }}>
+                                                    {ruleBasedLabel}
+                                                </div>
+                                            </div>
+                                            <div style={styles.mlCompareBox}>
+                                                <div style={styles.mlCompareLabel}>ML Prediction</div>
+                                                <div style={styles.mlCompareScore}>{mlPrediction}</div>
+                                                <div style={styles.mlExplanation}>{mlExplanation}</div>
+                                            </div>
+                                        </div>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
                                             <FactorBar label="Wind" pct={windPct} color="#378ADD" />
                                             <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
@@ -1240,6 +1256,12 @@ const styles = {
     cardHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
     cardTitle: { fontSize: 12, fontWeight: 600, color: "#333" },
     cardAction: { fontSize: 11, color: "#1565c0", cursor: "pointer" },
+    mlCompareGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 },
+    mlCompareBox: { background: "#f8f9fc", border: "1px solid #eef1f5", borderRadius: 8, padding: "9px 10px", minHeight: 92 },
+    mlCompareLabel: { fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 },
+    mlCompareScore: { fontSize: 14, fontWeight: 700, color: "#1a1a2e", lineHeight: 1.25 },
+    mlCompareResult: { fontSize: 12, fontWeight: 700, color: "#185FA5", marginTop: 4, lineHeight: 1.3 },
+    mlExplanation: { fontSize: 11, color: "#666", marginTop: 5, lineHeight: 1.35 },
 
     // Evacuation
     evacCard: { background: "#FCEBEB", border: "0.5px solid #F09595", borderRadius: 10, padding: "10px 13px" },

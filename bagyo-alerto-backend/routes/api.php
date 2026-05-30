@@ -6,6 +6,7 @@ use App\Http\Controllers\EvacuationCenterController;
 use App\Http\Controllers\TyphoonController;
 use App\Http\Controllers\RecommendationController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\ChatController;
 
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
@@ -19,6 +20,9 @@ Route::post('/typhoon/assess', [TyphoonController::class, 'assess']);
 Route::get('/recommendations', [RecommendationController::class, 'index']);
 Route::post('/recommendations', [RecommendationController::class, 'store']);
 Route::delete('/recommendations/{id}', [RecommendationController::class, 'destroy']);
+
+// Chat Q&A endpoint
+Route::post('/chat', [ChatController::class, 'ask']);
 
 // Admin authentication
 Route::post('/admin/login', [AdminController::class, 'login']);

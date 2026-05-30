@@ -11,6 +11,7 @@ import {
     Tornado,
     Cloud,
     Map,
+    MessageCircle,
 } from "lucide-react"
 import { useAdminAuth } from "../context/AdminAuthContext"
 
@@ -22,6 +23,7 @@ const navItems = [
     { id: "weather-map", label: "Weather Map", path: "/admin/weather-map", icon: Map },
     { id: "barangays", label: "Barangays", path: "/admin/barangays", icon: MapPin },
     { id: "evacuation-centers", label: "Evacuation Centers", path: "/admin/evacuation-centers", icon: School },
+    { id: "chat", label: "Q&A Chat", path: "/admin/chat", icon: MessageCircle },
     { id: "history", label: "History", path: "/admin/history", icon: Clock },
     { id: "settings", label: "Settings", path: "/admin/settings", icon: Settings },
 ]

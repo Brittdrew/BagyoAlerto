@@ -6,6 +6,7 @@ use App\Models\TyphoonLog;
 use App\Models\EvacuationCenter;
 use App\Models\Recommendation;
 use App\Models\Barangay;
+use App\Services\TyphoonMLService;
 use Illuminate\Http\Request;
 
 class TyphoonController extends Controller
@@ -24,11 +25,30 @@ class TyphoonController extends Controller
         $windSpeed    = $request->wind_speed;
         $rainfall     = $request->rainfall;
         $pressure     = $request->pressure;
-        $temperature  = $request->temperature;
-        $humidity     = $request->humidity;
+        $temperature  = $request->temperature ?? 30;
+        $humidity     = $request->humidity ?? 85;
 
         // AI Severity Scoring Logic
         list($severity, $score, $rank) = $this->calculateSeverity($windSpeed, $rainfall, $pressure, $temperature, $humidity);
+        $classification = $this->getClassificationLabel($rank);
+
+        $weatherData = [
+            'wind' => $windSpeed,
+            'rain' => $rainfall,
+            'pressure' => $pressure,
+            'temp' => $temperature,
+            'humidity' => $humidity,
+        ];
+
+        $ml = new TyphoonMLService();
+        $mlPrediction = $ml->predict(
+            $weatherData['wind'],
+            $weatherData['rain'],
+            $weatherData['pressure'],
+            $weatherData['temp'],
+            $weatherData['humidity']
+        );
+        $mlExplanation = $ml->getConfidence($mlPrediction);
 
         // Log the typhoon data
         $log = TyphoonLog::create([
@@ -75,6 +95,10 @@ class TyphoonController extends Controller
         return response()->json([
             'severity'          => $severity,
             'score'             => $score,
+            'weather'           => $weatherData,
+            'classification'    => $classification,
+            'ml_prediction'     => $mlPrediction,
+            'ml_explanation'    => $mlExplanation,
             'message'           => $this->getSeverityMessage($rank),
             'evacuation_center' => $center
         ]);
@@ -168,5 +192,22 @@ class TyphoonController extends Controller
         } else {
             return 'Typhoon Signal Active — Destructive winds and heavy rainfall expected. Follow evacuation orders immediately.';
         }
+    }
+
+    private function getClassificationLabel($rank)
+    {
+        if ($rank === 0) {
+            return 'Normal / Clear';
+        } elseif ($rank === 1) {
+            return 'Watch / LPA';
+        } elseif ($rank === 2) {
+            return 'Elevated Alert';
+        } elseif ($rank === 3) {
+            return 'PAGASA Signal 1';
+        } elseif ($rank === 4) {
+            return 'PAGASA Signal 2-3';
+        }
+
+        return 'PAGASA Signal 4-5';
     }
 }

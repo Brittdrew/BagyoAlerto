@@ -12,6 +12,7 @@ import AdminHistory from './pages/admin/AdminHistory'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminWeather from './pages/admin/AdminWeather'
 import AdminWeatherMap from './pages/admin/AdminWeatherMap'
+import AdminChat from './pages/admin/AdminChat'
 import './App.css'
 
 function App() {
@@ -38,6 +39,9 @@ function App() {
           } />
           <Route path="/admin/evacuation-centers" element={
             <AdminProtectedRoute><AdminEvacuationCenters /></AdminProtectedRoute>
+          } />
+          <Route path="/admin/chat" element={
+            <AdminProtectedRoute><AdminChat /></AdminProtectedRoute>
           } />
           <Route path="/admin/history" element={
             <AdminProtectedRoute><AdminHistory /></AdminProtectedRoute>
