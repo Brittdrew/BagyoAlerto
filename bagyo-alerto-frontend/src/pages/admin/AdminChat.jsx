@@ -667,9 +667,9 @@ export default function AdminChat() {
                     opacity: 1;
                 }
                 .clear-btn:hover {
-                    background: #fee2e2 !important;
-                    color: #991b1b !important;
-                    border-color: #fca5a5 !important;
+                    background: rgba(255,255,255,0.2) !important;
+                    color: white !important;
+                    border-color: rgba(255,255,255,0.3) !important;
                 }
                 .refresh-action:hover { color: #1D9E75 !important; }
                 .copy-action:hover { color: #3b82f6 !important; }
@@ -743,7 +743,7 @@ export default function AdminChat() {
                     {/* ── Header ── */}
                     <div style={styles.header}>
                         <div style={styles.headerIconWrapper}>
-                            <MessageCircle size={22} style={{ color: "#1D9E75" }} />
+                            <MessageCircle size={22} style={{ color: "rgba(255,255,255,0.9)" }} />
                             <div style={styles.onlineDot} />
                         </div>
                         <div style={styles.headerTextContainer}>
@@ -751,7 +751,7 @@ export default function AdminChat() {
                             <p style={styles.subtitle}>
                                 Real-time weather query resolution &amp; disaster response guides
                                 {lastBarangay && (
-                                    <span style={{ marginLeft: "8px", color: "#1D9E75", fontWeight: 600, fontSize: "0.78rem" }}>
+                                    <span style={{ marginLeft: "8px", color: "#90caf9", fontWeight: 600, fontSize: "0.78rem" }}>
                                         · Tracking: {lastBarangay}
                                     </span>
                                 )}
@@ -1238,29 +1238,31 @@ const styles = {
         display: "flex",
         alignItems: "center",
         padding: "1.1rem 2rem",
-        background: "white",
-        borderBottom: "1px solid #e2e8f0",
+        background: "linear-gradient(135deg, #1a237e, #1565c0)",
+        borderBottom: "0.5px solid #1a237e",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
         gap: "1rem",
     },
     headerIconWrapper: {
         width: "42px", height: "42px", borderRadius: "12px",
-        backgroundColor: "#f0fdf4",
+        backgroundColor: "rgba(255,255,255,0.12)",
+        border: "0.5px solid rgba(255,255,255,0.18)",
         display: "flex", alignItems: "center", justifyContent: "center",
         position: "relative", flexShrink: 0,
     },
     onlineDot: {
-        width: "10px", height: "10px", backgroundColor: "#10b981",
+        width: "10px", height: "10px", backgroundColor: "#60efb0",
         borderRadius: "50%", position: "absolute", bottom: "-2px", right: "-2px",
-        border: "2px solid white", boxShadow: "0 0 0 2px rgba(16, 185, 129, 0.3)",
+        border: "2px solid #1a237e",
         animation: "pulse 2s infinite",
     },
     headerTextContainer: { display: "flex", flexDirection: "column" },
-    title: { fontSize: "1.05rem", fontWeight: "700", color: "#0f172a", margin: 0 },
-    subtitle: { fontSize: "0.82rem", color: "#64748b", margin: "2px 0 0 0", display: "flex", alignItems: "center", flexWrap: "wrap" },
+    title: { fontSize: "1.05rem", fontWeight: "700", color: "white", margin: 0 },
+    subtitle: { fontSize: "0.82rem", color: "rgba(255,255,255,0.65)", margin: "2px 0 0 0", display: "flex", alignItems: "center", flexWrap: "wrap" },
     clearButton: {
         marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.4rem",
-        padding: "0.4rem 0.8rem", background: "#f8fafc", border: "1px solid #e2e8f0",
-        borderRadius: "8px", cursor: "pointer", fontSize: "0.8rem", color: "#64748b",
+        padding: "0.4rem 0.8rem", background: "rgba(255,255,255,0.12)", border: "0.5px solid rgba(255,255,255,0.2)",
+        borderRadius: "8px", cursor: "pointer", fontSize: "0.8rem", color: "rgba(255,255,255,0.85)",
         fontWeight: 500, transition: "all 0.2s ease", flexShrink: 0,
     },
     messagesContainer: {
