@@ -38,13 +38,20 @@ import {
     Check,
     RefreshCw,
     Thermometer,
-    Loader,
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import MapView from "../../components/MapView"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"))
+    return match ? decodeURIComponent(match[2]) : null
+}
+
+
+axios.defaults.headers.common["X-XSRF-TOKEN"] = getCookie("XSRF-TOKEN")
+
+const API_BASE = import.meta.env.VITE_API_BASE
 const genId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`
 
 // ─── Typing Indicator ────────────────────────────────────────────────────────
@@ -132,6 +139,7 @@ export default function AdminChat() {
     const [lastBarangay, setLastBarangay] = useState(null)   // context memory
     const [copiedId, setCopiedId] = useState(null)
     const [refreshingId, setRefreshingId] = useState(null)
+    const [suggestions, setSuggestions] = useState([])
     const messagesEndRef = useRef(null)
 
     // Sidebar states for Recent Questions
@@ -165,6 +173,32 @@ export default function AdminChat() {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [messages, loading])
+
+    useEffect(() => {
+        if (messages.length > 0) {
+            try {
+                sessionStorage.setItem(
+                    "bagyoalerto_chat",
+                    JSON.stringify(messages)
+                )
+                sessionStorage.setItem(
+                    "bagyoalerto_last_barangay",
+                    lastBarangay || ""
+                )
+            } catch(e) {}
+        }
+    }, [messages, lastBarangay])
+
+    useEffect(() => {
+        try {
+            const saved = sessionStorage.getItem("bagyoalerto_chat")
+            const savedBarangay = sessionStorage.getItem(
+                "bagyoalerto_last_barangay"
+            )
+            if (saved) setMessages(JSON.parse(saved))
+            if (savedBarangay) setLastBarangay(savedBarangay)
+        } catch(e) {}
+    }, [])
 
     // ── Click to load a recent question & historical response back into active view
     const handleLoadRecentLog = (log) => {
@@ -257,6 +291,19 @@ export default function AdminChat() {
     ], [])
 
     // ── Send question
+    const handleInputChange = (e) => {
+        const val = e.target.value
+        setQuestion(val)
+        if (val.length >= 2) {
+            const matches = barangays
+                .filter(b => b.name.toLowerCase().includes(val.toLowerCase()))
+                .slice(0, 5)
+            setSuggestions(matches)
+        } else {
+            setSuggestions([])
+        }
+    }
+
     const handleSendQuestion = async (qText = null) => {
         const activeQuestion = qText || question
         if (!activeQuestion.trim() || loading) return
@@ -320,6 +367,7 @@ export default function AdminChat() {
         try {
             const res = await axios.post(`${API_BASE}/chat`, {
                 question: msg.originalQuestion,
+                force_refresh: true,
             }, { headers: authHeaders() })
             const data = res.data
             setMessages(prev => prev.map(m =>
@@ -357,6 +405,8 @@ export default function AdminChat() {
     const handleClearChat = () => {
         setMessages([])
         setLastBarangay(null)
+        sessionStorage.removeItem("bagyoalerto_chat")
+        sessionStorage.removeItem("bagyoalerto_last_barangay")
     }
 
     // ── Helpers
@@ -366,15 +416,18 @@ export default function AdminChat() {
     }
 
     const getSeverityBadgeStyle = (severity) => {
-        if (!severity) return { bg: "#f1f5f9", color: "#475569", border: "#e2e8f0" }
+        const badge = (bg, color, border) => ({ bg, background: bg, color, border })
+        if (!severity) return badge("#f1f5f9", "#475569", "#e2e8f0")
         const sev = severity.toLowerCase()
-        if (sev.includes("normal"))   return { bg: "#dcfce7", color: "#166534", border: "#bbf7d0" }
-        if (sev.includes("watch"))    return { bg: "#e0f2fe", color: "#075985", border: "#bae6fd" }
-        if (sev.includes("elevated")) return { bg: "#ffedd5", color: "#9a3412", border: "#fed7aa" }
-        if (sev.includes("signal 1")) return { bg: "#fef9c3", color: "#854d0e", border: "#fef08a" }
-        if (sev.includes("signal 2")) return { bg: "#ffe4e6", color: "#9f1239", border: "#fecdd3" }
-        if (sev.includes("signal 3")) return { bg: "#fee2e2", color: "#991b1b", border: "#fecaca" }
-        return { bg: "#ffe4e6", color: "#9f1239", border: "#fecdd3" }
+        if (sev.includes("normal"))   return badge("#dcfce7", "#166534", "#bbf7d0")
+        if (sev.includes("watch"))    return badge("#e0f2fe", "#075985", "#bae6fd")
+        if (sev.includes("elevated")) return badge("#ffedd5", "#9a3412", "#fed7aa")
+        if (sev.includes("signal 1")) return badge("#fef9c3", "#854d0e", "#fef08a")
+        if (sev.includes("signal 2")) return badge("#ffe4e6", "#9f1239", "#fecdd3")
+        if (sev.includes("signal 3")) return badge("#fee2e2", "#991b1b", "#fecaca")
+        if (sev.includes("signal 4")) return badge("#fca5a5", "#7f1d1d", "#f87171")
+        if (sev.includes("signal 5")) return badge("#7f1d1d", "#fee2e2", "#ef4444")
+        return badge("#ffe4e6", "#9f1239", "#fecdd3")
     }
 
     const getSeverityBubbleBorder = (severity) => {
@@ -396,6 +449,115 @@ export default function AdminChat() {
                 const trimmed = line.trim()
                 if (trimmed === "") return <div key={idx} style={{ height: "0.5rem" }} />
 
+                // ── [Live data · Barangay: X] footer tag ─────────────
+                if (trimmed.startsWith("[Live data") && trimmed.endsWith("]")) {
+                    return (
+                        <div key={idx} style={{
+                            marginTop: "0.6rem",
+                            paddingTop: "0.5rem",
+                            borderTop: "1px solid #f1f5f9",
+                            fontSize: "0.7rem",
+                            color: "#94a3b8",
+                            fontStyle: "italic",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                        }}>
+                            <RefreshCw size={9} />
+                            {trimmed.slice(1, -1)}
+                        </div>
+                    )
+                }
+
+                // ── Status: X severity badge ──────────────────────────
+                if (trimmed.startsWith("Status:")) {
+                    const statusValue = trimmed.substring("Status:".length).trim()
+                    const { bg, color, border } = getSeverityBadgeStyle(statusValue)
+                    return (
+                        <div key={idx} style={{
+                            display: "flex", alignItems: "center",
+                            gap: "0.5rem", margin: "0.35rem 0",
+                        }}>
+                            <span style={{
+                                fontSize: "0.8rem", color: "#64748b",
+                                fontWeight: 600, letterSpacing: "0.2px",
+                            }}>
+                                Status
+                            </span>
+                            <span style={{
+                                display: "inline-flex", alignItems: "center",
+                                fontSize: "0.8rem", fontWeight: 700,
+                                padding: "0.2rem 0.8rem", borderRadius: "9999px",
+                                background: bg, color, border: `1px solid ${border}`,
+                            }}>
+                                {statusValue}
+                            </span>
+                        </div>
+                    )
+                }
+
+                // ── Weather metric lines (Wind / Rainfall / Temperature / Humidity) ──
+                const weatherMatch = trimmed.match(/^(Wind|Rainfall|Temperature|Humidity):\s*(.+)$/)
+                if (weatherMatch) {
+                    const [, label, value] = weatherMatch
+                    const weatherIconMap = {
+                        Wind:        <Wind size={12} style={{ color: "#3b82f6" }} />,
+                        Rainfall:    <Droplet size={12} style={{ color: "#06b6d4" }} />,
+                        Temperature: <Thermometer size={12} style={{ color: "#f59e0b" }} />,
+                        Humidity:    <Activity size={12} style={{ color: "#8b5cf6" }} />,
+                    }
+                    return (
+                        <div key={idx} style={{
+                            display: "flex", alignItems: "center",
+                            gap: "0.45rem", margin: "0.1rem 0",
+                        }}>
+                            <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                                {weatherIconMap[label]}
+                            </span>
+                            <span style={{
+                                fontSize: "0.78rem", color: "#94a3b8",
+                                minWidth: "88px", flexShrink: 0,
+                            }}>
+                                {label}
+                            </span>
+                            <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#0f172a" }}>
+                                {value}
+                            </span>
+                        </div>
+                    )
+                }
+
+                // ── Evacuation center detail lines ────────────────────
+                const evacMatch = trimmed.match(/^(Nearest center|Address|Distance):\s*(.+)$/)
+                if (evacMatch) {
+                    const [, label, value] = evacMatch
+                    const evacIconMap = {
+                        "Nearest center": <MapPin size={12} style={{ color: "#ec4899" }} />,
+                        "Address":        <Home size={12} style={{ color: "#0284c7" }} />,
+                        "Distance":       <Compass size={12} style={{ color: "#6366f1" }} />,
+                    }
+                    return (
+                        <div key={idx} style={{
+                            display: "flex", alignItems: "flex-start",
+                            gap: "0.45rem", margin: "0.1rem 0",
+                        }}>
+                            <span style={{ display: "flex", alignItems: "center", marginTop: "2px", flexShrink: 0 }}>
+                                {evacIconMap[label]}
+                            </span>
+                            <span style={{
+                                fontSize: "0.78rem", color: "#94a3b8",
+                                minWidth: "100px", flexShrink: 0,
+                            }}>
+                                {label}
+                            </span>
+                            <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#0f172a" }}>
+                                {value}
+                            </span>
+                        </div>
+                    )
+                }
+
+                // ── Existing emoji / symbol icon handling ─────────────
                 let isHeader = false
                 let icon = null
                 let cleanText = line
@@ -473,6 +635,15 @@ export default function AdminChat() {
                     0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
                     30% { transform: translateY(-7px); opacity: 1; }
                 }
+                @keyframes skeletonShimmer {
+                    0% { background-position: -200px 0; }
+                    100% { background-position: calc(200px + 100%) 0; }
+                }
+                .sidebar-skeleton {
+                    background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 40%, #f1f5f9 80%);
+                    background-size: 200px 100%;
+                    animation: skeletonShimmer 1.2s ease-in-out infinite;
+                }
                 .suggested-btn:hover {
                     background-color: #f0fdf4 !important;
                     border-color: #86efac !important;
@@ -527,9 +698,13 @@ export default function AdminChat() {
 
                     <div className="custom-scrollbar" style={styles.sidebarContent}>
                         {sidebarLoading && recentLogs.length === 0 ? (
-                            <div style={styles.sidebarLoadingState}>
-                                <Loader size={18} style={{ animation: "spin 1s linear infinite", color: "#1D9E75" }} />
-                                <span style={{ marginTop: "8px", fontSize: "0.8rem", color: "#64748b" }}>Loading history...</span>
+                            <div style={styles.sidebarSkeletonList}>
+                                {[...Array(6)].map((_, i) => (
+                                    <div key={i} style={styles.sidebarSkeletonItem}>
+                                        <div className="sidebar-skeleton" style={styles.sidebarSkeletonTitle} />
+                                        <div className="sidebar-skeleton" style={styles.sidebarSkeletonMeta} />
+                                    </div>
+                                ))}
                             </div>
                         ) : recentLogs.length === 0 ? (
                             <div style={styles.sidebarEmptyState}>
@@ -683,6 +858,24 @@ export default function AdminChat() {
                                                     letterSpacing: "0.3px",
                                                 }}>
                                                     <Sparkles size={9} /> AI Powered
+                                                </span>
+                                            )}
+                                            {!msg.aiPowered && msg.barangay && (
+                                                <span style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: "3px",
+                                                    fontSize: "0.7rem",
+                                                    fontWeight: 700,
+                                                    padding: "0.15rem 0.5rem",
+                                                    borderRadius: "4px",
+                                                    background: "#fef3c7",
+                                                    color: "#92400e",
+                                                    marginBottom: "0.5rem",
+                                                    textTransform: "uppercase",
+                                                    letterSpacing: "0.3px",
+                                                }}>
+                                                    Template response · Ollama offline
                                                 </span>
                                             )}
 
@@ -844,7 +1037,7 @@ export default function AdminChat() {
                                 maxLength={500}
                                 placeholder="Type a message or ask about a barangay..."
                                 value={question}
-                                onChange={(e) => setQuestion(e.target.value)}
+                                onChange={handleInputChange}
                                 onKeyDown={(e) => e.key === "Enter" && handleSendQuestion()}
                                 disabled={loading}
                                 className="chat-input"
@@ -862,6 +1055,47 @@ export default function AdminChat() {
                                 }}>
                                     {question.length}/500
                                 </span>
+                            )}
+                            {suggestions.length > 0 && (
+                                <div style={{
+                                    position: "absolute",
+                                    left: 0,
+                                    right: 0,
+                                    bottom: "calc(100% + 8px)",
+                                    background: "white",
+                                    border: "1px solid #e2e8f0",
+                                    borderRadius: "8px",
+                                    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.12)",
+                                    overflow: "hidden",
+                                    zIndex: 20,
+                                }}>
+                                    {suggestions.map(b => (
+                                        <button
+                                            key={b.id}
+                                            onClick={() => {
+                                                setQuestion(`Is ${b.name} safe?`)
+                                                setSuggestions([])
+                                            }}
+                                            style={{
+                                                width: "100%",
+                                                padding: "9px 16px",
+                                                background: "none",
+                                                border: "none",
+                                                textAlign: "left",
+                                                cursor: "pointer",
+                                                fontSize: "0.88rem",
+                                                color: "#334155",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "8px",
+                                                borderBottom: "1px solid #f1f5f9",
+                                            }}
+                                        >
+                                            <MapPin size={13} style={{ color: "#1D9E75" }} />
+                                            {b.name}
+                                        </button>
+                                    ))}
+                                </div>
                             )}
                         </div>
                         <button
@@ -957,6 +1191,28 @@ const styles = {
         alignItems: "center",
         justifyContent: "center",
         padding: "32px 16px",
+    },
+    sidebarSkeletonList: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: "10px 16px",
+    },
+    sidebarSkeletonItem: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: "8px 0",
+    },
+    sidebarSkeletonTitle: {
+        width: "100%",
+        height: "12px",
+        borderRadius: "6px",
+    },
+    sidebarSkeletonMeta: {
+        width: "58%",
+        height: "10px",
+        borderRadius: "6px",
     },
     sidebarEmptyState: {
         display: "flex",

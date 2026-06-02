@@ -4,7 +4,7 @@ import { KeyRound, Loader } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 
 export default function AdminSettings() {
     const { authHeaders, admin } = useAdminAuth()

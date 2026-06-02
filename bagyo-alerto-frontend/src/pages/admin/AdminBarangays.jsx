@@ -4,7 +4,7 @@ import { Plus, Pencil, Trash2, Loader, Inbox, X } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 const RISK_LEVELS = ["low", "moderate", "high", "critical"]
 const RISK_COLORS = { low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D" }
 

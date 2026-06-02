@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import axios from "axios"
 
 export const ADMIN_TOKEN_KEY = "admin_token"
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 
 const AdminAuthContext = createContext(null)
 

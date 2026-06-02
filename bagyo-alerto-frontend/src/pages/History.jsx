@@ -5,7 +5,7 @@ import { Tornado, BarChart2, Clock, RefreshCw, Download, Search, Loader, AlertTr
 import Sidebar from "../components/Sidebar"
 import { calculateSeverityScore, getSeverityConfig } from "./Dashboard"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 const PAGE_SIZE = 8
 
 // ─── Severity config ──────────────────────────────────────────────────────────

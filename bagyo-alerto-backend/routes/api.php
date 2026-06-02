@@ -22,7 +22,7 @@ Route::post('/recommendations', [RecommendationController::class, 'store']);
 Route::delete('/recommendations/{id}', [RecommendationController::class, 'destroy']);
 
 // Chat Q&A endpoint
-Route::post('/chat', [ChatController::class, 'ask']);
+Route::middleware(['auth:sanctum', 'throttle:30,1'])->post('/chat', [ChatController::class, 'ask']);
 Route::get('/chat/history', [ChatController::class, 'history']);
 Route::get('/chat/history/{barangay}', [ChatController::class, 'historyByBarangay']);
 Route::delete('/chat/history/{id}', [ChatController::class, 'deleteLog']);

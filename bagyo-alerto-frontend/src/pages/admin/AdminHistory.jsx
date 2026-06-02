@@ -5,7 +5,7 @@ import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { calculateSeverityScore, getSeverityConfig } from "../Dashboard"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 const POLL_MS = 5000
 const PAGE_SIZE = 8
 
@@ -393,7 +393,7 @@ export default function AdminHistory() {
                     }}
                     onClick={() => setActiveTab("qa")}
                 >
-                    Q&A Chat History
+                    Chat History
                 </button>
             </div>
 
@@ -677,7 +677,7 @@ export default function AdminHistory() {
                         ) : qaLogs.length === 0 ? (
                             <div style={styles.center}>
                                 <Inbox size={36} color="#ccc" />
-                                <span style={{ color: "#888", marginTop: 10 }}>No Q&A records found matching the criteria.</span>
+                                <span style={{ color: "#888", marginTop: 10 }}>No chat history records found matching the criteria.</span>
                             </div>
                         ) : (
                             <>

@@ -33,7 +33,7 @@ L.Icon.Default.mergeOptions({
 
 // ─── UNCHANGED: All data/logic constants ───────────────────────────────────────
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 const REFRESH_MS = 10 * 60 * 1000
 const CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
 

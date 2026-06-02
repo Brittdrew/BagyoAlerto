@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 
 // --- Constants ---------------------------------------------------------------
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 const WEATHER_REFRESH = 10 * 60 * 1000 // 10 minutes
 import { RefreshCw } from "lucide-react"
 const OPEN_METEO_CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
@@ -567,7 +567,9 @@ export default function Dashboard() {
                     fetchWeather(opts[0])
                 }
             })
-            .catch(() => console.error("Failed to load barangays"))
+            .catch((err) => {
+                console.error("Failed to load barangays:", err.response?.status, err.message)
+            })
 
         fetchRecentLogs()
 
@@ -658,8 +660,8 @@ export default function Dashboard() {
         try {
             const res = await axios.get(`${API_BASE}/recommendations`)
             setRecentLogs(res.data.slice(0, 4))
-        } catch {
-            console.error("History fetch failed")
+        } catch (err) {
+            console.error("History fetch failed:", err.response?.status, err.message)
         }
     }
 

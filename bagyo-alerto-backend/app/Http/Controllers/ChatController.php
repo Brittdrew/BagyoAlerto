@@ -24,33 +24,69 @@ class ChatController extends Controller
         $request->validate([
             'question'      => 'required|string|max:500',
             'last_barangay' => 'nullable|string|max:100',
+            'force_refresh' => 'sometimes|boolean',
         ]);
 
         $question     = $request->question;
         $lastBarangay = $request->last_barangay;
+        $forceRefresh = $request->boolean('force_refresh');
 
         // Step 1: Check if it's a general typhoon knowledge question first
-        $generalResponse = $this->handleGeneralQuestion($question);
-        if ($generalResponse) {
-            ChatLog::create([
-                'barangay_name' => null,
-                'question'      => $question,
-                'answer'        => $generalResponse,
-                'severity'      => null,
-                'wind'          => null,
-                'rainfall'      => null,
-                'pressure'      => null,
-                'temperature'   => null,
-                'humidity'      => null,
-                'asked_by'      => 'admin',
-            ]);
-            return response()->json([
-                'response'      => $generalResponse,
-                'barangay_id'   => null,
-                'barangay_name' => null,
-                'severity'      => null,
-                'intent'        => 'knowledge',
-            ]);
+        $q = strtolower($question);
+        $hasBarangay = $this->extractBarangay($question) !== null;
+        $isPredefinedGeneral = $this->isPredefinedGeneralQuestion($q);
+
+        if ($isPredefinedGeneral || (!$hasBarangay && !$lastBarangay && $this->seemsTyphoonOrWeatherRelated($q))) {
+            // It's a general typhoon question! Let's try Ollama first for a warm, conversational response.
+            if ($this->ollama->isAvailable()) {
+                $systemPrompt = $this->ollama->buildKnowledgeSystemPrompt();
+                $response = $this->ollama->chat($systemPrompt, $question);
+                if ($response) {
+                    ChatLog::create([
+                        'barangay_name' => null,
+                        'question'      => $question,
+                        'answer'        => $response,
+                        'severity'      => null,
+                        'wind'          => null,
+                        'rainfall'      => null,
+                        'pressure'      => null,
+                        'temperature'   => null,
+                        'humidity'      => null,
+                        'asked_by'      => 'admin',
+                    ]);
+                    return response()->json([
+                        'response'      => $response,
+                        'barangay_id'   => null,
+                        'barangay_name' => null,
+                        'severity'      => null,
+                        'intent'        => 'knowledge',
+                    ]);
+                }
+            }
+
+            // Fallback to static templates
+            $generalResponse = $this->handleGeneralQuestion($question);
+            if ($generalResponse) {
+                ChatLog::create([
+                    'barangay_name' => null,
+                    'question'      => $question,
+                    'answer'        => $generalResponse,
+                    'severity'      => null,
+                    'wind'          => null,
+                    'rainfall'      => null,
+                    'pressure'      => null,
+                    'temperature'   => null,
+                    'humidity'      => null,
+                    'asked_by'      => 'admin',
+                ]);
+                return response()->json([
+                    'response'      => $generalResponse,
+                    'barangay_id'   => null,
+                    'barangay_name' => null,
+                    'severity'      => null,
+                    'intent'        => 'knowledge',
+                ]);
+            }
         }
 
         // Step 2: Extract barangay name from question text
@@ -122,12 +158,22 @@ class ChatController extends Controller
         // Step 3: Detect question intent
         $intent = $this->detectIntent($question);
 
-        // Step 4: Fetch weather data — cached 5 minutes per barangay
-        $weatherData = Cache::remember(
-            "weather_barangay_{$matched->id}",
-            300,
-            fn () => $this->fetchWeatherData($matched)
-        );
+        // Step 4: Fetch weather data — cached 5 minutes per barangay if successful
+        $cacheKey = "weather_barangay_{$matched->id}";
+        if ($forceRefresh) {
+            Cache::forget($cacheKey);
+        }
+
+        $weatherData = Cache::get($cacheKey);
+
+        if (!$weatherData) {
+            $weatherData = $this->fetchWeatherData($matched);
+            if ($weatherData) {
+                Cache::put($cacheKey, $weatherData, 300);
+            } else {
+                $weatherData = $this->getDefaultWeatherData();
+            }
+        }
 
         // Step 5: Calculate severity
         [$severity, $rank] = $this->calculateSeverityLevel($weatherData);
@@ -405,7 +451,36 @@ class ChatController extends Controller
                 . "Just ask me anything about typhoon safety! 🌀";
         }
 
+        // Out-of-scope: question is not typhoon/weather related and no barangay found
+        if (!$hasBarangay && !$this->seemsTyphoonOrWeatherRelated($q)) {
+            return "I'm focused on typhoon operations and barangay safety in Surigao City.\nPlease contact your local DRRMO for other concerns.";
+        }
+
         return null; // Not a general question — proceed to barangay lookup
+    }
+
+    /**
+     * Determine if the lowercased question matches predefined general keywords
+     */
+    private function isPredefinedGeneralQuestion(string $q): bool
+    {
+        $keywords = [
+            'where the evacuation', 'where is the evacuation', 'evacuation center', 'evacuation centers',
+            'list evacuation', 'list of evacuation', 'saan ang evacuation', 'saan pwede lumikas', 'saan lilikas',
+            'what to do during typhoon', 'what should i do during', 'during typhoon what', 'typhoon what to do',
+            'pag bagyo ano', 'how to prepare', 'prepare for typhoon', 'typhoon preparation', 'paghahanda sa bagyo',
+            'before typhoon', 'go bag', 'emergency kit', 'emergency bag', 'what to pack', 'what to bring',
+            'what is signal', 'explain signal', 'pagasa signal', 'typhoon signal meaning', 'what does signal mean',
+            'signal 1', 'signal 2', 'signal 3', 'signal 4', 'signal 5', 'after typhoon', 'what to do after',
+            'pagkatapos ng bagyo', 'typhoon aftermath', 'post typhoon', 'hotline', 'emergency number', 'contact',
+            'who to call', 'phone number', 'emergency contact', 'what is pagasa', 'pagasa meaning', 'who is pagasa',
+            'about pagasa', 'leptospirosis', 'lepto', 'flood disease', 'disease after flood', 'sick after flood',
+            'storm surge', 'daluyong', 'what is storm surge', 'storm surge meaning', 'flood safety', 'flood tips',
+            'baha', 'what to do flood', 'flooded', 'what is this system', 'what can you do', 'what can you answer',
+            'how can you help', 'what are you', 'who are you'
+        ];
+
+        return $this->matches($q, $keywords);
     }
 
     /**
@@ -482,14 +557,14 @@ class ChatController extends Controller
             ]);
 
             if (!$response->successful()) {
-                return $this->getDefaultWeatherData();
+                return null;
             }
 
             $data    = $response->json();
             $current = $data['current'] ?? null;
 
             if (!$current) {
-                return $this->getDefaultWeatherData();
+                return null;
             }
 
             return [
@@ -502,7 +577,7 @@ class ChatController extends Controller
 
         } catch (\Exception $e) {
             Log::error("Open-Meteo API error: " . $e->getMessage());
-            return $this->getDefaultWeatherData();
+            return null;
         }
     }
 
@@ -598,96 +673,172 @@ class ChatController extends Controller
 
     private function generateResponse($intent, $severity, $rank, $barangay, $weatherData, $evacuationCenter)
     {
-        $templates = [
+        $name     = $barangay->name;
+        $wind     = round($weatherData['wind_speed']  ?? 0, 1);
+        $rain     = round($weatherData['rainfall']    ?? 0, 1);
+        $temp     = round($weatherData['temperature'] ?? 30, 1);
+        $humidity = (int) ($weatherData['humidity']   ?? 85);
+
+        // ── 1. SUMMARY ────────────────────────────────────────────────
+        $summary = $this->buildSummary($intent, $severity, $name, $wind, $rain);
+
+        // ── 2. WEATHER DATA ───────────────────────────────────────────
+        $weatherBlock  = "Wind: {$wind} km/h\n";
+        $weatherBlock .= "Rainfall: {$rain} mm/hr\n";
+        $weatherBlock .= "Temperature: {$temp}°C\n";
+        $weatherBlock .= "Humidity: {$humidity}%";
+
+        // ── 3. SEVERITY LABEL ─────────────────────────────────────────
+        $statusLine = "Status: {$severity}";
+
+        // ── 4. ACTION RECOMMENDATION ──────────────────────────────────
+        $action = $this->getActionRecommendation($rank);
+
+        // ── 5. EVACUATION CENTER (rank >= Signal 1 OR evac intent) ────
+        $evacBlock = '';
+        if (($rank >= 3 || $intent === 'evac') && $evacuationCenter) {
+            $distance  = round((float) ($evacuationCenter->distance ?? 0), 1);
+            $evacBlock = "Nearest center: {$evacuationCenter->name}\n"
+                       . "Address: {$evacuationCenter->address}\n"
+                       . "Distance: {$distance} km from {$name}";
+        } elseif ($rank >= 3) {
+            $evacBlock = "No active evacuation center found in the system.\n"
+                       . "Contact your barangay hall or DRRMO immediately.";
+        } elseif ($intent === 'evac') {
+            $evacBlock = "No active evacuation center found near {$name}.\n"
+                       . "Please contact your local DRRMO for the nearest shelter.";
+        }
+
+        // ── 6. LOCATION & DATA TAG ────────────────────────────────────
+        $tag = "[Live data · Barangay: {$name}]";
+
+        // ── Assemble sections separated by blank lines ─────────────────
+        $parts = [$summary, $weatherBlock, $statusLine, $action];
+        if ($evacBlock) $parts[] = $evacBlock;
+        $parts[] = $tag;
+
+        return implode("\n\n", $parts);
+    }
+
+    /**
+     * Build the intent-specific one-sentence summary (Section 1 of the response format).
+     */
+    private function buildSummary(string $intent, string $severity, string $name, float $wind, float $rain): string
+    {
+        $s = [
             'safety' => [
-                'Normal'   => "{barangay} is currently safe. Weather conditions are normal with wind at {wind} km/h and no significant rainfall.",
-                'Watch'    => "{barangay} is under Watch level. A low pressure area is nearby. Monitor updates from PAGASA.",
-                'Elevated' => "{barangay} conditions are elevated. Wind is at {wind} km/h. Prepare emergency supplies.",
-                'Signal 1' => "{barangay} is under Typhoon Signal 1. Wind has reached {wind} km/h. Classes are suspended. Stay indoors.",
-                'Signal 2' => "{barangay} is under Typhoon Signal 2. Wind is at {wind} km/h. This is dangerous — evacuate if instructed.",
-                'Signal 3' => "{barangay} is under Typhoon Signal 3. Wind is at {wind} km/h. Extremely destructive — evacuate now.",
-                'Signal 4' => "{barangay} is under Typhoon Signal 4. EVACUATE IMMEDIATELY. Do not go outside.",
-                'Signal 5' => "{barangay} is under Typhoon Signal 5. SUPERTYPHOON — EVACUATE NOW. Life-threatening danger.",
+                'Normal'   => "Current conditions in {$name} are normal with no significant rainfall or wind threat.",
+                'Watch'    => "Current conditions in {$name} are under Watch level — a low pressure area is being monitored.",
+                'Elevated' => "Conditions in {$name} are elevated with strengthening wind at {$wind} km/h and increasing rainfall.",
+                'Signal 1' => "{$name} is under Typhoon Signal 1. Wind has reached {$wind} km/h — destructive gusts are expected.",
+                'Signal 2' => "{$name} is under Typhoon Signal 2. Wind is at {$wind} km/h — dangerous conditions are present.",
+                'Signal 3' => "{$name} is under Typhoon Signal 3. Extremely destructive winds at {$wind} km/h — immediate action is required.",
+                'Signal 4' => "{$name} is under Typhoon Signal 4. Catastrophic winds at {$wind} km/h — life-threatening conditions.",
+                'Signal 5' => "{$name} is under Typhoon Signal 5 — SUPERTYPHOON. Wind at {$wind} km/h. Extreme danger to life.",
             ],
             'wind' => [
-                'Normal'   => "Wind in {barangay} is currently {wind} km/h — light and safe.",
-                'Watch'    => "Wind in {barangay} is {wind} km/h — monitor closely.",
-                'Elevated' => "Wind in {barangay} is {wind} km/h — strengthening. Prepare precautions.",
-                'Signal 1' => "Wind in {barangay} has reached {wind} km/h, triggering Typhoon Signal 1.",
-                'Signal 2' => "Wind in {barangay} is at {wind} km/h — destructive typhoon winds.",
-                'Signal 3' => "Wind in {barangay} is at {wind} km/h — extremely destructive.",
-                'Signal 4' => "Wind in {barangay} is at {wind} km/h — catastrophic winds.",
-                'Signal 5' => "Wind in {barangay} is at {wind} km/h — SUPERTYPHOON. Extreme danger.",
+                'Normal'   => "Wind in {$name} is currently {$wind} km/h — conditions are light and safe.",
+                'Watch'    => "Wind in {$name} is {$wind} km/h — a low pressure system is being monitored.",
+                'Elevated' => "Wind in {$name} is strengthening at {$wind} km/h. Precautionary measures are advised.",
+                'Signal 1' => "Wind in {$name} has reached {$wind} km/h, triggering Typhoon Signal 1 conditions.",
+                'Signal 2' => "Wind in {$name} is at {$wind} km/h — destructive typhoon winds are present.",
+                'Signal 3' => "Wind in {$name} is at {$wind} km/h — extremely destructive. Evacuate immediately.",
+                'Signal 4' => "Wind in {$name} is at {$wind} km/h — catastrophic and life-threatening.",
+                'Signal 5' => "Wind in {$name} is at {$wind} km/h — SUPERTYPHOON. Extreme danger to life.",
             ],
             'rain' => [
-                'Normal'   => "There is no significant rainfall in {barangay} right now. Conditions are dry.",
-                'Watch'    => "Light rain is expected in {barangay}. Monitor weather updates.",
-                'Elevated' => "Rainfall in {barangay} is {rain} mm/hr. Avoid low-lying areas.",
-                'Signal 1' => "Heavy rain is occurring in {barangay} at {rain} mm/hr. Flooding is possible.",
-                'Signal 2' => "Heavy rain in {barangay} at {rain} mm/hr. Avoid all flood-prone areas.",
-                'Signal 3' => "Extreme rain in {barangay} at {rain} mm/hr. Flash floods are occurring.",
-                'Signal 4' => "Catastrophic rainfall in {barangay}. Evacuate flood-prone areas immediately.",
-                'Signal 5' => "Extreme rainfall in {barangay}. Life-threatening flooding. EVACUATE NOW.",
+                'Normal'   => "There is no significant rainfall in {$name} right now. Conditions are currently dry.",
+                'Watch'    => "Light rainfall is reported in {$name} at {$rain} mm/hr. Monitor weather updates.",
+                'Elevated' => "Rainfall in {$name} is at {$rain} mm/hr. Avoid low-lying and flood-prone areas.",
+                'Signal 1' => "Heavy rainfall is occurring in {$name} at {$rain} mm/hr. Flash flooding is possible.",
+                'Signal 2' => "Heavy rain in {$name} at {$rain} mm/hr — avoid all flood-prone areas immediately.",
+                'Signal 3' => "Extreme rainfall in {$name} at {$rain} mm/hr. Flash floods are likely. Evacuate now.",
+                'Signal 4' => "Catastrophic rainfall in {$name} — severe flooding expected. EVACUATE IMMEDIATELY.",
+                'Signal 5' => "Extreme rainfall in {$name} — life-threatening flooding underway. EVACUATE NOW.",
             ],
             'signal' => [
-                'Normal'   => "{barangay} is under No Tropical Cyclone Signal. Conditions are normal.",
-                'Watch'    => "{barangay} is under Tropical Cyclone Watch. Monitor PAGASA updates closely.",
-                'Elevated' => "{barangay} is on Elevated Alert. Prepare precautions.",
-                'Signal 1' => "{barangay} is under Typhoon Signal 1. Wind is {wind} km/h. Classes suspended.",
-                'Signal 2' => "{barangay} is under Typhoon Signal 2. Wind is {wind} km/h. Destructive conditions.",
-                'Signal 3' => "{barangay} is under Typhoon Signal 3. Wind is {wind} km/h. Extremely destructive.",
-                'Signal 4' => "{barangay} is under Typhoon Signal 4. Catastrophic winds. Evacuate now.",
-                'Signal 5' => "{barangay} is under Typhoon Signal 5. SUPERTYPHOON. EVACUATE IMMEDIATELY.",
+                'Normal'   => "{$name} is currently under No Tropical Cyclone Signal. Conditions are normal.",
+                'Watch'    => "{$name} is under Tropical Cyclone Watch. A low pressure area is being monitored.",
+                'Elevated' => "{$name} is on Elevated Alert — wind and rainfall are increasing.",
+                'Signal 1' => "{$name} is under PAGASA Typhoon Signal 1. Wind has reached {$wind} km/h.",
+                'Signal 2' => "{$name} is under PAGASA Typhoon Signal 2. Wind is at {$wind} km/h — destructive conditions.",
+                'Signal 3' => "{$name} is under PAGASA Typhoon Signal 3. Wind is at {$wind} km/h — extremely destructive.",
+                'Signal 4' => "{$name} is under PAGASA Typhoon Signal 4. Catastrophic winds at {$wind} km/h.",
+                'Signal 5' => "{$name} is under PAGASA Typhoon Signal 5 — SUPERTYPHOON. Wind at {$wind} km/h.",
             ],
             'evac' => [
-                'Normal'   => "No evacuation needed in {barangay}. Conditions are normal.",
-                'Watch'    => "No evacuation needed yet in {barangay}. Nearest center: {evac_center} ({distance} km away).",
-                'Elevated' => "Residents in flood-prone areas of {barangay} should prepare to evacuate. Nearest center: {evac_center} ({distance} km away).",
-                'Signal 1' => "Prepare to evacuate from {barangay}. Nearest center: {evac_center} ({distance} km away).",
-                'Signal 2' => "EVACUATE NOW from {barangay} to {evac_center}, {distance} km away.",
-                'Signal 3' => "EVACUATE IMMEDIATELY from {barangay} to {evac_center}. Do not delay.",
-                'Signal 4' => "EVACUATE NOW. Go to {evac_center} immediately. Signal 4 is catastrophic.",
-                'Signal 5' => "EVACUATE IMMEDIATELY. {evac_center} is your nearest shelter. SUPERTYPHOON WARNING.",
+                'Normal'   => "No evacuation is required in {$name} at this time. Conditions are normal.",
+                'Watch'    => "Evacuation is not yet required in {$name}. Continue monitoring PAGASA updates.",
+                'Elevated' => "Residents in flood-prone areas of {$name} should begin preparing to evacuate.",
+                'Signal 1' => "{$name} is under Typhoon Signal 1. Prepare to evacuate — follow barangay orders.",
+                'Signal 2' => "{$name} is under Typhoon Signal 2. Prepare to evacuate now following barangay instructions.",
+                'Signal 3' => "{$name} is under Typhoon Signal 3. All residents must evacuate immediately.",
+                'Signal 4' => "{$name} is under Typhoon Signal 4. EVACUATE NOW — catastrophic winds are approaching.",
+                'Signal 5' => "{$name} is under Typhoon Signal 5. EVACUATE IMMEDIATELY — life-threatening SUPERTYPHOON.",
             ],
             'general' => [
-                'Normal'   => "{barangay} is under normal weather conditions. Wind: {wind} km/h, Rainfall: {rain} mm/hr.",
-                'Watch'    => "{barangay} is under Watch status. A low pressure system is being monitored. Wind: {wind} km/h.",
-                'Elevated' => "{barangay} is at Elevated Alert. Wind: {wind} km/h, Rainfall: {rain} mm/hr.",
-                'Signal 1' => "{barangay} is under Typhoon Signal 1. Wind: {wind} km/h, Rainfall: {rain} mm/hr.",
-                'Signal 2' => "{barangay} is under Typhoon Signal 2. Wind: {wind} km/h, Rainfall: {rain} mm/hr.",
-                'Signal 3' => "{barangay} is under Typhoon Signal 3. Wind: {wind} km/h. Extremely destructive.",
-                'Signal 4' => "{barangay} is under Typhoon Signal 4. Catastrophic winds. Evacuate immediately.",
-                'Signal 5' => "{barangay} is under Typhoon Signal 5 — SUPERTYPHOON. EVACUATE IMMEDIATELY.",
+                'Normal'   => "Current conditions in {$name} are normal with no significant rainfall or wind threat.",
+                'Watch'    => "Current conditions in {$name} are under Watch level. A low pressure area is being monitored.",
+                'Elevated' => "Conditions in {$name} are elevated. Wind is at {$wind} km/h with rainfall at {$rain} mm/hr.",
+                'Signal 1' => "{$name} is under Typhoon Signal 1. Wind: {$wind} km/h. Classes are suspended.",
+                'Signal 2' => "{$name} is under Typhoon Signal 2. Wind: {$wind} km/h. Destructive conditions are present.",
+                'Signal 3' => "{$name} is under Typhoon Signal 3. Wind: {$wind} km/h — extremely destructive.",
+                'Signal 4' => "{$name} is under Typhoon Signal 4. Catastrophic winds at {$wind} km/h.",
+                'Signal 5' => "{$name} is under Typhoon Signal 5 — SUPERTYPHOON. Wind at {$wind} km/h.",
             ],
         ];
 
-        $templateSet = $templates[$intent] ?? $templates['general'];
-        $template    = $templateSet[$severity] ?? reset($templateSet);
+        $set = $s[$intent] ?? $s['general'];
+        return $set[$severity] ?? ($s['general'][$severity] ?? "Current conditions in {$name} are being monitored. Status: {$severity}.");
+    }
 
-        $response = str_replace('{barangay}', $barangay->name, $template);
-        $response = str_replace('{wind}', round($weatherData['wind_speed'], 1), $response);
-        $response = str_replace('{rain}', round($weatherData['rainfall'], 1), $response);
+    /**
+     * Return the standardised action recommendation for a given severity rank.
+     * Exact wording matches the BagyoAlerto spec for UI badge rendering.
+     */
+    private function getActionRecommendation(int $rank): string
+    {
+        return match(true) {
+            $rank <= 1  => "No action required. Continue to monitor PAGASA updates.",
+            $rank === 2 => "Prepare emergency supplies. Secure loose objects around your home.",
+            $rank === 3 => "Classes are suspended. Stay indoors and avoid unnecessary travel.",
+            $rank === 4 => "Prepare to evacuate. Follow instructions from your barangay officials.",
+            $rank === 5 => "Evacuate immediately. Move to your nearest evacuation center now.",
+            default     => "EVACUATE NOW. This is a life-threatening emergency. Do not wait.",
+        };
+    }
 
-        if ($evacuationCenter) {
-            $response = str_replace('{evac_center}', $evacuationCenter->name, $response);
-            $response = str_replace('{distance}', round($evacuationCenter->distance, 1), $response);
+    /**
+     * Heuristic: does the question appear to be about typhoon / weather / disaster topics?
+     * Used to distinguish a "barangay not found" case from a fully out-of-scope question.
+     */
+    private function seemsTyphoonOrWeatherRelated(string $question): bool
+    {
+        $keywords = [
+            'typhoon', 'bagyo', 'weather', 'wind', 'rain', 'flood', 'baha',
+            'signal', 'pagasa', 'evacuate', 'evacuation', 'evac', 'lilikas',
+            'lumikas', 'safe', 'safety', 'shelter', 'barangay', 'storm',
+            'surge', 'lepto', 'prepare', 'emergency', 'hotline', 'temperature',
+            'humidity', 'forecast', 'warning', 'alert', 'drrmo', 'ndrrmc',
+            'rescue', 'disaster', 'cloud', 'pressure', 'rainfall', 'cyclone',
+        ];
+
+        foreach ($keywords as $kw) {
+            if (str_contains($question, $kw)) {
+                return true;
+            }
         }
-
-        return $response;
+        return false;
     }
 
     private function generateNotFoundResponse()
     {
-        $barangays    = Barangay::pluck('name')->take(5)->toArray();
-        $barangayList = implode(', ', $barangays);
-
-        return "I couldn't find that barangay in the system. You can also ask me general typhoon questions like:\n\n"
-            . "• What to do during a typhoon?\n"
-            . "• How to prepare for a typhoon?\n"
-            . "• What is in a go bag?\n"
-            . "• What is PAGASA Signal 1, 2, 3?\n"
-            . "• Emergency hotlines\n\n"
-            . "Available barangays: {$barangayList}";
+        return "I couldn't find that barangay in the system. Please check the spelling or ask your DRRMO to add it.\n\n"
+             . "You can also ask me general typhoon questions like:\n"
+             . "   • What to do during a typhoon?\n"
+             . "   • Emergency hotlines\n"
+             . "   • How to prepare a go bag\n"
+             . "   • PAGASA Signal 1 to 5 explanation";
     }
 
     public function history(Request $request)

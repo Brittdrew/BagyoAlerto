@@ -4,7 +4,7 @@ import axios from "axios"
 import { Tornado, Loader, Shield } from "lucide-react"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
 
 export default function AdminLogin() {
     const navigate = useNavigate()

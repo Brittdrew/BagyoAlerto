@@ -4,7 +4,8 @@ import { Plus, Pencil, Trash2, Loader, Inbox, X, Upload, ImageOff } from "lucide
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
+const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "")
 
 const emptyForm = {
     name: "",
@@ -70,7 +71,7 @@ export default function AdminEvacuationCenters() {
                 const res = await axios.get(`${API_BASE}/evacuation-centers/photo/${encodeURIComponent(photoBarangay)}`)
                 if (res.data && res.data.image_path) {
                     const path = res.data.image_path
-                    const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+                    const fullUrl = path.startsWith("http") ? path : `${API_ORIGIN}${path}`
                     setSavedPhotoUrl(fullUrl)
                 } else {
                     setSavedPhotoUrl(null)
@@ -127,7 +128,7 @@ export default function AdminEvacuationCenters() {
             })
             setPhotoMessage("Evacuation center photo saved successfully.")
             const path = res.data.data.image_path
-            const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+            const fullUrl = path.startsWith("http") ? path : `${API_ORIGIN}${path}`
             setSavedPhotoUrl(fullUrl)
             setPhotoFile(null)
             if (photoPreview) {

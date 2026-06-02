@@ -74,7 +74,8 @@ async function getRoute(startLat, startLng, endLat, endLng) {
     return null
 }
 
-const API_BASE = "http://127.0.0.1:8000/api"
+const API_BASE = import.meta.env.VITE_API_BASE
+const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "")
 
 export default function MapView({ evacuationCenter, barangay }) {
     const [mapType, setMapType] = useState("street")
@@ -151,7 +152,7 @@ export default function MapView({ evacuationCenter, barangay }) {
                     const data = await response.json()
                     if (data && data.image_path) {
                         const path = data.image_path
-                        const fullUrl = path.startsWith("http") ? path : `http://127.0.0.1:8000${path}`
+                        const fullUrl = path.startsWith("http") ? path : `${API_ORIGIN}${path}`
                         setPhotoUrl(fullUrl)
                     } else {
                         setPhotoUrl(null)
