@@ -461,6 +461,7 @@ export default function AdminChat() {
     return (
         <AdminLayout>
             <style>{`
+                * { box-sizing: border-box; }
                 @keyframes pulse {
                     0%, 100% { transform: scale(1); opacity: 1; }
                     50% { transform: scale(1.15); opacity: .7; }
@@ -469,50 +470,103 @@ export default function AdminChat() {
                     from { transform: rotate(0deg); }
                     to { transform: rotate(360deg); }
                 }
+                @keyframes slideIn {
+                    from { opacity: 0; transform: translateY(12px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
                 @keyframes typingBounce {
-                    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-                    30% { transform: translateY(-7px); opacity: 1; }
+                    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+                    30% { transform: translateY(-8px); opacity: 1; }
+                }
+                @keyframes glow {
+                    0%, 100% { box-shadow: 0 0 0 0 rgba(29, 158, 117, 0); }
+                    50% { box-shadow: 0 0 0 8px rgba(29, 158, 117, 0.1); }
+                }
+                @keyframes shimmer {
+                    0% { background-position: -1000px 0; }
+                    100% { background-position: 1000px 0; }
+                }
+                
+                .suggested-btn {
+                    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%) !important;
+                    border: 1.5px solid #d1d5db !important;
                 }
                 .suggested-btn:hover {
-                    background-color: #f0fdf4 !important;
-                    border-color: #86efac !important;
-                    transform: translateY(-1px);
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+                    background: linear-gradient(135deg, #1D9E75 0%, #0d8659 100%) !important;
+                    border-color: #1D9E75 !important;
+                    color: white !important;
+                    transform: translateY(-3px);
+                    box-shadow: 0 12px 24px rgba(29, 158, 117, 0.3) !important;
                 }
+                .suggested-btn:active {
+                    transform: translateY(-1px);
+                }
+                
                 .send-btn:hover:not(:disabled) {
-                    background-color: #15803d !important;
-                    transform: scale(1.03);
+                    background: linear-gradient(135deg, #0d8659 0%, #1D9E75 100%) !important;
+                    transform: scale(1.1);
+                    box-shadow: 0 12px 24px rgba(29, 158, 117, 0.35) !important;
+                }
+                .send-btn:active:not(:disabled) {
+                    transform: scale(0.95);
+                }
+                
+                .chat-input {
+                    font-weight: 500 !important;
                 }
                 .chat-input:focus {
                     border-color: #1D9E75 !important;
-                    background-color: white !important;
-                    box-shadow: 0 0 0 3px rgba(29, 158, 117, 0.12) !important;
+                    background-color: #f0fdf4 !important;
+                    box-shadow: 0 0 0 4px rgba(29, 158, 117, 0.15) !important;
                 }
+                
                 .msg-action-btn {
                     opacity: 0;
-                    transition: opacity 0.15s ease;
+                    transition: all 0.2s ease;
                 }
                 .msg-bubble-group:hover .msg-action-btn {
                     opacity: 1;
                 }
+                
+                .clear-btn {
+                    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%) !important;
+                }
                 .clear-btn:hover {
-                    background: #fee2e2 !important;
+                    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%) !important;
                     color: #991b1b !important;
                     border-color: #fca5a5 !important;
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 16px rgba(239, 68, 68, 0.15) !important;
                 }
-                .refresh-action:hover { color: #1D9E75 !important; }
+                
+                .refresh-action:hover { color: #1D9E75 !important; transform: rotate(180deg); transition: all 0.3s ease; }
                 .copy-action:hover { color: #3b82f6 !important; }
-                .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+                
+                .custom-scrollbar::-webkit-scrollbar { width: 8px; }
                 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #1D9E75 0%, #0d8659 100%); border-radius: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #0d8659 0%, #1D9E75 100%); }
                 
                 .sidebar-item-btn {
-                    transition: all 0.2s ease;
+                    transition: all 0.3s ease;
+                    border-radius: 8px;
+                    margin: 0 8px;
                 }
                 .sidebar-item-btn:hover {
-                    background-color: #f1f5f9 !important;
+                    background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%) !important;
                     border-left-color: #1D9E75 !important;
+                    padding-left: 22px;
+                    transform: translateX(4px);
+                    box-shadow: 0 4px 12px rgba(29, 158, 117, 0.1) !important;
+                }
+                
+                .message-animation {
+                    animation: slideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                
+                .info-card-hover:hover {
+                    transform: translateY(-4px);
+                    box-shadow: 0 12px 24px rgba(29, 158, 117, 0.15) !important;
                 }
             `}</style>
 
@@ -891,207 +945,229 @@ const styles = {
         display: "flex",
         flexDirection: "row",
         height: "calc(100vh - 120px)",
-        gap: "16px",
+        gap: "20px",
         fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        padding: "16px",
+        background: "linear-gradient(135deg, #0f172a 0%, #1a2342 100%)",
     },
     sidebar: {
-        width: "280px",
-        background: "white",
-        borderRadius: "16px",
-        border: "1px solid #e2e8f0",
+        width: "320px",
+        background: "linear-gradient(180deg, #1a2342 0%, #1e2d4a 100%)",
+        borderRadius: "20px",
+        border: "1px solid #2d3f5f",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         flexShrink: 0,
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.03)",
+        boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4), 0 0 1px rgba(29, 158, 117, 0.1)",
     },
     sidebarHeader: {
-        padding: "1rem 1.25rem",
-        borderBottom: "1px solid #e2e8f0",
+        padding: "1.5rem 1.75rem",
+        borderBottom: "1.5px solid #2d3f5f",
         display: "flex",
         alignItems: "center",
-        background: "#fafbff",
+        background: "linear-gradient(135deg, #162238 0%, #1a2d45 100%)",
     },
     sidebarTitle: {
-        fontSize: "0.85rem",
-        fontWeight: "700",
-        color: "#1e293b",
+        fontSize: "0.75rem",
+        fontWeight: "800",
+        color: "#4ade80",
         textTransform: "uppercase",
-        letterSpacing: "0.5px",
+        letterSpacing: "0.8px",
     },
     sidebarContent: {
         flex: 1,
         overflowY: "auto",
-        padding: "8px 0",
+        padding: "12px 8px",
         display: "flex",
         flexDirection: "column",
-        gap: "2px",
+        gap: "4px",
     },
     sidebarItem: {
-        padding: "10px 16px",
+        padding: "12px 14px",
         cursor: "pointer",
         borderLeft: "3px solid transparent",
         backgroundColor: "transparent",
         display: "flex",
         flexDirection: "column",
-        gap: "4px",
+        gap: "5px",
     },
     sidebarItemQ: {
-        fontSize: "0.825rem",
-        color: "#334155",
-        fontWeight: "500",
+        fontSize: "0.8rem",
+        color: "#e5e7eb",
+        fontWeight: "600",
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
+        lineHeight: "1.4",
     },
     sidebarItemMeta: {
         display: "flex",
         alignItems: "center",
         gap: "6px",
         fontSize: "0.7rem",
-        color: "#94a3b8",
+        color: "#9ca3af",
+        fontWeight: "600",
     },
     sidebarLoadingState: {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "32px 16px",
+        padding: "48px 16px",
     },
     sidebarEmptyState: {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "32px 16px",
+        padding: "48px 16px",
         fontSize: "0.75rem",
-        color: "#94a3b8",
+        color: "#9ca3af",
         textAlign: "center",
     },
     chatArea: {
         flex: 1,
-        background: "#f8fafc",
-        borderRadius: "16px",
-        border: "1px solid #e2e8f0",
+        background: "linear-gradient(180deg, #1a2342 0%, #162238 100%)",
+        borderRadius: "20px",
+        border: "1px solid #2d3f5f",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.03)",
+        boxShadow: "0 20px 40px rgba(0, 0, 0, 0.4), 0 0 1px rgba(29, 158, 117, 0.1)",
     },
     header: {
         display: "flex",
         alignItems: "center",
-        padding: "1.1rem 2rem",
-        background: "white",
-        borderBottom: "1px solid #e2e8f0",
-        gap: "1rem",
+        padding: "1.5rem 2.25rem",
+        background: "linear-gradient(135deg, #1a2342 0%, #1e2d4a 100%)",
+        borderBottom: "1.5px solid #2d3f5f",
+        gap: "1.4rem",
     },
     headerIconWrapper: {
-        width: "42px", height: "42px", borderRadius: "12px",
-        backgroundColor: "#f0fdf4",
+        width: "52px", height: "52px", borderRadius: "14px",
+        background: "linear-gradient(135deg, #1e4620 0%, #0d8659 100%)",
         display: "flex", alignItems: "center", justifyContent: "center",
         position: "relative", flexShrink: 0,
+        border: "2px solid #4ade80",
+        boxShadow: "0 8px 16px rgba(29, 158, 117, 0.25)",
     },
     onlineDot: {
-        width: "10px", height: "10px", backgroundColor: "#10b981",
-        borderRadius: "50%", position: "absolute", bottom: "-2px", right: "-2px",
-        border: "2px solid white", boxShadow: "0 0 0 2px rgba(16, 185, 129, 0.3)",
-        animation: "pulse 2s infinite",
+        width: "12px", height: "12px", backgroundColor: "#4ade80",
+        borderRadius: "50%", position: "absolute", bottom: "-4px", right: "-4px",
+        border: "3px solid #1a2342", boxShadow: "0 0 8px rgba(74, 222, 128, 0.6)",
+        animation: "pulse 2.5s ease-in-out infinite",
     },
     headerTextContainer: { display: "flex", flexDirection: "column" },
-    title: { fontSize: "1.05rem", fontWeight: "700", color: "#0f172a", margin: 0 },
-    subtitle: { fontSize: "0.82rem", color: "#64748b", margin: "2px 0 0 0", display: "flex", alignItems: "center", flexWrap: "wrap" },
+    title: { fontSize: "1.2rem", fontWeight: "800", color: "#f1f5f9", margin: 0, letterSpacing: "-0.4px" },
+    subtitle: { fontSize: "0.8rem", color: "#cbd5e1", margin: "4px 0 0 0", display: "flex", alignItems: "center", flexWrap: "wrap", fontWeight: "600" },
     clearButton: {
-        marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.4rem",
-        padding: "0.4rem 0.8rem", background: "#f8fafc", border: "1px solid #e2e8f0",
-        borderRadius: "8px", cursor: "pointer", fontSize: "0.8rem", color: "#64748b",
-        fontWeight: 500, transition: "all 0.2s ease", flexShrink: 0,
+        marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.6rem",
+        padding: "0.6rem 1.2rem", background: "linear-gradient(135deg, #2d3f5f 0%, #334455 100%)", 
+        border: "1.5px solid #475569",
+        borderRadius: "12px", cursor: "pointer", fontSize: "0.8rem", color: "#cbd5e1",
+        fontWeight: "700", transition: "all 0.3s ease", flexShrink: 0,
+        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
     },
     messagesContainer: {
         flex: 1, overflowY: "auto",
-        display: "flex", flexDirection: "column", gap: "1.25rem",
-        padding: "2rem", background: "#f8fafc",
+        display: "flex", flexDirection: "column", gap: "1.5rem",
+        padding: "2.5rem 3rem", background: "linear-gradient(180deg, #1a2342 0%, #162238 100%)",
     },
     messageBubble: {
-        padding: "0.85rem 1.15rem",
-        wordWrap: "break-word", whiteSpace: "pre-wrap", lineHeight: "1.55",
+        padding: "1rem 1.4rem",
+        wordWrap: "break-word", whiteSpace: "pre-wrap", lineHeight: "1.65",
     },
     userBubble: {
-        background: "#1D9E75", color: "white",
-        borderRadius: "16px 16px 4px 16px",
-        boxShadow: "0 2px 8px rgba(29, 158, 117, 0.15)",
+        background: "linear-gradient(135deg, #1D9E75 0%, #0d8659 100%)", color: "white",
+        borderRadius: "20px 20px 8px 20px",
+        boxShadow: "0 8px 20px rgba(29, 158, 117, 0.4)",
     },
     botBubble: {
-        background: "white", color: "#0f172a",
-        border: "1px solid #e2e8f0",
-        borderRadius: "16px 16px 16px 4px",
-        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.02)",
+        background: "linear-gradient(135deg, #2d3f5f 0%, #334455 100%)", color: "#e5e7eb",
+        border: "1.5px solid #475569",
+        borderRadius: "20px 20px 20px 8px",
+        boxShadow: "0 4px 16px rgba(0, 0, 0, 0.3)",
     },
-    messageText: { margin: 0, fontSize: "0.95rem" },
-    badgeContainer: { display: "flex", gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" },
+    messageText: { margin: 0, fontSize: "0.95rem", fontWeight: "500", letterSpacing: "-0.2px" },
+    badgeContainer: { display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap" },
     metadataBadge: {
         display: "inline-flex", alignItems: "center",
-        fontSize: "0.75rem", fontWeight: "600",
-        padding: "0.2rem 0.6rem", borderRadius: "9999px", border: "1px solid",
+        fontSize: "0.7rem", fontWeight: "800",
+        padding: "0.35rem 0.9rem", borderRadius: "24px", border: "1.5px solid",
+        textTransform: "capitalize",
+        letterSpacing: "0.3px",
     },
     actionBtn: {
         background: "none", border: "none", cursor: "pointer",
-        padding: "2px 3px", color: "#94a3b8",
-        display: "flex", alignItems: "center", transition: "color 0.15s",
-        borderRadius: "4px",
+        padding: "4px 6px", color: "#9ca3af",
+        display: "flex", alignItems: "center", transition: "all 0.3s ease",
+        borderRadius: "8px",
     },
     emptyState: {
         display: "flex", flexDirection: "column", alignItems: "center",
-        justifyContent: "center", flex: 1, padding: "2rem",
-        textAlign: "center", maxWidth: "600px", margin: "0 auto",
+        justifyContent: "center", flex: 1, padding: "3.5rem 2.5rem",
+        textAlign: "center", maxWidth: "700px", margin: "0 auto",
     },
     botIconWrapper: {
-        width: "72px", height: "72px", borderRadius: "20px",
-        backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0",
+        width: "92px", height: "92px", borderRadius: "28px",
+        background: "linear-gradient(135deg, #1e4620 0%, #0d8659 100%)", 
+        border: "2.5px solid #4ade80",
         display: "flex", alignItems: "center", justifyContent: "center",
-        marginBottom: "1.5rem", boxShadow: "0 4px 12px rgba(29, 158, 117, 0.06)",
+        marginBottom: "2rem", boxShadow: "0 16px 32px rgba(29, 158, 117, 0.3)",
     },
-    emptyTitle: { fontSize: "1.35rem", fontWeight: "700", color: "#0f172a", margin: "0 0 0.5rem 0" },
-    emptySubtitle: { fontSize: "0.9rem", color: "#64748b", margin: "0 0 2rem 0", lineHeight: "1.5" },
-    infoCardsGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem", width: "100%", textAlign: "left" },
-    infoCard: { background: "white", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "1rem", boxShadow: "0 2px 4px rgba(0,0,0,0.01)" },
-    infoCardTitle: { fontSize: "0.85rem", fontWeight: "600", color: "#0f172a", margin: "0 0 0.25rem 0" },
-    infoCardText: { fontSize: "0.75rem", color: "#64748b", margin: 0, lineHeight: "1.45" },
-    suggestedContainer: { background: "white", padding: "1rem 2rem", borderTop: "1px solid #e2e8f0" },
-    suggestedLabel: { fontSize: "0.8rem", fontWeight: "600", color: "#475569", margin: "0 0 0.65rem 0" },
-    suggestedGrid: { display: "flex", gap: "0.5rem", flexWrap: "wrap" },
+    emptyTitle: { fontSize: "1.5rem", fontWeight: "800", color: "#f1f5f9", margin: "0 0 0.75rem 0", letterSpacing: "-0.6px" },
+    emptySubtitle: { fontSize: "0.95rem", color: "#cbd5e1", margin: "0 0 2.75rem 0", lineHeight: "1.7", fontWeight: "600" },
+    infoCardsGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1.5rem", width: "100%", textAlign: "left" },
+    infoCard: { 
+        background: "linear-gradient(135deg, #2d3f5f 0%, #334455 100%)", 
+        border: "1.5px solid #475569", 
+        borderRadius: "16px", 
+        padding: "1.5rem", 
+        boxShadow: "0 6px 16px rgba(0,0,0,0.3)", 
+        transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        cursor: "default",
+    },
+    infoCardTitle: { fontSize: "0.9rem", fontWeight: "800", color: "#f1f5f9", margin: "0 0 0.5rem 0", letterSpacing: "-0.2px" },
+    infoCardText: { fontSize: "0.8rem", color: "#cbd5e1", margin: 0, lineHeight: "1.6", fontWeight: "600" },
+    suggestedContainer: { background: "linear-gradient(180deg, #1a2342 0%, #1e2d4a 100%)", padding: "1.5rem 2.25rem", borderTop: "1.5px solid #2d3f5f" },
+    suggestedLabel: { fontSize: "0.75rem", fontWeight: "800", color: "#f1f5f9", margin: "0 0 1rem 0", textTransform: "uppercase", letterSpacing: "0.6px" },
+    suggestedGrid: { display: "flex", gap: "0.8rem", flexWrap: "wrap" },
     suggestedButton: {
-        padding: "0.45rem 1rem", background: "white", border: "1px solid #cbd5e1",
-        borderRadius: "9999px", cursor: "pointer", fontSize: "0.825rem",
-        color: "#1D9E75", fontWeight: "500", transition: "all 0.2s ease",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+        padding: "0.6rem 1.4rem", background: "linear-gradient(135deg, #2d3f5f 0%, #334455 100%)", 
+        border: "1.5px solid #475569",
+        borderRadius: "24px", cursor: "pointer", fontSize: "0.8rem",
+        color: "#cbd5e1", fontWeight: "700", transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+        letterSpacing: "-0.2px",
     },
     inputContainer: {
-        display: "flex", gap: "0.75rem", background: "white",
-        padding: "1rem 2rem", borderTop: "1px solid #e2e8f0", alignItems: "center",
+        display: "flex", gap: "1rem", background: "linear-gradient(180deg, #1a2342 0%, #1e2d4a 100%)",
+        padding: "1.5rem 2.25rem", borderTop: "1.5px solid #2d3f5f", alignItems: "center",
     },
     input: {
-        width: "100%", padding: "0.7rem 1.2rem",
-        border: "1px solid #cbd5e1", borderRadius: "9999px",
+        width: "100%", padding: "0.9rem 1.5rem",
+        border: "1.5px solid #475569", borderRadius: "28px",
         fontSize: "0.95rem", outline: "none",
-        transition: "all 0.2s ease", backgroundColor: "#f8fafc",
-        boxSizing: "border-box",
+        transition: "all 0.3s ease", backgroundColor: "#2d3f5f",
+        boxSizing: "border-box", fontWeight: "600", color: "#f1f5f9",
     },
     sendButton: {
-        width: "38px", height: "38px", borderRadius: "50%",
-        background: "#1D9E75", color: "white", border: "none",
+        width: "44px", height: "44px", borderRadius: "50%",
+        background: "linear-gradient(135deg, #1D9E75 0%, #0d8659 100%)", color: "white", border: "none",
         cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-        transition: "all 0.2s ease", flexShrink: 0,
-        boxShadow: "0 4px 6px -1px rgba(29, 158, 117, 0.15)",
+        transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)", flexShrink: 0,
+        boxShadow: "0 8px 20px rgba(29, 158, 117, 0.4)",
     },
-    sendButtonDisabled: { background: "#e2e8f0", color: "#94a3b8", cursor: "not-allowed", boxShadow: "none" },
+    sendButtonDisabled: { background: "#475569", color: "#9ca3af", cursor: "not-allowed", boxShadow: "none" },
     lineHeader: {
-        display: "flex", alignItems: "center", gap: "0.45rem",
-        margin: "0.6rem 0 0.4rem 0", fontWeight: "600", color: "#0f172a", fontSize: "0.975rem",
+        display: "flex", alignItems: "center", gap: "0.6rem",
+        margin: "0.8rem 0 0.6rem 0", fontWeight: "800", color: "#f1f5f9", fontSize: "0.95rem",
+        letterSpacing: "-0.2px",
     },
-    lineHeaderText: { borderBottom: "2px solid #f0fdf4", paddingBottom: "1px" },
-    lineList: { display: "flex", alignItems: "flex-start", gap: "0.45rem", margin: "0.2rem 0" },
+    lineHeaderText: { borderBottom: "2.5px solid #4ade80", paddingBottom: "3px" },
+    lineList: { display: "flex", alignItems: "flex-start", gap: "0.6rem", margin: "0.4rem 0" },
     lineIcon: { display: "inline-flex", alignItems: "center", marginTop: "3px", flexShrink: 0 },
-    lineListText: { fontSize: "0.925rem", color: "#334155" },
-    linePlain: { margin: "0.4rem 0", fontSize: "0.925rem", color: "#334155" },
+    lineListText: { fontSize: "0.9rem", color: "#cbd5e1", fontWeight: "600", letterSpacing: "-0.2px" },
+    linePlain: { margin: "0.4rem 0", fontSize: "0.9rem", color: "#cbd5e1", fontWeight: "600", letterSpacing: "-0.2px" },
 }
