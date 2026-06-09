@@ -47,6 +47,9 @@ class OllamaService
     public function chat(string $systemPrompt, string $userMessage): ?string
     {
         try {
+            Log::info('Ollama chat() called, url: ' . $this->baseUrl);
+            Log::info('Ollama timeout: ' . $this->timeout);
+
             $response = Http::timeout($this->timeout)
                 ->post("{$this->baseUrl}/api/chat", [
                     'model'  => $this->model,
@@ -56,10 +59,12 @@ class OllamaService
                         ['role' => 'user',   'content' => $userMessage],
                     ],
                     'options' => [
-                        'temperature' => 0.3,   // Lower = more factual/consistent
-                        'num_predict' => 500,   // Allow room for 6-section format
+                        'temperature' => 0.3,
+                        'num_predict' => 500,
                     ],
                 ]);
+
+            Log::info('Ollama response status: ' . $response->status());
 
             if (!$response->successful()) {
                 Log::warning('Ollama returned non-200: ' . $response->status());
@@ -67,6 +72,7 @@ class OllamaService
             }
 
             $content = $response->json('message.content');
+            Log::info('Ollama content received: ' . substr($content ?? 'NULL', 0, 100));
 
             if (empty($content)) {
                 Log::warning('Ollama returned empty content.');
