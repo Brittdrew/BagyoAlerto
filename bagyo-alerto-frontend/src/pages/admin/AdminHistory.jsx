@@ -20,7 +20,7 @@ const FILTER_LABELS = {
 }
 
 // ─── Q&A History Row Component ───────────────────────────────────────────────
-function QAHistoryRow({ log, onDelete }) {
+function QAHistoryRow({ log, rowNum, onDelete }) {
     const [expanded, setExpanded] = useState(false)
 
     const getSeverityBadgeStyle = (severity) => {
@@ -41,7 +41,7 @@ function QAHistoryRow({ log, onDelete }) {
 
     return (
         <tr key={log.id} style={styles.tr}>
-            <td style={styles.td}>#{log.id}</td>
+            <td style={styles.td}><span style={{ fontSize: 11, color: "#bbb", fontWeight: 600 }}>{rowNum}</span></td>
             <td style={{ ...styles.td, fontWeight: 600 }}>{log.barangay_name || <span style={{ color: "#888", fontWeight: 400 }}>General</span>}</td>
             <td style={{ ...styles.td, maxWidth: "220px", wordBreak: "break-word" }}>{log.question}</td>
             <td style={{ ...styles.td, maxWidth: "380px", wordBreak: "break-word" }}>
@@ -487,7 +487,7 @@ export default function AdminHistory() {
                                              )
                                              return (
                                                  <tr key={rec.id} style={styles.tr}>
-                                                     <td style={styles.td}>#{rec.id}</td>
+                                                     <td style={styles.td}><span style={{ fontSize: 11, color: "#bbb", fontWeight: 600 }}>{filtered.length - ((currentPage - 1) * PAGE_SIZE) - paginated.indexOf(rec)}</span></td>
                                                      <td style={styles.td}>{rec.barangay?.name || "—"}</td>
                                                      <td style={styles.td}>
                                                          <span
@@ -694,10 +694,11 @@ export default function AdminHistory() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {qaLogs.map((log) => (
+                                        {qaLogs.map((log, i) => (
                                             <QAHistoryRow
                                                 key={log.id}
                                                 log={log}
+                                                rowNum={qaTotalRecords - ((qaCurrentPage - 1) * 20) - i}
                                                 onDelete={handleDeleteQAEntry}
                                             />
                                         ))}
