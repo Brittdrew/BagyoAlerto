@@ -5,8 +5,8 @@ import Sidebar from "../components/Sidebar"
 import WeatherMap from "../components/WeatherMap"
 import InlineWeatherMap from "../components/InlineWeatherMap"
 import ForecastCharts from "../components/ForecastCharts"
-import { 
-    Tornado, MapPin, Wind, CloudRain, Gauge, Droplets, 
+import {
+    Tornado, MapPin, Wind, CloudRain, Gauge, Droplets,
     RefreshCw, AlertTriangle, Satellite, BarChart3, List
 } from "lucide-react"
 
@@ -273,11 +273,11 @@ export default function Forecast() {
                                             {/* Inline Weather Map */}
                                             <div style={styles.mapPanelCard}>
                                                 <div style={styles.mapPanelHeader}>
-                                                    <span style={styles.mapPanelTitle}>🗺 Barangay Weather Map</span>
+                                                    <span style={styles.mapPanelTitle}> Barangay Weather Map</span>
                                                 </div>
                                                 <div style={{ height: 200, position: "relative" }}>
-                                                    <InlineWeatherMap 
-                                                        selectedBarangay={selectedBarangay} 
+                                                    <InlineWeatherMap
+                                                        selectedBarangay={selectedBarangay}
                                                         onOpenFullMap={() => setActiveTab("map")}
                                                     />
                                                 </div>
@@ -333,7 +333,7 @@ export default function Forecast() {
                                                         }}>
                                                             <div style={{ fontSize: 12, fontWeight: 700, color: isToday ? "#185FA5" : "#333" }}>{dayName}</div>
                                                             <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>{dateStr}</div>
-                                                            
+
                                                             <div style={{ fontSize: 32, margin: "14px 0" }}>{WX_ICON(day.code)}</div>
                                                             <div style={{ fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 12 }}>{WX_DESC(day.code)}</div>
 
@@ -371,7 +371,7 @@ export default function Forecast() {
 const styles = {
     page: { minHeight: "100vh", background: "#f0f4f8", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" },
     layout: { display: "flex", flex: 1 },
-    
+
     // Sidebar items mapping
     navSection: { fontSize: 10, color: "#bbb", padding: "12px 14px 4px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" },
     barangayLabel: { fontSize: 10, color: "#aaa", marginBottom: 6, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" },
@@ -402,14 +402,14 @@ const styles = {
 
     content: { padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12, flex: 1, overflow: "auto" },
     mapContainer: { flex: 1, display: "flex", minHeight: 0 },
-    
+
     loadingBox: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, background: "white", borderRadius: 12, border: "0.5px solid #e8ecf0" },
-    
+
     topGrid: { display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 12 },
     card: { background: "white", borderRadius: 12, border: "0.5px solid #e8ecf0", padding: "14px 18px", boxShadow: "0 2px 6px rgba(0,0,0,0.02)" },
     cardHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
     cardTitle: { fontSize: 12, fontWeight: 600, color: "#333", display: "flex", alignItems: "center", gap: 6 },
-    
+
     metaRow: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 12, borderTop: "0.5px solid rgba(255,255,255,0.2)", paddingTop: 12 },
     metaItem: { display: "flex", flexDirection: "column", gap: 2 },
     metaLabelWhite: { fontSize: 11, color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 4 },
