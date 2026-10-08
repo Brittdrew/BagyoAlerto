@@ -10,6 +10,7 @@ use App\Http\Controllers\ChatController;
 
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
+Route::get('/barangays/{id}/evacuation-target', [BarangayController::class, 'evacuationTarget']);
 
 Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);

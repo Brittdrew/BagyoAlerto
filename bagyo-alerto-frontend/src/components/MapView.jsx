@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet"
+import { useEffect, useMemo, useState, useRef } from "react"
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
-import { Navigation } from "lucide-react"
+import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints } from "lucide-react"
+import { useLiveLocation } from "../hooks/useLiveLocation"
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -11,132 +12,365 @@ L.Icon.Default.mergeOptions({
     shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 })
 
-const barangayIcon = L.divIcon({
+// Map tile styling constants (OpenStreetMap standard & Satellite)
+const STREET_TILES_URL = import.meta.env.VITE_STREET_TILES_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+const STREET_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+const SATELLITE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+const SATELLITE_ATTRIBUTION = "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+
+// User marker: blue dot with a white border
+const userLiveIcon = L.divIcon({
     html: `<div style="
-        background: #1565c0;
-        width: 36px;
-        height: 36px;
+        width: 14px;
+        height: 14px;
+        background: #2563eb;
+        border: 2.5px solid #ffffff;
         border-radius: 50%;
-        border: 3px solid white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 16px;
-    ">&#128205;</div>`,
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+        box-sizing: border-box;
+    "></div>`,
     className: "",
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-    popupAnchor: [0, -18],
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+    popupAnchor: [0, -9],
 })
 
+// Center marker: inline SVG pin (no emoji)
 const evacuationIcon = L.divIcon({
-    html: `<div style="
-        background: #dc3545;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        border: 3px solid white;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 16px;
-    ">&#127979;</div>`,
+    html: `<svg width="28" height="36" viewBox="0 0 28 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M14 0C6.268 0 0 6.268 0 14c0 10.5 14 22 14 22s14-11.5 14-22C28 6.268 21.732 0 14 0z" fill="#dc2626"/>
+        <circle cx="14" cy="13" r="5" fill="#ffffff"/>
+    </svg>`,
     className: "",
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-    popupAnchor: [0, -18],
+    iconSize: [28, 36],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -36],
 })
 
-function MapUpdater({ center }) {
+// Barangay starting marker: inline SVG pin (no emoji)
+const barangayIcon = L.divIcon({
+    html: `<svg width="24" height="30" viewBox="0 0 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 18 12 18s12-9 12-18c0-6.627-5.373-12-12-12z" fill="#2563eb"/>
+        <circle cx="12" cy="12" r="4" fill="#ffffff"/>
+    </svg>`,
+    className: "",
+    iconSize: [24, 30],
+    iconAnchor: [12, 30],
+    popupAnchor: [0, -30],
+})
+
+// Call fitBounds on the route with 40px padding on route load or change only
+function RouteBoundsFitter({ routeCoords }) {
     const map = useMap()
+    const lastRouteKeyRef = useRef(null)
 
     useEffect(() => {
-        map.setView(center, 15)
-    }, [center, map])
+        if (!routeCoords || routeCoords.length < 2) return
+
+        const routeKey = `${routeCoords[0][0]},${routeCoords[0][1]}_${routeCoords[routeCoords.length - 1][0]},${routeCoords[routeCoords.length - 1][1]}_${routeCoords.length}`
+        if (lastRouteKeyRef.current === routeKey) {
+            return
+        }
+        lastRouteKeyRef.current = routeKey
+
+        const bounds = L.latLngBounds(routeCoords)
+        map.fitBounds(bounds, { padding: [40, 40] })
+    }, [routeCoords, map])
 
     return null
 }
 
-async function getRoute(startLat, startLng, endLat, endLng) {
-    const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`
-    const response = await fetch(url)
-    const data = await response.json()
-    if (data.routes && data.routes[0]) {
-        const coordinates = data.routes[0].geometry.coordinates.map((coord) => [coord[1], coord[0]])
-        const distance = (data.routes[0].distance / 1000).toFixed(2)
-        const duration = Math.round(data.routes[0].duration / 60)
-        return { coordinates, distance, duration }
+function getDistanceInMeters(lat1, lon1, lat2, lon2) {
+    if (!Number.isFinite(lat1) || !Number.isFinite(lon1) || !Number.isFinite(lat2) || !Number.isFinite(lon2)) {
+        return 0
     }
-    return null
+    const R = 6371000 // Earth's radius in meters
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE
-const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "")
+const API_ORIGIN = API_BASE ? API_BASE.replace(/\/api\/?$/, "") : ""
+const OSRM_BASE = import.meta.env.VITE_OSRM_URL || "https://routing.openstreetmap.de/routed-foot"
+const OSRM_PROFILE = import.meta.env.VITE_OSRM_PROFILE || "foot"
 
-export default function MapView({ evacuationCenter, barangay }) {
+function buildOsrmUrl(startLng, startLat, endLng, endLat) {
+    const cleanBase = OSRM_BASE.replace(/\/+$/, "")
+    return `${cleanBase}/route/v1/${OSRM_PROFILE}/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`
+}
+
+function formatWalkTime(minutes) {
+    if (minutes == null || !Number.isFinite(minutes)) return "—"
+    const m = Math.round(minutes)
+    if (m < 60) {
+        return `${m} min`
+    }
+    const hrs = Math.floor(m / 60)
+    const remMins = m % 60
+    return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
+}
+
+export default function MapView({ evacuationCenter: initialCenter, barangay }) {
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
-    const [routeLoading, setRouteLoading] = useState(true)
+    const [target, setTarget] = useState(initialCenter || null)
+    const [targetLoading, setTargetLoading] = useState(false)
+    const [targetError, setTargetError] = useState(null)
+
     const [routeCoords, setRouteCoords] = useState([])
     const [routeDistance, setRouteDistance] = useState(null)
-    const [driveMinutes, setDriveMinutes] = useState(null)
+    const [routeMinutes, setRouteMinutes] = useState(null)
+    const [routeLoading, setRouteLoading] = useState(false)
+    const [isOfflineRoute, setIsOfflineRoute] = useState(false)
+
     const [photoUrl, setPhotoUrl] = useState(null)
     const [photoLoading, setPhotoLoading] = useState(true)
 
-    const startLat = Number(barangay?.latitude)
-    const startLng = Number(barangay?.longitude)
-    const endLat = Number(evacuationCenter?.latitude)
-    const endLng = Number(evacuationCenter?.longitude)
-
-    const center = useMemo(() => [
-        (startLat + endLat) / 2,
-        (startLng + endLng) / 2,
-    ], [startLat, startLng, endLat, endLng])
+    const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false))
+    const [lastUpdated, setLastUpdated] = useState(() => Date.now())
+    const [secondsAgo, setSecondsAgo] = useState(0)
 
     useEffect(() => {
-        let active = true
-        const loadRoute = async () => {
-            setRouteLoading(true)
-            try {
-                const route = await getRoute(startLat, startLng, endLat, endLng)
-                if (!active) return
-                if (route && route.coordinates.length > 1) {
-                    setRouteCoords(route.coordinates)
-                    setRouteDistance(route.distance)
-                    setDriveMinutes(route.duration)
-                } else {
-                    setRouteCoords([[startLat, startLng], [endLat, endLng]])
-                    const fallbackDistance = Number(evacuationCenter?.distance)
-                    setRouteDistance(Number.isFinite(fallbackDistance) ? fallbackDistance.toFixed(2) : null)
-                    setDriveMinutes(null)
-                }
-            } catch {
-                if (!active) return
-                setRouteCoords([[startLat, startLng], [endLat, endLng]])
-                const fallbackDistance = Number(evacuationCenter?.distance)
-                setRouteDistance(Number.isFinite(fallbackDistance) ? fallbackDistance.toFixed(2) : null)
-                setDriveMinutes(null)
-            } finally {
-                if (active) setRouteLoading(false)
-            }
+        const handleResize = () => setIsMobile(window.innerWidth < 768)
+        window.addEventListener("resize", handleResize)
+        return () => window.removeEventListener("resize", handleResize)
+    }, [])
+
+    const barangayId = barangay?.value || barangay?.id
+
+    // Throttle tracking refs: re-fetch only after moving > 30 m AND at least 15 s have passed
+    const lastFetchedPosRef = useRef(null)
+    const lastFetchedTimeRef = useRef(0)
+    const activeTargetIdRef = useRef(null)
+
+    // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
+    const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
+
+    useEffect(() => {
+        setLastUpdated(Date.now())
+        setSecondsAgo(0)
+    }, [routeCoords, position, target])
+
+    useEffect(() => {
+        const timer = setInterval(() => {
+            setSecondsAgo(Math.max(0, Math.floor((Date.now() - lastUpdated) / 1000)))
+        }, 1000)
+        return () => clearInterval(timer)
+    }, [lastUpdated])
+
+    // Requirement 1: Fetch target from GET /api/barangays/{barangayId}/evacuation-target
+    useEffect(() => {
+        if (!barangayId) {
+            return
         }
 
-        if ([startLat, startLng, endLat, endLng].every((v) => Number.isFinite(v))) {
-            loadRoute()
-        } else {
-            setRouteCoords([])
-            setRouteLoading(false)
-        }
+        let active = true
+
+        fetch(`${API_BASE}/barangays/${barangayId}/evacuation-target`)
+            .then(async (res) => {
+                if (!active) return
+                if (res.status === 404) {
+                    setTarget(null)
+                    setTargetError("No evacuation center available")
+                    return
+                }
+                if (!res.ok) {
+                    throw new Error(`Server returned status ${res.status}`)
+                }
+                const data = await res.json()
+                if (!active) return
+                setTarget(data)
+                setTargetError(null)
+                // Cache target in localStorage (Requirement 8)
+                try {
+                    localStorage.setItem(`bakwit_target_${barangayId}`, JSON.stringify(data))
+                } catch (err) {
+                    console.warn("Failed to cache target:", err)
+                }
+            })
+            .catch(() => {
+                if (!active) return
+                // Try reading cached target (Requirement 8)
+                try {
+                    const cached = localStorage.getItem(`bakwit_target_${barangayId}`)
+                    if (cached) {
+                        setTarget(JSON.parse(cached))
+                        setTargetError(null)
+                        return
+                    }
+                } catch (_e) {
+                    // ignore
+                }
+
+                if (initialCenter) {
+                    setTarget(initialCenter)
+                    setTargetError(null)
+                } else {
+                    setTarget(null)
+                    setTargetError("No evacuation center available")
+                }
+            })
+            .finally(() => {
+                if (active) setTargetLoading(false)
+            })
 
         return () => {
             active = false
         }
-    }, [startLat, startLng, endLat, endLng, evacuationCenter?.distance])
+    }, [barangayId, initialCenter])
 
+    // Requirement 3 & 5 & 8 & 9: Route calculation and throttling
+    useEffect(() => {
+        if (!target?.latitude || !target?.longitude) {
+            return
+        }
+
+        const destLat = Number(target.latitude)
+        const destLng = Number(target.longitude)
+        const hasLivePosition = position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
+
+        // Case A: Live GPS Position is available
+        if (hasLivePosition) {
+            const now = Date.now()
+            const lastPos = lastFetchedPosRef.current
+            const lastTime = lastFetchedTimeRef.current
+            const targetChanged = activeTargetIdRef.current !== target.id
+
+            let shouldFetch = false
+            if (targetChanged || !lastPos) {
+                shouldFetch = true
+            } else {
+                const moved = getDistanceInMeters(lastPos.lat, lastPos.lng, position.lat, position.lng)
+                const timePassed = now - lastTime
+                // Throttle: > 30 m moved AND at least 15 s passed
+                if (moved > 30 && timePassed >= 15000) {
+                    shouldFetch = true
+                }
+            }
+
+            if (!shouldFetch) {
+                return
+            }
+
+            lastFetchedPosRef.current = { lat: position.lat, lng: position.lng }
+            lastFetchedTimeRef.current = now
+            activeTargetIdRef.current = target.id
+
+            let active = true
+            const url = buildOsrmUrl(position.lng, position.lat, destLng, destLat)
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (!active) return
+                    if (data.routes && data.routes[0]) {
+                        const route = data.routes[0]
+                        const coords = route.geometry.coordinates.map(c => [c[1], c[0]])
+                        const distKm = (route.distance / 1000).toFixed(2)
+                        const durationMins = Math.max(1, Math.round(route.duration / 60))
+                        setRouteCoords(coords)
+                        setRouteDistance(distKm)
+                        setRouteMinutes(durationMins)
+                        setIsOfflineRoute(false)
+
+                        // Cache route (Requirement 8)
+                        try {
+                            localStorage.setItem(`bakwit_route_${barangayId}`, JSON.stringify({
+                                coords,
+                                distance: distKm,
+                                duration: durationMins,
+                            }))
+                        } catch (_err) {
+                            // ignore
+                        }
+                    } else {
+                        throw new Error("No route found")
+                    }
+                })
+                .catch(() => {
+                    if (!active) return
+                    // Use cached route if route fetch fails (Requirement 8)
+                    try {
+                        const cached = localStorage.getItem(`bakwit_route_${barangayId}`)
+                        if (cached) {
+                            const parsed = JSON.parse(cached)
+                            setRouteCoords(parsed.coords)
+                            setRouteDistance(parsed.distance)
+                            setRouteMinutes(parsed.duration)
+                            setIsOfflineRoute(true)
+                            return
+                        }
+                    } catch (_err) {
+                        // ignore
+                    }
+
+                    // Straight line fallback
+                    setRouteCoords([[position.lat, position.lng], [destLat, destLng]])
+                    const directDist = (getDistanceInMeters(position.lat, position.lng, destLat, destLng) / 1000).toFixed(2)
+                    setRouteDistance(directDist)
+                    setRouteMinutes(Math.max(1, Math.round((directDist / 4) * 60)))
+                    setIsOfflineRoute(true)
+                })
+                .finally(() => {
+                    if (active) setRouteLoading(false)
+                })
+
+            return () => {
+                active = false
+            }
+        }
+
+        // Case B: GPS is denied, unavailable, or idle (Requirement 9)
+        // Keep existing barangay-to-center line
+        if (barangay?.latitude && barangay?.longitude) {
+            const bLat = Number(barangay.latitude)
+            const bLng = Number(barangay.longitude)
+
+            let active = true
+            const url = buildOsrmUrl(bLng, bLat, destLng, destLat)
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (!active) return
+                    if (data.routes && data.routes[0]) {
+                        const route = data.routes[0]
+                        const coords = route.geometry.coordinates.map(c => [c[1], c[0]])
+                        const distKm = (route.distance / 1000).toFixed(2)
+                        const durationMins = Math.max(1, Math.round(route.duration / 60))
+                        setRouteCoords(coords)
+                        setRouteDistance(distKm)
+                        setRouteMinutes(durationMins)
+                        setIsOfflineRoute(false)
+                    } else {
+                        throw new Error("No route found")
+                    }
+                })
+                .catch(() => {
+                    if (!active) return
+                    setRouteCoords([[bLat, bLng], [destLat, destLng]])
+                    const directDist = (getDistanceInMeters(bLat, bLng, destLat, destLng) / 1000).toFixed(2)
+                    setRouteDistance(directDist)
+                    setRouteMinutes(Math.max(1, Math.round((directDist / 4) * 60)))
+                    setIsOfflineRoute(true)
+                })
+                .finally(() => {
+                    if (active) setRouteLoading(false)
+                })
+
+            return () => {
+                active = false
+            }
+        }
+    }, [target, position, barangayId, barangay?.latitude, barangay?.longitude])
+
+    // Photo fetch effect
     useEffect(() => {
         let active = true
         const fetchPhoto = async () => {
@@ -144,7 +378,6 @@ export default function MapView({ evacuationCenter, barangay }) {
                 setPhotoLoading(false)
                 return
             }
-            setPhotoLoading(true)
             try {
                 const response = await fetch(`${API_BASE}/evacuation-centers/photo/${encodeURIComponent(barangay.name)}`)
                 if (!active) return
@@ -160,14 +393,10 @@ export default function MapView({ evacuationCenter, barangay }) {
                 } else {
                     setPhotoUrl(null)
                 }
-            } catch (err) {
-                if (active) {
-                    setPhotoUrl(null)
-                }
+            } catch (_err) {
+                if (active) setPhotoUrl(null)
             } finally {
-                if (active) {
-                    setPhotoLoading(false)
-                }
+                if (active) setPhotoLoading(false)
             }
         }
         fetchPhoto()
@@ -176,85 +405,332 @@ export default function MapView({ evacuationCenter, barangay }) {
         }
     }, [barangay?.name])
 
-    const navUrl = `https://www.google.com/maps/search/?api=1&query=${evacuationCenter.latitude},${evacuationCenter.longitude}`
+    // Calculate user distance to center for arrival check (Requirement 7)
+    const distanceToCenterMeters = useMemo(() => {
+        if (!position || !target?.latitude || !target?.longitude) return null
+        return getDistanceInMeters(position.lat, position.lng, Number(target.latitude), Number(target.longitude))
+    }, [position, target?.latitude, target?.longitude])
 
-    const walkMinutes = driveMinutes ? Math.round(driveMinutes * 4) : null
+    const hasArrived = distanceToCenterMeters !== null && distanceToCenterMeters <= 30
+
+    // Coordinates for center & markers
+    const hasLiveGps = position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
+
+    const startPoint = useMemo(() => {
+        if (hasLiveGps) {
+            return [position.lat, position.lng]
+        }
+        if (barangay?.latitude && barangay?.longitude) {
+            return [Number(barangay.latitude), Number(barangay.longitude)]
+        }
+        return null
+    }, [hasLiveGps, position, barangay?.latitude, barangay?.longitude])
+
+    const endPoint = useMemo(() => {
+        if (target?.latitude && target?.longitude) {
+            return [Number(target.latitude), Number(target.longitude)]
+        }
+        return null
+    }, [target?.latitude, target?.longitude])
+
+    const mapCenter = useMemo(() => {
+        if (startPoint && endPoint) {
+            return [(startPoint[0] + endPoint[0]) / 2, (startPoint[1] + endPoint[1]) / 2]
+        }
+        return startPoint || endPoint || [9.784, 125.488]
+    }, [startPoint, endPoint])
+
+    if (targetLoading && !target) {
+        return (
+            <div style={styles.container}>
+                <div style={{ padding: 24, textAlign: "center", color: "#666", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <Loader size={18} style={{ animation: "spin 1.5s linear infinite" }} />
+                    <span>Locating assigned evacuation center...</span>
+                </div>
+            </div>
+        )
+    }
+
+    if (targetError && !target) {
+        return (
+            <div style={styles.container}>
+                <div style={styles.errorBanner}>
+                    <AlertTriangle size={24} style={{ color: "#dc2626", flexShrink: 0 }} />
+                    <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#991b1b" }}>
+                            {targetError}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 2 }}>
+                            There are currently no active evacuation centers with available capacity for Barangay {barangay?.name || ""}.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    const navUrl = target
+        ? `https://www.google.com/maps/dir/?api=1&destination=${target.latitude},${target.longitude}`
+        : "#"
+
+    const capacityNum = target?.capacity ? Number(target.capacity) : 0
+    const occupancyNum = target?.current_occupancy ? Number(target.current_occupancy) : 0
+    const capacityPercent = capacityNum > 0
+        ? Math.min(100, Math.max(0, Math.round((occupancyNum / capacityNum) * 100)))
+        : 0
+
+    // Requirement 4: Status messages as a single alert bar with a Lucide icon and plain, short text (no emoji)
+    const activeAlert = useMemo(() => {
+        if (hasArrived) {
+            return {
+                icon: CheckCircle2,
+                text: "You have arrived at the evacuation facility.",
+                bg: "#f0fdf4",
+                border: "#bbf7d0",
+                color: "#166534",
+                iconColor: "#16a34a",
+            }
+        }
+        if (target?.is_fallback) {
+            return {
+                icon: AlertTriangle,
+                text: "Local center unavailable. Redirected to nearest active facility.",
+                bg: "#fffbeb",
+                border: "#fde68a",
+                color: "#92400e",
+                iconColor: "#d97706",
+            }
+        }
+        if (isOfflineRoute) {
+            return {
+                icon: WifiOff,
+                text: "Network offline. Displaying direct route.",
+                bg: "#fef2f2",
+                border: "#fecaca",
+                color: "#991b1b",
+                iconColor: "#dc2626",
+            }
+        }
+        if (!hasLiveGps && gpsStatus === "denied") {
+            return {
+                icon: MapPin,
+                text: "Location permission denied. Routing from barangay center.",
+                bg: "#eff6ff",
+                border: "#bfdbfe",
+                color: "#1e40af",
+                iconColor: "#2563eb",
+            }
+        }
+        if (!hasLiveGps && gpsStatus === "unavailable") {
+            return {
+                icon: MapPin,
+                text: "Location unavailable. Routing from barangay center.",
+                bg: "#eff6ff",
+                border: "#bfdbfe",
+                color: "#1e40af",
+                iconColor: "#2563eb",
+            }
+        }
+        return null
+    }, [hasArrived, target?.is_fallback, isOfflineRoute, hasLiveGps, gpsStatus])
+
+    // Redesigned Info Panel
+    const infoPanel = (
+        <div style={isMobile ? styles.panelMobile : styles.panelDesktop}>
+            {/* 1. Hierarchy: Center name as title; address under it */}
+            <div style={styles.titleBlock}>
+                <h3 style={styles.centerTitle}>{target?.name || "Evacuation Center"}</h3>
+                <p style={styles.centerAddress}>{target?.address || "Address unavailable"}</p>
+            </div>
+
+            {/* 1. Distance & Walking time as two large figures (tabular-nums) */}
+            <div style={styles.figuresRow}>
+                <div style={styles.figureCard}>
+                    <span style={styles.figureLabel}>Distance</span>
+                    <span style={styles.figureValue}>{routeDistance ? `${routeDistance} km` : "—"}</span>
+                </div>
+                <div style={styles.figureCard}>
+                    <span style={styles.figureLabel}>Walking Time</span>
+                    <span style={styles.figureValue}>{formatWalkTime(routeMinutes)}</span>
+                </div>
+            </div>
+
+            {/* 2. Capacity: Thin progress bar with text "300 capacity" */}
+            <div style={styles.capacitySection}>
+                <div style={styles.capacityHeader}>
+                    <span style={styles.capacityLabel}>Capacity</span>
+                    <span style={styles.capacityValue}>
+                        {capacityNum > 0 ? `${capacityNum} capacity` : "Capacity unavailable"}
+                    </span>
+                </div>
+                <div style={styles.progressTrack}>
+                    <div
+                        style={{
+                            ...styles.progressFill,
+                            width: `${capacityPercent}%`,
+                        }}
+                    />
+                </div>
+            </div>
+
+            {/* 4. Single alert bar with Lucide icon and plain, short text (no emoji) */}
+            {activeAlert && (
+                <div
+                    style={{
+                        ...styles.alertBar,
+                        background: activeAlert.bg,
+                        borderColor: activeAlert.border,
+                        color: activeAlert.color,
+                    }}
+                >
+                    <activeAlert.icon size={16} style={{ color: activeAlert.iconColor, flexShrink: 0 }} />
+                    <span style={styles.alertText}>{activeAlert.text}</span>
+                </div>
+            )}
+
+            {/* 3. Primary button: Open in Google Maps and no other competing buttons */}
+            <button
+                type="button"
+                style={styles.primaryNavBtn}
+                onClick={() => window.open(navUrl, "_blank", "noopener,noreferrer")}
+            >
+                <Navigation size={18} />
+                Open in Google Maps
+            </button>
+
+            {/* 5. "Updated Xs ago" and small GPS accuracy label */}
+            <div style={styles.metaRow}>
+                <span>Updated {secondsAgo}s ago</span>
+                <span style={styles.metaDot}>•</span>
+                <span>
+                    {hasLiveGps && Number.isFinite(accuracy)
+                        ? `GPS ±${Math.round(accuracy)} m`
+                        : "Barangay coordinates"}
+                </span>
+            </div>
+        </div>
+    )
 
     return (
         <div style={styles.container}>
-            <div style={styles.header}>
-                <div style={styles.title}>Evacuation Routing Map</div>
-                <div style={styles.subtitle}>{evacuationCenter.address}</div>
-            </div>
+            {/* 5. The route info panel goes above the map on phones and desktop */}
+            {infoPanel}
 
-            <div style={styles.toggleRow}>
-                <button
-                    type="button"
-                    onClick={() => setMapType("street")}
-                    style={{ ...styles.toggleBtn, ...(mapType === "street" ? styles.toggleBtnActive : styles.toggleBtnInactive) }}
-                >
-                    Street View
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setMapType("satellite")}
-                    style={{ ...styles.toggleBtn, ...(mapType === "satellite" ? styles.toggleBtnActive : styles.toggleBtnInactive) }}
-                >
-                    Satellite View
-                </button>
-            </div>
-
+            {/* Map Container */}
             <div style={styles.mapWrap}>
-                {!mapReady && <div style={styles.loadingOverlay}>⏳ Loading map...</div>}
-                {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 52 : 0 }}>🧭 Fetching route...</div>}
+                {/* Segmented Control in top-right corner */}
+                <div style={styles.segmentedControl}>
+                    <button
+                        type="button"
+                        onClick={() => setMapType("street")}
+                        style={{
+                            ...styles.segBtn,
+                            ...(isMobile ? styles.segBtnMobile : {}),
+                            ...(mapType === "street" ? styles.segBtnActive : styles.segBtnInactive),
+                        }}
+                    >
+                        Street
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setMapType("satellite")}
+                        style={{
+                            ...styles.segBtn,
+                            ...(isMobile ? styles.segBtnMobile : {}),
+                            ...(mapType === "satellite" ? styles.segBtnActive : styles.segBtnInactive),
+                        }}
+                    >
+                        Satellite
+                    </button>
+                </div>
+
+                {!mapReady && <div style={styles.loadingOverlay}>Loading map...</div>}
+                {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 48 : 0 }}>Updating route...</div>}
                 <MapContainer
-                    center={center}
+                    center={mapCenter}
                     zoom={15}
-                    style={styles.map}
-                    scrollWheelZoom={window.innerWidth > 768}
+                    style={isMobile ? styles.mapMobile : styles.map}
+                    scrollWheelZoom={!isMobile}
                     whenReady={() => setMapReady(true)}
                 >
-                    <MapUpdater center={center} />
+                    <RouteBoundsFitter routeCoords={routeCoords} />
                     <TileLayer
-                        url={mapType === "satellite"
-                            ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                            : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"}
-                        attribution={mapType === "satellite"
-                            ? "Tiles © Esri"
-                            : "© OpenStreetMap contributors"}
+                        url={mapType === "satellite" ? SATELLITE_URL : STREET_TILES_URL}
+                        attribution={mapType === "satellite" ? SATELLITE_ATTRIBUTION : STREET_ATTRIBUTION}
                     />
-                    <Marker position={[startLat, startLng]} icon={barangayIcon}>
-                        <Popup>
-                            📍 <strong>Your Location</strong><br />
-                            Barangay {barangay.name}, Surigao City
-                        </Popup>
-                    </Marker>
-                    <Marker position={[endLat, endLng]} icon={evacuationIcon}>
-                        <Popup>
-                            🏫 <strong>{evacuationCenter.name}</strong><br />
-                            📍 {evacuationCenter.address}<br />
-                            👥 Capacity: {evacuationCenter.capacity} persons<br />
-                            🟢 Active Evacuation Center
-                        </Popup>
-                    </Marker>
-                    {routeCoords.length > 1 && (
-                        <Polyline
-                            positions={routeCoords}
-                            pathOptions={{ color: "#1565c0", weight: 4, opacity: 0.8 }}
+
+                    {/* Requirement 3: Accuracy circle sized from GPS accuracy */}
+                    {hasLiveGps && Number.isFinite(accuracy) && accuracy > 0 && (
+                        <Circle
+                            center={[position.lat, position.lng]}
+                            radius={accuracy}
+                            pathOptions={{
+                                color: "#2563eb",
+                                fillColor: "#3b82f6",
+                                fillOpacity: 0.15,
+                                weight: 1,
+                                opacity: 0.4,
+                            }}
                         />
+                    )}
+
+                    {/* Requirement 3: User marker (blue dot with white border) */}
+                    {hasLiveGps ? (
+                        <Marker position={[position.lat, position.lng]} icon={userLiveIcon}>
+                            <Popup>
+                                <strong>Your Location</strong>
+                            </Popup>
+                        </Marker>
+                    ) : (
+                        barangay?.latitude && (
+                            <Marker position={[Number(barangay.latitude), Number(barangay.longitude)]} icon={barangayIcon}>
+                                <Popup>
+                                    <strong>Barangay {barangay.name}</strong>
+                                </Popup>
+                            </Marker>
+                        )
+                    )}
+
+                    {/* Requirement 4 & 5: Center marker with plain text popup (no emoji) */}
+                    {target?.latitude && (
+                        <Marker position={[Number(target.latitude), Number(target.longitude)]} icon={evacuationIcon}>
+                            <Popup>
+                                <strong>{target.name}</strong>
+                                {target.address && <><br />{target.address}</>}
+                                <br />Capacity: {target.capacity} persons
+                            </Popup>
+                        </Marker>
+                    )}
+
+                    {/* Requirement 2: Route polyline: 6px solid accent color with 9px white casing line beneath it */}
+                    {routeCoords.length > 1 && (
+                        <>
+                            <Polyline
+                                positions={routeCoords}
+                                pathOptions={{
+                                    color: "#ffffff",
+                                    weight: 9,
+                                    opacity: 1,
+                                }}
+                            />
+                            <Polyline
+                                positions={routeCoords}
+                                pathOptions={{
+                                    color: isOfflineRoute ? "#dc2626" : "#2563eb",
+                                    weight: 6,
+                                    opacity: 1,
+                                    dashArray: isOfflineRoute ? "6, 8" : undefined,
+                                }}
+                            />
+                        </>
                     )}
                 </MapContainer>
             </div>
 
-            <div style={styles.infoStrip}>
-                <div style={styles.infoItem}>📏 Distance: <strong>{routeDistance ? `${routeDistance} km` : "—"}</strong></div>
-                <div style={styles.infoItem}>🚗 Drive: <strong>{driveMinutes ? `${driveMinutes} mins` : "—"}</strong></div>
-                <div style={styles.infoItem}>🚶 Walk: <strong>{walkMinutes ? `${walkMinutes} mins` : "—"}</strong></div>
-            </div>
-
+            {/* Photo Card */}
             <div style={styles.streetCard}>
-                <div style={styles.streetTitle}>📷 Evacuation Center Photo</div>
-                <div style={styles.streetSub}>Representative photo of your evacuation destination</div>
+                <div style={styles.streetTitle}>📷 Evacuation Center Facility</div>
+                <div style={styles.streetSub}>Photo of {target?.name}</div>
                 {photoLoading ? (
                     <div style={styles.streetFallback}>Loading photo...</div>
                 ) : photoUrl ? (
@@ -267,20 +743,11 @@ export default function MapView({ evacuationCenter, barangay }) {
                 ) : (
                     <div style={styles.streetFallback}>
                         <div style={{ fontSize: 14, fontWeight: 600 }}>Photo coming soon</div>
-                        <div style={styles.streetFallbackSub}>An image of this evacuation center will be uploaded by the admin soon.</div>
+                        <div style={styles.streetFallbackSub}>An image of this evacuation facility will be uploaded soon.</div>
                     </div>
                 )}
-                <div style={styles.streetCaption}>ℹ️ {evacuationCenter.name} — {evacuationCenter.address}</div>
+                <div style={styles.streetCaption}>ℹ️ {target?.name} — {target?.address}</div>
             </div>
-
-            <button
-                type="button"
-                style={styles.navBtn}
-                onClick={() => window.open(navUrl, "_blank", "noopener,noreferrer")}
-            >
-                <Navigation size={16} />
-                {"\uD83E\uDDED"} Open in Google Maps
-            </button>
         </div>
     )
 }
@@ -289,47 +756,205 @@ const styles = {
     container: {
         background: "#fff",
         borderRadius: 16,
-        border: "0.5px solid #e4e8f2",
+        border: "1px solid #e2e8f0",
         padding: 14,
         marginTop: 14,
-        boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
         display: "grid",
         gap: 12,
     },
-    header: {
+    panelDesktop: {
         display: "grid",
-        gap: 4,
+        gap: 12,
+        background: "#ffffff",
+        borderRadius: 12,
+        border: "1px solid #e2e8f0",
+        padding: "14px 16px",
     },
-    title: {
-        fontSize: 15,
+    panelMobile: {
+        display: "grid",
+        gap: 12,
+    },
+    bottomSheetWrap: {
+        background: "#ffffff",
+        borderRadius: 14,
+        border: "1px solid #e2e8f0",
+        padding: "12px 14px 14px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        display: "grid",
+        gap: 8,
+    },
+    sheetHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        background: "#cbd5e1",
+        margin: "0 auto 4px",
+    },
+    titleBlock: {
+        display: "grid",
+        gap: 2,
+    },
+    centerTitle: {
+        margin: 0,
+        fontSize: 18,
         fontWeight: 700,
         color: "#1a237e",
+        lineHeight: 1.25,
     },
-    subtitle: {
-        fontSize: 12,
-        color: "#5f6b7a",
+    centerAddress: {
+        margin: 0,
+        fontSize: 13,
+        color: "#64748b",
+        lineHeight: 1.35,
     },
-    toggleRow: {
+    figuresRow: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 10,
+    },
+    figureCard: {
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        padding: "10px 12px",
         display: "flex",
-        gap: 8,
-        flexWrap: "wrap",
+        flexDirection: "column",
+        gap: 3,
     },
-    toggleBtn: {
-        borderRadius: 8,
-        padding: "8px 12px",
-        fontSize: 12,
+    figureLabel: {
+        fontSize: 11,
         fontWeight: 600,
-        cursor: "pointer",
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        color: "#64748b",
     },
-    toggleBtnActive: {
+    figureValue: {
+        fontSize: 22,
+        fontWeight: 700,
+        color: "#1e293b",
+        fontVariantNumeric: "tabular-nums",
+        lineHeight: 1.2,
+    },
+    capacitySection: {
+        display: "grid",
+        gap: 6,
+    },
+    capacityHeader: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        fontSize: 12,
+    },
+    capacityLabel: {
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        color: "#64748b",
+    },
+    capacityValue: {
+        fontWeight: 600,
+        color: "#1e293b",
+    },
+    progressTrack: {
+        width: "100%",
+        height: 4,
+        background: "#e2e8f0",
+        borderRadius: 2,
+        overflow: "hidden",
+    },
+    progressFill: {
+        height: "100%",
+        background: "#1a237e",
+        borderRadius: 2,
+        transition: "width 0.3s ease",
+    },
+    alertBar: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "9px 12px",
+        borderRadius: 8,
+        border: "1px solid transparent",
+        fontSize: 12,
+        lineHeight: 1.35,
+    },
+    alertText: {
+        fontWeight: 500,
+    },
+    primaryNavBtn: {
+        width: "100%",
+        minHeight: 44,
+        borderRadius: 10,
+        border: "1px solid #1a237e",
         background: "#1a237e",
         color: "#fff",
-        border: "1px solid #1a237e",
+        fontSize: 14,
+        fontWeight: 700,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        cursor: "pointer",
+        padding: "10px 16px",
     },
-    toggleBtnInactive: {
-        background: "#fff",
-        color: "#1a237e",
-        border: "1px solid #cfd7ea",
+    metaRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        fontSize: 11,
+        color: "#64748b",
+        fontWeight: 500,
+    },
+    metaDot: {
+        color: "#94a3b8",
+    },
+    errorBanner: {
+        background: "#fef2f2",
+        border: "1px solid #fca5a5",
+        borderRadius: 12,
+        padding: "16px 18px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+    },
+    segmentedControl: {
+        position: "absolute",
+        top: 10,
+        right: 10,
+        zIndex: 1000,
+        display: "flex",
+        background: "rgba(255, 255, 255, 0.94)",
+        backdropFilter: "blur(4px)",
+        borderRadius: 8,
+        padding: 3,
+        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.12)",
+        border: "1px solid rgba(0, 0, 0, 0.08)",
+        gap: 2,
+    },
+    segBtn: {
+        border: "none",
+        background: "transparent",
+        padding: "5px 11px",
+        fontSize: 12,
+        fontWeight: 600,
+        borderRadius: 6,
+        cursor: "pointer",
+        transition: "all 0.15s ease",
+    },
+    segBtnMobile: {
+        minHeight: 44,
+        padding: "10px 14px",
+    },
+    segBtnActive: {
+        background: "#1e293b",
+        color: "#ffffff",
+        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.15)",
+    },
+    segBtnInactive: {
+        color: "#64748b",
     },
     mapWrap: {
         position: "relative",
@@ -338,7 +963,12 @@ const styles = {
     },
     map: {
         width: "100%",
-        height: 400,
+        height: 420,
+    },
+    mapMobile: {
+        width: "100%",
+        height: "55vh",
+        minHeight: "55vh",
     },
     loadingOverlay: {
         position: "absolute",
@@ -352,23 +982,9 @@ const styles = {
         padding: "8px 10px",
         textAlign: "center",
     },
-    infoStrip: {
-        background: "#fff",
-        border: "0.5px solid #e4e8f2",
-        borderRadius: 12,
-        padding: "10px 12px",
-        display: "flex",
-        gap: 12,
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-    },
-    infoItem: {
-        fontSize: 12,
-        color: "#334155",
-    },
     streetCard: {
         background: "#fff",
-        border: "0.5px solid #e4e8f2",
+        border: "1px solid #e2e8f0",
         borderRadius: 12,
         padding: 10,
         display: "grid",
@@ -413,20 +1029,5 @@ const styles = {
     streetCaption: {
         fontSize: 11,
         color: "#4b5563",
-    },
-    navBtn: {
-        width: "100%",
-        height: 44,
-        borderRadius: 10,
-        border: "1px solid #1a237e",
-        background: "#1a237e",
-        color: "#fff",
-        fontSize: 13,
-        fontWeight: 700,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        cursor: "pointer",
     },
 }

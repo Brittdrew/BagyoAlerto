@@ -794,7 +794,7 @@ class ChatController extends Controller
 
     /**
      * Return the standardised action recommendation for a given severity rank.
-     * Exact wording matches the BagyoAlerto spec for UI badge rendering.
+     * Exact wording matches the Bakwit spec for UI badge rendering.
      */
     private function getActionRecommendation(int $rank): string
     {

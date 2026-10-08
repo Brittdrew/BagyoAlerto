@@ -28,7 +28,7 @@ function SeverityBadge({ log }) {
     const signalLabel = cfg.signal.startsWith("Signal") ? `PAGASA ${cfg.signal}` : cfg.signal
 
     return (
-        <div style={{ display: "inline-flex", flexDirection: "column", gap: 3 }}>
+        <div className="h-severity-badge" style={{ display: "inline-flex", flexDirection: "column", gap: 3 }}>
             {/* Main badge — same pill style for ALL severities */}
             <span style={{
                 display: "inline-flex", alignItems: "center", gap: 5,
@@ -241,7 +241,7 @@ export default function History() {
       `}</style>
 
             {/* ── Layout ─────────────────────────────────────────────────────── */}
-            <div style={styles.layout}>
+            <div className="bakwit-layout" style={styles.layout}>
 
                 {/* ── Sidebar ────────────────────────────────────────────────── */}
                 <Sidebar activePage="history">
@@ -282,28 +282,28 @@ export default function History() {
                 </Sidebar>
 
                 {/* ── Main content ───────────────────────────────────────────── */}
-                <main style={styles.main}>
+                <main className="bakwit-main" style={styles.main}>
 
                     {/* Topbar */}
-                    <div style={styles.topbar}>
+                    <div className="bakwit-page-topbar" style={styles.topbar}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={styles.tbTitle}>Assessment history</span>
                             <span style={styles.tbCount}>{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <button className="h-refresh" onClick={fetchLogs} style={styles.btnRefresh}>
+                            <button className="h-refresh" onClick={fetchLogs} style={{ ...styles.btnRefresh, minHeight: 44 }}>
                                 <RefreshCw size={12} /> Refresh
                             </button>
-                            <button className="h-export" onClick={handleExportCSV} style={styles.btnExport} disabled={filtered.length === 0}>
+                            <button className="h-export" onClick={handleExportCSV} style={{ ...styles.btnExport, minHeight: 44 }} disabled={filtered.length === 0}>
                                 <Download size={12} /> Export CSV
                             </button>
                         </div>
                     </div>
 
-                    <div style={styles.content}>
+                    <div className="bakwit-content" style={styles.content}>
 
                         {/* ── Summary stats ─────────────────────────────────────── */}
-                        <div style={styles.statsRow}>
+                        <div className="bakwit-history-stats" style={styles.statsRow}>
                             <StatCard label="Total assessments" value={stats.total} sub="All time" />
                             <StatCard label="Critical events" value={stats.critical} sub="Signal #4–5" valueColor="#A32D2D" />
                             <StatCard
@@ -319,8 +319,8 @@ export default function History() {
                         </div>
 
                         {/* ── Filters ───────────────────────────────────────────── */}
-                        <div style={styles.filtersRow}>
-                            <div style={styles.searchWrap}>
+                        <div className="bakwit-history-filters" style={styles.filtersRow}>
+                            <div className="bakwit-history-search" style={styles.searchWrap}>
                                 <Search size={14} style={{ color: "#bbb" }} />
                                 <input
                                     type="text"
@@ -393,11 +393,116 @@ export default function History() {
                             </div>
                         )}
 
-                        {/* ── Table ─────────────────────────────────────────────── */}
+                        {/* ── Table & Mobile Cards ───────────────────────────── */}
                         {!loading && !error && filtered.length > 0 && (
-                            <div style={styles.tableWrap}>
-                                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                                    <thead>
+                            <div className="bakwit-history-table-wrap" style={styles.tableWrap}>
+                                {/* Mobile stacked cards (<768px) */}
+                                <div className="bakwit-history-cards">
+                                    {paginated.map((log) => {
+                                        const hasEvac = !!log.evacuation_center?.name
+
+                                        const temp = log.typhoon_log?.temperature
+                                        const tempColor = temp == null ? "#aaa"
+                                            : temp >= 36 ? "#A32D2D"
+                                                : temp >= 32 ? "#D85A30"
+                                                    : temp < 20 ? "#1565c0"
+                                                        : "#1a1a2e"
+
+                                        const humidity = log.typhoon_log?.humidity
+                                        const humidityColor = humidity == null ? "#aaa"
+                                            : humidity >= 90 ? "#A32D2D"
+                                                : humidity >= 75 ? "#D85A30"
+                                                    : humidity >= 60 ? "#EF9F27"
+                                                        : "#1a1a2e"
+
+                                        return (
+                                            <div
+                                                key={`card-${log.id}`}
+                                                className="bakwit-history-card"
+                                                style={{
+                                                    opacity: deletingId === log.id ? 0.4 : 1,
+                                                    transition: "opacity 0.2s",
+                                                }}
+                                            >
+                                                {/* Top line: barangay name (bold) and date/time (muted) */}
+                                                <div className="h-card-top">
+                                                    <span className="h-card-bname">
+                                                        {log.barangay?.name || "—"}{log.barangay?.city ? `, ${log.barangay.city}` : ""}
+                                                    </span>
+                                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                        <span className="h-card-date">
+                                                            {formatDateShort(log.recommended_at)} · {formatTime(log.recommended_at)}
+                                                        </span>
+                                                        <button
+                                                            className="h-del"
+                                                            onClick={() => handleDelete(log.id)}
+                                                            disabled={!!deletingId}
+                                                            style={styles.deleteBtn}
+                                                            title="Delete record"
+                                                        >
+                                                            <Trash2 size={11} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Severity badge on its own line, full signal text visible */}
+                                                <div className="h-card-severity">
+                                                    <SeverityBadge log={log} />
+                                                </div>
+
+                                                {/* 2-column grid below with readings */}
+                                                <div className="h-card-readings">
+                                                    <div className="h-card-reading">
+                                                        <span className="h-card-rlabel">Wind</span>
+                                                        <span className="h-card-rval">
+                                                            {log.typhoon_log?.wind_speed ?? "—"} <span className="h-card-runit">km/h</span>
+                                                        </span>
+                                                    </div>
+                                                    <div className="h-card-reading">
+                                                        <span className="h-card-rlabel">Rainfall</span>
+                                                        <span className="h-card-rval">
+                                                            {log.typhoon_log?.rainfall ?? "—"} <span className="h-card-runit">mm/hr</span>
+                                                        </span>
+                                                    </div>
+                                                    <div className="h-card-reading">
+                                                        <span className="h-card-rlabel">Pressure</span>
+                                                        <span className="h-card-rval">
+                                                            {log.typhoon_log?.pressure ?? "—"} <span className="h-card-runit">hPa</span>
+                                                        </span>
+                                                    </div>
+                                                    <div className="h-card-reading">
+                                                        <span className="h-card-rlabel">Temp.</span>
+                                                        <span className="h-card-rval" style={{ color: tempColor }}>
+                                                            {temp != null ? temp : "—"} <span className="h-card-runit">°C</span>
+                                                        </span>
+                                                    </div>
+                                                    <div className="h-card-reading">
+                                                        <span className="h-card-rlabel">Humidity</span>
+                                                        <span className="h-card-rval" style={{ color: humidityColor }}>
+                                                            {humidity != null ? humidity : "—"} <span className="h-card-runit">%</span>
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Evacuation center, if any, as muted text on the last line */}
+                                                {hasEvac && (
+                                                    <div className="h-card-evac">
+                                                        <School size={12} style={{ flexShrink: 0, color: "#888" }} />
+                                                        <span>
+                                                            {log.evacuation_center.name}
+                                                            {log.evacuation_center.distance !== undefined && log.evacuation_center.distance !== null && (
+                                                                <> · {parseFloat(log.evacuation_center.distance).toFixed(1)} km away</>
+                                                            )}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+
+                                <table className="bakwit-history-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                                    <thead className="h-table-head">
                                         <tr style={{ background: "#f8f9fb", borderBottom: "0.5px solid #e8ecf0" }}>
                                             <th style={styles.th}>#</th>
                                             <th style={styles.th}>Barangay / date</th>
@@ -510,7 +615,7 @@ export default function History() {
                                 </table>
 
                                 {/* Pagination */}
-                                <div style={styles.pagination}>
+                                <div className="bakwit-history-pagination" style={styles.pagination}>
                                     <span style={styles.pageInfo}>
                                         Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, filtered.length)}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} records
                                     </span>

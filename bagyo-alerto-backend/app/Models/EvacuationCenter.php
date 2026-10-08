@@ -18,7 +18,14 @@ class EvacuationCenter extends Model
         'latitude',
         'longitude',
         'capacity',
+        'current_occupancy',
         'is_active'
+    ];
+
+    protected $casts = [
+        'current_occupancy' => 'integer',
+        'capacity' => 'integer',
+        'is_active' => 'boolean',
     ];
 
     public function barangay()

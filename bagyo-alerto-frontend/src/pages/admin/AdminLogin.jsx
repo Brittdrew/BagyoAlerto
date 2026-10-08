@@ -44,7 +44,7 @@ export default function AdminLogin() {
                 <div style={styles.logoRow}>
                     <Tornado size={32} color="#1a237e" />
                     <div>
-                        <div style={styles.title}>BagyoAlerto</div>
+                        <div style={styles.title}>Bakwit</div>
                         <div style={styles.subtitle}>Admin Panel</div>
                     </div>
                 </div>

@@ -2,7 +2,7 @@ export default function Footer() {
     return (
         <footer style={styles.footer}>
             <p style={styles.text}>
-                🌀 BagyoAlerto — Typhoon Severity Assessment System
+                🌀 Bakwit — Typhoon Severity Assessment System
             </p>
             <p style={styles.sub}>
                 📍 Barangay Washington, Surigao City | © 2026 All Rights Reserved

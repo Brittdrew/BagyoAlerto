@@ -777,7 +777,7 @@ export default function AdminChat() {
                                 <div style={styles.botIconWrapper}>
                                     <Bot size={44} style={{ color: "#1D9E75" }} />
                                 </div>
-                                <h2 style={styles.emptyTitle}>Welcome to BagyoAlerto Assistant</h2>
+                                <h2 style={styles.emptyTitle}>Welcome to Bakwit Assistant</h2>
                                 <p style={styles.emptySubtitle}>
                                     Your operational assistant for storm preparation and weather analytics. Input a barangay name to fetch immediate safety status or ask a general typhoon preparedness question.
                                 </p>

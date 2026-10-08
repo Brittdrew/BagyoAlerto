@@ -48,7 +48,7 @@ export default function AdminSidebar() {
             <div style={styles.logo}>
                 <Tornado size={22} style={{ flexShrink: 0 }} />
                 <div>
-                    <div style={styles.logoTitle}>BagyoAlerto</div>
+                    <div style={styles.logoTitle}>Bakwit</div>
                     <div style={styles.logoSub}>Admin Panel</div>
                 </div>
             </div>

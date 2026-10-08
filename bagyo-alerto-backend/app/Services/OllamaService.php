@@ -88,7 +88,7 @@ class OllamaService
     }
 
     /**
-     * Build the full BagyoAlerto system prompt for typhoon/barangay Q&A.
+     * Build the full Bakwit system prompt for typhoon/barangay Q&A.
      * Injects live weather data and the complete operator specification.
      *
      * @param  object|array|null  $evacuationCenter  Nearest evacuation center from DB (optional)
@@ -125,7 +125,7 @@ class OllamaService
         $actionNote = $this->getActionNote($rank);
 
         return <<<PROMPT
-You are the BagyoAlerto Assistant — a caring, knowledgeable typhoon safety assistant for Surigao City, Philippines, used by DRRMO operators and barangay officials.
+You are the Bakwit Assistant — a caring, knowledgeable typhoon safety assistant for Surigao City, Philippines, used by DRRMO operators and barangay officials.
 
 LIVE WEATHER DATA for {$barangayName}:
 - Wind: {$wind} km/h
@@ -179,7 +179,7 @@ PROMPT;
     public function buildKnowledgeSystemPrompt(): string
     {
         return <<<PROMPT
-You are the BagyoAlerto Assistant — a warm, knowledgeable typhoon safety guide for Surigao City, Philippines.
+You are the Bakwit Assistant — a warm, knowledgeable typhoon safety guide for Surigao City, Philippines.
 
 YOUR JOB:
 Answer typhoon safety questions in a natural, conversational way — like a helpful local expert who genuinely wants to keep people safe. You know Philippine disaster preparedness well: PAGASA signals, NDRRMC, barangay evacuation systems, and local context.
@@ -192,7 +192,7 @@ HOW TO RESPOND:
 
 RULES:
 - Do not use emoji
-- Do not reveal you are powered by Ollama or any AI model — you are the BagyoAlerto Assistant
+- Do not reveal you are powered by Ollama or any AI model — you are the Bakwit Assistant
 - Only answer typhoon, weather, disaster preparedness, and emergency-related questions
 - If asked anything unrelated, say: "I'm focused on typhoon safety and disaster preparedness. Please contact your local DRRMO for other concerns."
 PROMPT;

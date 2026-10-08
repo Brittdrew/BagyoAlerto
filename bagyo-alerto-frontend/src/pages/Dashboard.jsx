@@ -1,10 +1,11 @@
-﻿import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef } from "react"
 import axios from "axios"
 import Select from "react-select"
 import { useNavigate } from "react-router-dom"
 import MapView from "../components/MapView"
 
 import Sidebar from "../components/Sidebar"
+import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
     Tornado, BarChart2, Clock, AlertTriangle, Info, Wind,
@@ -421,9 +422,23 @@ function FactorBar({ label, pct, color }) {
     )
 }
 
-function EvacRoutes({ evacuationCenter, severity }) {
+function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
     const needsEvac = ["high", "critical"].includes(severity)
     const isActive = ["moderate", "high", "critical"].includes(severity)
+
+    if (!selectedBarangay) {
+        return (
+            <div style={{ ...styles.evacCard, background: "#f8f9fa", border: "0.5px solid #e0e0e0" }}>
+                <div style={styles.evacHeader}>
+                    <Route size={15} style={{ color: "#aaa" }} />
+                    <span style={styles.evacTitle}>Evacuation routes</span>
+                </div>
+                <p style={{ fontSize: 12, color: "#888", marginTop: 8 }}>
+                    Select your barangay to see recommended evacuation routes.
+                </p>
+            </div>
+        )
+    }
 
     if (!evacuationCenter) {
         return (
@@ -532,6 +547,7 @@ function RecentHistory({ logs }) {
 // --- Main Dashboard ----------------------------------------------------------
 export default function Dashboard() {
     const navigate = useNavigate()
+    const { barangayId, setBarangayId } = useSavedBarangay()
 
     const [barangays, setBarangays] = useState([])
     const [selectedBarangay, setSelectedBarangay] = useState(null)
@@ -562,9 +578,17 @@ export default function Dashboard() {
                 }))
                 setBarangays(opts)
                 if (opts.length > 0) {
-                    setSelectedBarangay(opts[0])
-                    setFormData(f => ({ ...f, barangay_id: opts[0].value }))
-                    fetchWeather(opts[0])
+                    const saved = (barangayId !== null && barangayId !== undefined)
+                        ? opts.find(b => String(b.value) === String(barangayId))
+                        : null
+                    if (saved) {
+                        setSelectedBarangay(saved)
+                        setFormData(f => ({ ...f, barangay_id: saved.value }))
+                        fetchWeather(saved)
+                    } else {
+                        setSelectedBarangay(null)
+                        setFormData(f => ({ ...f, barangay_id: null }))
+                    }
                 }
             })
             .catch((err) => {
@@ -668,11 +692,12 @@ export default function Dashboard() {
     // -- Barangay change ---------------------------------------------------------
     const handleBarangayChange = (option) => {
         setSelectedBarangay(option)
+        setBarangayId(option?.value ?? null)
         setFormData(f => ({ ...f, barangay_id: option?.value ?? null }))
         setResult(null)
         setAssessError(null)
         setWeatherFetched(false)
-        fetchWeather(option)
+        if (option) fetchWeather(option)
     }
 
     // -- Manual input change -----------------------------------------------------
@@ -808,9 +833,10 @@ export default function Dashboard() {
         if (!result) return null
         const cfg = sevCfg
         return (
-            <div style={{
+            <div className="bakwit-alert-banner" style={{
                 background: cfg.alertBg, border: `0.5px solid ${cfg.alertBorder}`,
                 borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10,
+                width: "100%", boxSizing: "border-box",
             }}>
                 <span style={{ fontSize: 18, display: "flex", alignItems: "center" }}>
                     {compositeScore <= 24 ? <Info size={18} style={{ color: cfg.alertText }} /> : <AlertTriangle size={18} style={{ color: cfg.alertText }} />}
@@ -855,7 +881,7 @@ export default function Dashboard() {
 
 
             {/* -- Main Layout -------------------------------------------------- */}
-            <div style={styles.layout}>
+            <div className="bakwit-layout" style={styles.layout}>
 
                 {/* -- Sidebar ---------------------------------------------------- */}
                 <Sidebar activePage="dashboard">
@@ -911,10 +937,10 @@ export default function Dashboard() {
                 </Sidebar>
 
                 {/* -- Main Content ----------------------------------------------- */}
-                <main style={styles.main}>
+                <main className="bakwit-main" style={styles.main}>
 
                     {/* Topbar */}
-                    <div style={styles.topbar}>
+                    <div className="bakwit-page-topbar" style={styles.topbar}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 14, fontWeight: 600, color: "white" }}>Dashboard</span>
                             <span style={styles.liveBadge}><LiveDot /> Live</span>
@@ -936,27 +962,76 @@ export default function Dashboard() {
                     </div>
 
                     {/* Content area */}
-                    <div style={styles.content}>
+                    <div className="bakwit-content" style={styles.content}>
 
+                        {/* Mobile Barangay Selector directly at the top of page content under 768px */}
+                        <div className="bakwit-mobile-barangay-bar">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                    Active Barangay
+                                </span>
+                                {selectedBarangay?.riskLevel && (
+                                    <span style={{
+                                        fontSize: 10, fontWeight: 700, padding: "2px 8px",
+                                        borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4, color: "white",
+                                        background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
+                                    }}>
+                                        <AlertTriangle size={11} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
+                                    </span>
+                                )}
+                            </div>
+                            <Select
+                                options={barangays}
+                                value={selectedBarangay}
+                                onChange={handleBarangayChange}
+                                placeholder="Select your barangay..."
+                                isSearchable
+                                menuPortalTarget={document.body}
+                                styles={{
+                                    ...selectStyles,
+                                    control: (b) => ({ ...b, borderRadius: 8, border: "1px solid #cbd5e1", minHeight: 44, height: 44 }),
+                                }}
+                            />
+                        </div>
 
-
-                        {/* Alert banner - shows after assessment */}
-                        {result && alertBanner()}
-
-                        {/* No assessment yet - info bar */}
-                        {!result && (
+                        {/* Prompt when no barangay is selected */}
+                        {!selectedBarangay ? (
+                            <div style={{
+                                background: "#FFF8E1",
+                                border: "1px solid #FFE082",
+                                borderRadius: 10,
+                                padding: "14px 18px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 12,
+                                marginBottom: 12,
+                                boxShadow: "0 2px 8px rgba(245, 127, 23, 0.08)"
+                            }}>
+                                <MapPin size={22} style={{ color: "#F57F17", flexShrink: 0 }} />
+                                <div>
+                                    <div style={{ fontSize: 14, fontWeight: 700, color: "#E65100" }}>
+                                        Select your barangay
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "#8D6E63", marginTop: 2 }}>
+                                        Please select your barangay from the sidebar to view weather conditions, risk alerts, and live evacuation routing.
+                                    </div>
+                                </div>
+                            </div>
+                        ) : result ? (
+                            alertBanner()
+                        ) : (
                             <div style={{ background: "#EBF3FB", border: "0.5px solid #B5D4F4", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
                                 <Info size={16} style={{ color: "#0C447C" }} />
                                 <div style={{ fontSize: 12, color: "#0C447C" }}>
                                     {weatherFetched
                                         ? `Live weather loaded for ${selectedBarangay?.name}. Press Assess to evaluate severity.`
-                                        : "Select a barangay - weather data loads automatically."}
+                                        : "Weather data loading..."}
                                 </div>
                             </div>
                         )}
 
                         {/* Metric cards */}
-                        <div style={styles.metricsRow}>
+                        <div className="bakwit-metrics-grid" style={styles.metricsRow}>
                             <MetricCard
                                 icon={<Wind size={15} />} color="#185FA5" bg="#E6F1FB"
                                 label="Wind speed" value={metricDisplay(formData.wind_speed)} unit="km/h"
@@ -1010,7 +1085,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* Trend chart + Severity gauge */}
-                        <div style={styles.row2}>
+                        <div className="bakwit-row2" style={styles.row2}>
                             <div style={styles.card}>
                                 <div style={styles.cardHeader}>
                                     <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
@@ -1069,7 +1144,7 @@ export default function Dashboard() {
                                 </div>
                                 <span style={{ fontSize: 11, color: "#aaa" }}>Auto-filled from live API</span>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
+                            <div className="bakwit-override-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
                                 {[
                                     { name: "wind_speed", label: "Wind (km/h)", placeholder: "e.g. 120" },
                                     { name: "rainfall", label: "Rain (mm/hr)", placeholder: "e.g. 25" },
@@ -1090,11 +1165,12 @@ export default function Dashboard() {
                                     </div>
                                 ))}
                                 <button
-                                    className={`bagyo-assess ${(!isBtnDisabled && (maxRank === 4 || maxRank === 5)) ? "bagyo-pulse-btn" : ""}`}
+                                    className={`bagyo-assess bakwit-override-btn ${(!isBtnDisabled && (maxRank === 4 || maxRank === 5)) ? "bagyo-pulse-btn" : ""}`}
                                     onClick={handleAssessClick}
                                     disabled={isBtnDisabled}
                                     style={{
                                         ...styles.assessBtn,
+                                        minHeight: 44,
                                         background: isBtnDisabled
                                             ? "#ccc"
                                             : maxRank === 1 || maxRank === 2
@@ -1137,24 +1213,24 @@ export default function Dashboard() {
                         </div>
 
                         {/* Evacuation routes + Recent history */}
-                        <div style={styles.row3}>
+                        <div className="bakwit-row3" style={styles.row3}>
                             <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                                <EvacRoutes evacuationCenter={result?.evacuation_center} severity={severity} />
-                                {result?.evacuation_center && (
+                                <EvacRoutes evacuationCenter={result?.evacuation_center} severity={severity} selectedBarangay={selectedBarangay} />
+                                {selectedBarangay && (
                                     <button
                                         onClick={() => setShowMap(!showMap)}
                                         style={{
-                                            marginTop: 8, padding: "8px 14px", background: "#1565c0", color: "white",
+                                            marginTop: 8, minHeight: 44, padding: "10px 14px", background: "#1565c0", color: "white",
                                             border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
                                             display: "inline-flex", alignItems: "center", gap: 5, justifyContent: "center"
                                         }}
                                     >
-                                        <Map size={13} /> {showMap ? "Hide Map" : "View on Map"}
+                                        <Map size={13} /> {showMap ? "Hide Map" : "View Live Evacuation Map"}
                                     </button>
                                 )}
-                                {showMap && result?.evacuation_center && (
+                                {showMap && selectedBarangay && (
                                     <div style={{ marginTop: 10 }}>
-                                        <MapView evacuationCenter={result.evacuation_center} barangay={selectedBarangay} />
+                                        <MapView evacuationCenter={result?.evacuation_center} barangay={selectedBarangay} />
                                     </div>
                                 )}
                             </div>

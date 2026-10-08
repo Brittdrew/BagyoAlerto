@@ -136,7 +136,7 @@ export default function Forecast() {
                 .f-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important; }
             `}</style>
 
-            <div style={styles.layout}>
+            <div className="bakwit-layout" style={styles.layout}>
                 {/* Sidebar */}
                 <Sidebar activePage="forecast">
                     <div style={styles.navSection}>Barangay</div>
@@ -164,12 +164,12 @@ export default function Forecast() {
                 </Sidebar>
 
                 {/* Main Content */}
-                <main style={styles.main}>
+                <main className="bakwit-main" style={styles.main}>
                     {/* Topbar */}
-                    <div style={styles.topbar}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div className="bakwit-page-topbar" style={styles.topbar}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                             <span style={styles.tbTitle}>Forecast Center</span>
-                            <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                 <button
                                     onClick={() => setActiveTab("forecast")}
                                     style={{
@@ -203,13 +203,44 @@ export default function Forecast() {
                         </div>
                     </div>
 
-                    <div style={styles.content}>
+                    <div className="bakwit-content" style={styles.content}>
+                        {/* Mobile Barangay Selector */}
+                        <div className="bakwit-mobile-barangay-bar">
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                                    Query Barangay
+                                </span>
+                                {selectedBarangay?.riskLevel && (
+                                    <span style={{
+                                        fontSize: 10, fontWeight: 700, padding: "2px 8px",
+                                        borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4, color: "white",
+                                        background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
+                                    }}>
+                                        <AlertTriangle size={11} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
+                                    </span>
+                                )}
+                            </div>
+                            <Select
+                                options={barangays}
+                                value={selectedBarangay}
+                                onChange={handleBarangayChange}
+                                placeholder="Select your barangay..."
+                                isSearchable
+                                menuPortalTarget={document.body}
+                                styles={{
+                                    ...selectStyles,
+                                    control: (b) => ({ ...b, borderRadius: 8, border: "1px solid #cbd5e1", minHeight: 44, height: 44 }),
+                                }}
+                            />
+                        </div>
+
                         {/* Weather Map Tab */}
                         {activeTab === "map" && (
-                            <div style={styles.mapContainer}>
+                            <div className="forecast-map-tab-wrapper" style={styles.mapContainer}>
                                 <WeatherMap
                                     barangays={barangays}
                                     selectedBarangay={selectedBarangay}
+                                    onSelectBarangay={setSelectedBarangay}
                                     isMapActive={activeTab === "map"}
                                 />
                             </div>
@@ -234,7 +265,7 @@ export default function Forecast() {
                                 {!loading && weather && (
                                     <>
                                         {/* Top Row: Current Conditions & Inline Weather Map */}
-                                        <div style={styles.topGrid}>
+                                        <div className="bakwit-forecast-topgrid" style={styles.topGrid}>
                                             {/* Current Weather Card */}
                                             <div style={{ ...styles.card, background: "linear-gradient(135deg, #1a237e, #1565c0)", color: "white", border: "none" }}>
                                                 <div style={{ fontSize: 11, opacity: 0.8, textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.05em" }}>Current Weather</div>
@@ -264,7 +295,7 @@ export default function Forecast() {
                                                         <div style={styles.metaValWhite}>{Math.round(weather.current.surface_pressure)} hPa</div>
                                                     </div>
                                                     <div style={styles.metaItem}>
-                                                        <div style={styles.metaLabelWhite}><CloudRain size={12} /> Precip.</div>
+                                                        <div style={styles.metaLabelWhite}><CloudRain size={12} /> Rain chance</div>
                                                         <div style={styles.metaValWhite}>{weather.current.precipitation_probability ?? 0}%</div>
                                                     </div>
                                                 </div>
@@ -311,7 +342,7 @@ export default function Forecast() {
 
                                         {/* 7-Day Grid or Chart View */}
                                         {forecastView === "list" && (
-                                            <div style={styles.forecastGrid}>
+                                            <div className="bakwit-forecast-grid" style={styles.forecastGrid}>
                                                 {weather.daily.map((day, idx) => {
                                                     const isToday = idx === 0
                                                     const dayName = isToday ? "Today" : DAYS[day.date.getDay()]

@@ -1,6 +1,6 @@
-# BagyoAlerto
+# Bakwit
 
-BagyoAlerto is a comprehensive typhoon monitoring and evacuation center management application designed for local communities.
+Bakwit is a comprehensive typhoon monitoring and evacuation center management application designed for local communities.
 
 ## Repository Structure
 
