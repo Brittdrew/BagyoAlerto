@@ -17,8 +17,13 @@ import {
 // --- Constants ---------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_BASE
 const WEATHER_REFRESH = 10 * 60 * 1000 // 10 minutes
+const WEATHER_RETRY = 60 * 1000 // 60 seconds
+const ASSESS_TIMEOUT = 30000
+const ASSESS_RETRY = 60 * 1000 // 60 seconds
 import { RefreshCw } from "lucide-react"
 const OPEN_METEO_CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
+const ERROR_MARKERS = new Set(["__assess_error__", "__weather_error__"])
+const TOO_MANY_REQUESTS_MESSAGE = "Too many requests. Retrying shortly."
 
 function pickCurrentMetric(current, keys) {
     for (const key of keys) {
@@ -575,6 +580,7 @@ export default function Dashboard() {
     }, [])
 
     const weatherTimer = useRef(null)
+    const assessRetryTimer = useRef(null)
     const isManualOverrideRef = useRef(false)
     const activeBarangayIdRef = useRef(null)
 
@@ -615,13 +621,38 @@ export default function Dashboard() {
 
         fetchRecentLogs()
 
-        return () => { if (weatherTimer.current) clearInterval(weatherTimer.current) }
+        return () => {
+            if (weatherTimer.current) clearTimeout(weatherTimer.current)
+            if (assessRetryTimer.current) clearTimeout(assessRetryTimer.current)
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    function scheduleWeatherFetch(option, delay) {
+        if (weatherTimer.current) clearTimeout(weatherTimer.current)
+        weatherTimer.current = setTimeout(() => fetchWeather(option), delay)
+    }
+
+    function clearAssessRetry() {
+        if (assessRetryTimer.current) {
+            clearTimeout(assessRetryTimer.current)
+            assessRetryTimer.current = null
+        }
+    }
+
+    function scheduleAssessRetry(payload) {
+        clearAssessRetry()
+        assessRetryTimer.current = setTimeout(() => runAssess(payload), ASSESS_RETRY)
+    }
 
     // -- Fetch live weather ------------------------------------------------------
     async function fetchWeather(option) {
         if (!option?.latitude || !option?.longitude) return
+        const requestedBarangayId = option.value
+        if (activeBarangayIdRef.current !== null &&
+            String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
+            return
+        }
         setWeatherLoading(true)
         setWeatherFetched(false)
         if (!isManualOverrideRef.current) {
@@ -652,6 +683,12 @@ export default function Dashboard() {
                 ).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
             ])
 
+            if (activeBarangayIdRef.current !== null &&
+                String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
+                console.info("[weather] Stale response discarded — barangay changed during request")
+                return
+            }
+
             const cur = currentRes.current
             const windVal = pickCurrentMetric(cur, ["wind_speed_10m"])
             const rainVal = pickCurrentMetric(cur, ["precipitation", "rain"])
@@ -680,6 +717,7 @@ export default function Dashboard() {
             })
             setLastUpdated(new Date())
             setWeatherFetched(true)
+            setAssessError(null)
 
             // Build 6-point trend (last 6 hours)
             const hourly = hourlyRes.hourly
@@ -706,19 +744,22 @@ export default function Dashboard() {
                 })
             }
 
-            // Auto-refresh timer every 10 minutes while page is open
-            if (weatherTimer.current) clearInterval(weatherTimer.current)
-            weatherTimer.current = setInterval(() => fetchWeather(option), WEATHER_REFRESH)
+            scheduleWeatherFetch(option, WEATHER_REFRESH)
 
         } catch {
-            setExtraWeather({ wind_gusts: "N/A" })
             console.error("Weather fetch failed")
-            // Point 7: show visible notice on weather fetch failure; keep retrying on timer
-            setAssessError(["__weather_error__"])
-            if (weatherTimer.current) clearInterval(weatherTimer.current)
-            weatherTimer.current = setInterval(() => fetchWeather(option), WEATHER_REFRESH)
+            if (activeBarangayIdRef.current === null ||
+                String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
+                setExtraWeather({ wind_gusts: "N/A" })
+                setAssessError(["__weather_error__"])
+                scheduleWeatherFetch(option, WEATHER_RETRY)
+            }
+        } finally {
+            if (activeBarangayIdRef.current === null ||
+                String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
+                setWeatherLoading(false)
+            }
         }
-        setWeatherLoading(false)
     }
 
     // Auto-assess helper — includes stale-response guard (point 6)
@@ -729,7 +770,7 @@ export default function Dashboard() {
         setAssessing(true)
         setAssessError(null)
         try {
-            const res = await axios.post(`${API_BASE}/typhoon/assess`, payload)
+            const res = await axios.post(`${API_BASE}/typhoon/assess`, payload, { timeout: ASSESS_TIMEOUT })
             // Stale-response guard: discard result if the barangay changed while the request was in-flight
             if (activeBarangayIdRef.current !== null &&
                 String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
@@ -737,13 +778,19 @@ export default function Dashboard() {
                 return
             }
             setResult(res.data)
+            setAssessError(null)
+            clearAssessRetry()
+            if (selectedBarangay) scheduleWeatherFetch(selectedBarangay, WEATHER_REFRESH)
             fetchRecentLogs()
         } catch (err) {
             console.error("Auto-assess failed:", err.response?.status, err.message)
             // Only surface the error if the barangay still matches
             if (activeBarangayIdRef.current === null ||
                 String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
-                setAssessError(["__assess_error__"])
+                setAssessError(err.response?.status === 429
+                    ? ["__assess_error__", TOO_MANY_REQUESTS_MESSAGE]
+                    : ["__assess_error__"])
+                scheduleAssessRetry(payload)
             }
         } finally {
             setAssessing(false)
@@ -770,6 +817,8 @@ export default function Dashboard() {
         setResult(null)
         setAssessError(null)
         setWeatherFetched(false)
+        if (weatherTimer.current) clearTimeout(weatherTimer.current)
+        clearAssessRetry()
         setIsManualOverride(false)
         isManualOverrideRef.current = false
         if (option) fetchWeather(option)
@@ -810,17 +859,21 @@ export default function Dashboard() {
         setAssessing(true)
         setAssessError(null)
         try {
-            const res = await axios.post(`${API_BASE}/typhoon/assess`, {
+            const payload = {
                 ...formData,
                 manual_override: isManualOverride,
                 source: "manual",
-            })
+            }
+            const res = await axios.post(`${API_BASE}/typhoon/assess`, payload, { timeout: ASSESS_TIMEOUT })
             // Stale-response guard for manual assess too
             if (activeBarangayIdRef.current !== null &&
                 String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
                 return
             }
             setResult(res.data)
+            setAssessError(null)
+            clearAssessRetry()
+            if (selectedBarangay) scheduleWeatherFetch(selectedBarangay, WEATHER_REFRESH)
             fetchRecentLogs()
         } catch (err) {
             const status = err.response?.status
@@ -830,9 +883,19 @@ export default function Dashboard() {
                 const messages = Object.values(errors).flat()
                 setAssessError(messages.length ? messages : ["Invalid input. Please check your values."])
             } else if (status === 429) {
-                setAssessError(["Too many requests. Please wait a moment before assessing again."])
+                setAssessError(["__assess_error__", TOO_MANY_REQUESTS_MESSAGE])
+                scheduleAssessRetry({
+                    ...formData,
+                    manual_override: isManualOverride,
+                    source: "manual",
+                })
             } else {
-                setAssessError(["Assessment failed. Please check your connection and try again."])
+                setAssessError(["__assess_error__"])
+                scheduleAssessRetry({
+                    ...formData,
+                    manual_override: isManualOverride,
+                    source: "manual",
+                })
             }
         }
         setAssessing(false)
@@ -934,7 +997,13 @@ export default function Dashboard() {
     const isWeatherError = Array.isArray(assessError) && assessError.includes("__weather_error__")
     const isAssessError = Array.isArray(assessError) && assessError.includes("__assess_error__")
     const isConditionsError = isWeatherError || isAssessError
-    const hasUserFacingErrors = Array.isArray(assessError) && !isConditionsError && assessError.length > 0
+    const userFacingErrors = Array.isArray(assessError)
+        ? assessError.filter(msg => !ERROR_MARKERS.has(msg))
+        : []
+    const hasUserFacingErrors = !isConditionsError && userFacingErrors.length > 0
+    const conditionsNoticeText = userFacingErrors.includes(TOO_MANY_REQUESTS_MESSAGE)
+        ? TOO_MANY_REQUESTS_MESSAGE
+        : "Can't check conditions right now."
     const sevCfg = compositeScore !== null ? getSeverityConfig(compositeScore, wind, rain, pressure) : null
     const ruleBasedLabel = result?.classification || sevCfg?.label
     const mlPrediction = result?.ml_prediction || "Unavailable"
@@ -1115,8 +1184,10 @@ export default function Dashboard() {
                             }}>
                                 <AlertTriangle size={15} style={{ color: "#F59E0B", flexShrink: 0, marginTop: 1 }} />
                                 <div>
-                                    <strong>Can&apos;t check conditions right now.</strong>
-                                    {" "}Follow PAGASA and your barangay officials.
+                                    <strong>{conditionsNoticeText}</strong>
+                                    {conditionsNoticeText === TOO_MANY_REQUESTS_MESSAGE
+                                        ? " Please wait while we try again."
+                                        : " Follow PAGASA and your barangay officials."}
                                     <span style={{ fontSize: 10, color: "#B45309", marginLeft: 6 }}>
                                         Retrying automatically…
                                     </span>
@@ -1131,7 +1202,7 @@ export default function Dashboard() {
                                 borderRadius: 8, padding: "10px 14px", marginBottom: 8,
                                 fontSize: 12, color: "#991B1B",
                             }}>
-                                {assessError.map((msg, i) => (
+                                {userFacingErrors.map((msg, i) => (
                                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                         <AlertTriangle size={13} style={{ color: "#EF4444", flexShrink: 0 }} />
                                         {msg}
@@ -1239,7 +1310,7 @@ export default function Dashboard() {
                                         <Info size={16} style={{ color: "#0C447C" }} />
                                         <div style={{ fontSize: 12, color: "#0C447C" }}>
                                             {weatherFetched
-                                                ? `Live weather loaded for ${selectedBarangay?.name}. Press Assess to evaluate severity.`
+                                                ? `Live weather loaded for ${selectedBarangay?.name}.`
                                                 : "Weather data loading..."}
                                         </div>
                                     </div>
@@ -1463,11 +1534,11 @@ export default function Dashboard() {
                                 </button>
                             </div>
 
-                            {assessError && (
+                            {hasUserFacingErrors && (
                                 <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8 }}>
                                     {Array.isArray(assessError) ? (
                                         <ul style={{ margin: 0, padding: "0 0 0 16px" }}>
-                                            {assessError.map((msg, i) => (
+                                            {userFacingErrors.map((msg, i) => (
                                                 <li key={i} style={{ marginBottom: 2 }}>{msg}</li>
                                             ))}
                                         </ul>
