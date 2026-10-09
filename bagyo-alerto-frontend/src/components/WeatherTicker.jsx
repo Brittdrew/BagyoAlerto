@@ -24,8 +24,10 @@ export default function WeatherTicker({ latitude, longitude, locationName }) {
                 `https://api.open-meteo.com/v1/forecast` +
                 `?latitude=${lat}&longitude=${lng}` +
                 `&current=wind_speed_10m,precipitation,surface_pressure,temperature_2m,weathercode`
-            const res = await axios.get(url)
-            setWeather(res.data.current)
+            const res = await fetch(url)
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const data = await res.json()
+            setWeather(data.current)
         } catch {
             console.error("WeatherTicker: failed to fetch weather")
         }

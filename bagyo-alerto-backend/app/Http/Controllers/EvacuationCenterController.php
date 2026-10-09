@@ -25,7 +25,7 @@ class EvacuationCenterController extends Controller
     {
         $photo = \App\Models\EvacuationCenterPhoto::where('barangay_name', $barangay_name)->first();
         if (!$photo) {
-            return response()->json(['message' => 'No photo found for this barangay'], 404);
+            return response()->json(['message' => 'No photo found for this barangay', 'image_path' => null], 200);
         }
         return response()->json($photo);
     }

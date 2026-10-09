@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, useRef } from "react"
+import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
-import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints } from "lucide-react"
+import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints, Camera, Info } from "lucide-react"
 import { useLiveLocation } from "../hooks/useLiveLocation"
 
 delete L.Icon.Default.prototype._getIconUrl
@@ -97,12 +97,24 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const API_ORIGIN = API_BASE ? API_BASE.replace(/\/api\/?$/, "") : ""
-const OSRM_BASE = import.meta.env.VITE_OSRM_URL || "https://routing.openstreetmap.de/routed-foot"
-const OSRM_PROFILE = import.meta.env.VITE_OSRM_PROFILE || "foot"
 
-function buildOsrmUrl(startLng, startLat, endLng, endLat) {
-    const cleanBase = OSRM_BASE.replace(/\/+$/, "")
-    return `${cleanBase}/route/v1/${OSRM_PROFILE}/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`
+async function fetchOsrmRoute(startLng, startLat, endLng, endLat, { signal, timeoutMs = 20000 } = {}) {
+    const qs = new URLSearchParams({
+        from_lat: startLat, from_lng: startLng, to_lat: endLat, to_lng: endLng,
+    })
+    const controller = new AbortController()
+    const onAbort = () => controller.abort()
+    signal?.addEventListener("abort", onAbort)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+        console.log("[Route] requesting", { startLat, startLng, endLat, endLng })
+        const res = await fetch(`${API_BASE}/route?${qs}`, { signal: controller.signal })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return await res.json() // { route, isBackup }
+    } finally {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", onAbort)
+    }
 }
 
 function formatWalkTime(minutes) {
@@ -149,6 +161,72 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
     const lastFetchedTimeRef = useRef(0)
     const activeTargetIdRef = useRef(null)
 
+    const routeAbortRef = useRef(null)
+    const routeReqIdRef = useRef(0)
+
+    const loadRoute = useCallback(async ({ startLat, startLng, destLat, destLng, cacheKey, onFail }) => {
+        routeAbortRef.current?.abort()
+        const controller = new AbortController()
+        routeAbortRef.current = controller
+        const reqId = ++routeReqIdRef.current
+        setRouteLoading(true)
+
+        try {
+            const { route, isBackup } = await fetchOsrmRoute(startLng, startLat, destLng, destLat, {
+                signal: controller.signal,
+            })
+            if (reqId !== routeReqIdRef.current) return
+
+            const coords = route.geometry.coordinates.map((c) => [c[1], c[0]])
+            const distKm = (route.distance / 1000).toFixed(2)
+            const mins = isBackup
+                ? Math.max(1, Math.round((route.distance / 1000 / 4.5) * 60))
+                : Math.max(1, Math.round(route.duration / 60))
+
+            setRouteCoords(coords)
+            setRouteDistance(distKm)
+            setRouteMinutes(mins)
+            setIsOfflineRoute(false)
+
+            if (cacheKey) {
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify({ coords, distance: distKm, duration: mins }))
+                } catch (_e) { /* ignore */ }
+            }
+        } catch (err) {
+            // Cancelled or superseded: not a real failure, do not show fallback
+            if (controller.signal.aborted && reqId !== routeReqIdRef.current) return
+            if (reqId !== routeReqIdRef.current) return
+            console.error("[Route] failed:", err?.name, err?.message)
+            onFail?.()
+
+            try {
+                const cached = cacheKey && localStorage.getItem(cacheKey)
+                if (cached) {
+                    const parsed = JSON.parse(cached)
+                    const startPt = parsed.coords?.[0]
+                    if (startPt && getDistanceInMeters(startLat, startLng, startPt[0], startPt[1]) <= 150) {
+                        setRouteCoords(parsed.coords)
+                        setRouteDistance(parsed.distance)
+                        setRouteMinutes(parsed.duration)
+                        setIsOfflineRoute(true)
+                        return
+                    }
+                }
+            } catch (_e) { /* ignore */ }
+
+            setRouteCoords([[startLat, startLng], [destLat, destLng]])
+            const d = (getDistanceInMeters(startLat, startLng, destLat, destLng) / 1000).toFixed(2)
+            setRouteDistance(d)
+            setRouteMinutes(Math.max(1, Math.round((d / 4) * 60)))
+            setIsOfflineRoute(true)
+        } finally {
+            if (reqId === routeReqIdRef.current) setRouteLoading(false)
+        }
+    }, [])
+
+    useEffect(() => () => routeAbortRef.current?.abort(), [])
+
     // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
     const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
 
@@ -169,6 +247,16 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
         if (!barangayId) {
             return
         }
+
+        routeAbortRef.current?.abort()
+        routeReqIdRef.current++
+        setTarget(null)
+        setRouteCoords([])
+        setIsOfflineRoute(false)
+        setTargetLoading(true)
+        activeTargetIdRef.current = null
+        lastFetchedPosRef.current = null
+        lastFetchedTimeRef.current = 0
 
         let active = true
 
@@ -227,15 +315,13 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
 
     // Requirement 3 & 5 & 8 & 9: Route calculation and throttling
     useEffect(() => {
-        if (!target?.latitude || !target?.longitude) {
-            return
-        }
+        if (!target?.latitude || !target?.longitude) return
 
         const destLat = Number(target.latitude)
         const destLng = Number(target.longitude)
         const hasLivePosition = position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
 
-        // Case A: Live GPS Position is available
+        // Case A: live GPS
         if (hasLivePosition) {
             const now = Date.now()
             const lastPos = lastFetchedPosRef.current
@@ -243,132 +329,42 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
             const targetChanged = activeTargetIdRef.current !== target.id
 
             let shouldFetch = false
-            if (targetChanged || !lastPos) {
+            if (targetChanged) {
                 shouldFetch = true
+            } else if (!lastPos) {
+                // previous attempt failed: retry, at most once per 15 s
+                shouldFetch = now - lastTime >= 15000
             } else {
                 const moved = getDistanceInMeters(lastPos.lat, lastPos.lng, position.lat, position.lng)
-                const timePassed = now - lastTime
-                // Throttle: > 30 m moved AND at least 15 s passed
-                if (moved > 30 && timePassed >= 15000) {
-                    shouldFetch = true
-                }
+                shouldFetch = moved > 30 && now - lastTime >= 15000
             }
-
-            if (!shouldFetch) {
-                return
-            }
+            if (!shouldFetch) return
 
             lastFetchedPosRef.current = { lat: position.lat, lng: position.lng }
             lastFetchedTimeRef.current = now
             activeTargetIdRef.current = target.id
 
-            let active = true
-            const url = buildOsrmUrl(position.lng, position.lat, destLng, destLat)
-
-            fetch(url)
-                .then(res => res.json())
-                .then(data => {
-                    if (!active) return
-                    if (data.routes && data.routes[0]) {
-                        const route = data.routes[0]
-                        const coords = route.geometry.coordinates.map(c => [c[1], c[0]])
-                        const distKm = (route.distance / 1000).toFixed(2)
-                        const durationMins = Math.max(1, Math.round(route.duration / 60))
-                        setRouteCoords(coords)
-                        setRouteDistance(distKm)
-                        setRouteMinutes(durationMins)
-                        setIsOfflineRoute(false)
-
-                        // Cache route (Requirement 8)
-                        try {
-                            localStorage.setItem(`bakwit_route_${barangayId}`, JSON.stringify({
-                                coords,
-                                distance: distKm,
-                                duration: durationMins,
-                            }))
-                        } catch (_err) {
-                            // ignore
-                        }
-                    } else {
-                        throw new Error("No route found")
-                    }
-                })
-                .catch(() => {
-                    if (!active) return
-                    // Use cached route if route fetch fails (Requirement 8)
-                    try {
-                        const cached = localStorage.getItem(`bakwit_route_${barangayId}`)
-                        if (cached) {
-                            const parsed = JSON.parse(cached)
-                            setRouteCoords(parsed.coords)
-                            setRouteDistance(parsed.distance)
-                            setRouteMinutes(parsed.duration)
-                            setIsOfflineRoute(true)
-                            return
-                        }
-                    } catch (_err) {
-                        // ignore
-                    }
-
-                    // Straight line fallback
-                    setRouteCoords([[position.lat, position.lng], [destLat, destLng]])
-                    const directDist = (getDistanceInMeters(position.lat, position.lng, destLat, destLng) / 1000).toFixed(2)
-                    setRouteDistance(directDist)
-                    setRouteMinutes(Math.max(1, Math.round((directDist / 4) * 60)))
-                    setIsOfflineRoute(true)
-                })
-                .finally(() => {
-                    if (active) setRouteLoading(false)
-                })
-
-            return () => {
-                active = false
-            }
+            loadRoute({
+                startLat: position.lat,
+                startLng: position.lng,
+                destLat,
+                destLng,
+                cacheKey: `bakwit_route_${barangayId}_${target.id}`,
+                onFail: () => { lastFetchedPosRef.current = null },
+            })
+            return
         }
 
-        // Case B: GPS is denied, unavailable, or idle (Requirement 9)
-        // Keep existing barangay-to-center line
+        // Case B: no GPS, route from barangay center
         if (barangay?.latitude && barangay?.longitude) {
-            const bLat = Number(barangay.latitude)
-            const bLng = Number(barangay.longitude)
-
-            let active = true
-            const url = buildOsrmUrl(bLng, bLat, destLng, destLat)
-
-            fetch(url)
-                .then(res => res.json())
-                .then(data => {
-                    if (!active) return
-                    if (data.routes && data.routes[0]) {
-                        const route = data.routes[0]
-                        const coords = route.geometry.coordinates.map(c => [c[1], c[0]])
-                        const distKm = (route.distance / 1000).toFixed(2)
-                        const durationMins = Math.max(1, Math.round(route.duration / 60))
-                        setRouteCoords(coords)
-                        setRouteDistance(distKm)
-                        setRouteMinutes(durationMins)
-                        setIsOfflineRoute(false)
-                    } else {
-                        throw new Error("No route found")
-                    }
-                })
-                .catch(() => {
-                    if (!active) return
-                    setRouteCoords([[bLat, bLng], [destLat, destLng]])
-                    const directDist = (getDistanceInMeters(bLat, bLng, destLat, destLng) / 1000).toFixed(2)
-                    setRouteDistance(directDist)
-                    setRouteMinutes(Math.max(1, Math.round((directDist / 4) * 60)))
-                    setIsOfflineRoute(true)
-                })
-                .finally(() => {
-                    if (active) setRouteLoading(false)
-                })
-
-            return () => {
-                active = false
-            }
+            loadRoute({
+                startLat: Number(barangay.latitude),
+                startLng: Number(barangay.longitude),
+                destLat,
+                destLng,
+            })
         }
-    }, [target, position, barangayId, barangay?.latitude, barangay?.longitude])
+    }, [target, position, barangayId, barangay?.latitude, barangay?.longitude, loadRoute])
 
     // Photo fetch effect
     useEffect(() => {
@@ -440,6 +436,63 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
         return startPoint || endPoint || [9.784, 125.488]
     }, [startPoint, endPoint])
 
+    // Requirement 4: Status messages as a single alert bar with a Lucide icon and plain, short text (no emoji)
+    // MUST be declared before any early return so hooks are called in the same order every render
+    const activeAlert = useMemo(() => {
+        if (hasArrived) {
+            return {
+                icon: CheckCircle2,
+                text: "You have arrived at the evacuation facility.",
+                bg: "#f0fdf4",
+                border: "#bbf7d0",
+                color: "#166534",
+                iconColor: "#16a34a",
+            }
+        }
+        if (target?.is_fallback) {
+            return {
+                icon: AlertTriangle,
+                text: "Local center unavailable. Redirected to nearest active facility.",
+                bg: "#fffbeb",
+                border: "#fde68a",
+                color: "#92400e",
+                iconColor: "#d97706",
+            }
+        }
+        if (isOfflineRoute) {
+            const offline = typeof navigator !== "undefined" && navigator.onLine === false
+            return {
+                icon: WifiOff,
+                text: offline
+                    ? "No internet connection. Displaying direct route."
+                    : "Routing service unreachable. Displaying direct route.",
+                bg: "#fef2f2", border: "#fecaca", color: "#991b1b", iconColor: "#dc2626",
+            }
+        }
+        if (!hasLiveGps && gpsStatus === "denied") {
+            return {
+                icon: MapPin,
+                text: "Location permission denied. Routing from barangay center.",
+                bg: "#eff6ff",
+                border: "#bfdbfe",
+                color: "#1e40af",
+                iconColor: "#2563eb",
+            }
+        }
+        if (!hasLiveGps && gpsStatus === "unavailable") {
+            return {
+                icon: MapPin,
+                text: "Location unavailable. Routing from barangay center.",
+                bg: "#eff6ff",
+                border: "#bfdbfe",
+                color: "#1e40af",
+                iconColor: "#2563eb",
+            }
+        }
+        return null
+    }, [hasArrived, target?.is_fallback, isOfflineRoute, hasLiveGps, gpsStatus])
+
+    // ── Early returns (all hooks are above this line) ──────────────────────────
     if (targetLoading && !target) {
         return (
             <div style={styles.container}>
@@ -479,60 +532,7 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
         ? Math.min(100, Math.max(0, Math.round((occupancyNum / capacityNum) * 100)))
         : 0
 
-    // Requirement 4: Status messages as a single alert bar with a Lucide icon and plain, short text (no emoji)
-    const activeAlert = useMemo(() => {
-        if (hasArrived) {
-            return {
-                icon: CheckCircle2,
-                text: "You have arrived at the evacuation facility.",
-                bg: "#f0fdf4",
-                border: "#bbf7d0",
-                color: "#166534",
-                iconColor: "#16a34a",
-            }
-        }
-        if (target?.is_fallback) {
-            return {
-                icon: AlertTriangle,
-                text: "Local center unavailable. Redirected to nearest active facility.",
-                bg: "#fffbeb",
-                border: "#fde68a",
-                color: "#92400e",
-                iconColor: "#d97706",
-            }
-        }
-        if (isOfflineRoute) {
-            return {
-                icon: WifiOff,
-                text: "Network offline. Displaying direct route.",
-                bg: "#fef2f2",
-                border: "#fecaca",
-                color: "#991b1b",
-                iconColor: "#dc2626",
-            }
-        }
-        if (!hasLiveGps && gpsStatus === "denied") {
-            return {
-                icon: MapPin,
-                text: "Location permission denied. Routing from barangay center.",
-                bg: "#eff6ff",
-                border: "#bfdbfe",
-                color: "#1e40af",
-                iconColor: "#2563eb",
-            }
-        }
-        if (!hasLiveGps && gpsStatus === "unavailable") {
-            return {
-                icon: MapPin,
-                text: "Location unavailable. Routing from barangay center.",
-                bg: "#eff6ff",
-                border: "#bfdbfe",
-                color: "#1e40af",
-                iconColor: "#2563eb",
-            }
-        }
-        return null
-    }, [hasArrived, target?.is_fallback, isOfflineRoute, hasLiveGps, gpsStatus])
+    // activeAlert useMemo was moved above the early returns (see above)
 
     // Redesigned Info Panel
     const infoPanel = (
@@ -729,7 +729,10 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
 
             {/* Photo Card */}
             <div style={styles.streetCard}>
-                <div style={styles.streetTitle}>📷 Evacuation Center Facility</div>
+                <div style={{ ...styles.streetTitle, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Camera size={14} style={{ color: "#1a237e" }} />
+                    Evacuation Center Facility
+                </div>
                 <div style={styles.streetSub}>Photo of {target?.name}</div>
                 {photoLoading ? (
                     <div style={styles.streetFallback}>Loading photo...</div>
@@ -746,7 +749,10 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
                         <div style={styles.streetFallbackSub}>An image of this evacuation facility will be uploaded soon.</div>
                     </div>
                 )}
-                <div style={styles.streetCaption}>ℹ️ {target?.name} — {target?.address}</div>
+                <div style={{ ...styles.streetCaption, display: "flex", alignItems: "center", gap: 5 }}>
+                    <Info size={12} style={{ color: "#4b5563", flexShrink: 0 }} />
+                    {target?.name} — {target?.address}
+                </div>
             </div>
         </div>
     )

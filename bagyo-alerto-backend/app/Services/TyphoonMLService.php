@@ -23,17 +23,18 @@ class TyphoonMLService
 {
     private $classifier;
     private $modelPath;
+    /** @var bool Tracks whether the classifier has been deserialised from disk this request. */
+    private bool $classifierLoaded = false;
 
     // Official PAGASA wind thresholds (km/h)
     private const SIGNAL_THRESHOLDS = [
         'Normal'   => [0,   29],
-        'Watch'    => [30,  44],
-        'Elevated' => [45,  59],
-        'Signal 1' => [60,  89],
-        'Signal 2' => [90,  120],
-        'Signal 3' => [121, 170],
-        'Signal 4' => [171, 220],
-        'Signal 5' => [221, PHP_INT_MAX],
+        'Watch'    => [30,  38],
+        'Signal 1' => [39,  61],
+        'Signal 2' => [62,  88],
+        'Signal 3' => [89,  117],
+        'Signal 4' => [118, 184],
+        'Signal 5' => [185, PHP_INT_MAX],
     ];
 
     // Signal rank for comparison (higher = more severe)
@@ -300,11 +301,25 @@ class TyphoonMLService
     public function predict($wind, $rainfall, $pressure, $temp, $humidity): string
     {
         if (!file_exists($this->modelPath)) {
+            // Model file is missing — log a warning. Falling back to in-memory train.
+            // Recommendation: run `php artisan ml:train` to persist the model.
+            \Illuminate\Support\Facades\Log::warning(
+                '[TyphoonMLService] Model file not found at ' . $this->modelPath .
+                '. Running in-memory training. Predictions may be slow.'
+            );
             $this->train();
         }
 
-        $modelManager = new ModelManager();
-        $this->classifier = $modelManager->restoreFromFile($this->modelPath);
+        // Only deserialise from disk if the classifier has not been loaded yet
+        // in this request. restoreFromFile() on a 3 MB file takes ~114 ms;
+        // calling it on every predict() call would waste that time repeatedly.
+        if (!($this->classifier instanceof \Phpml\Classification\Ensemble\RandomForest
+              && method_exists($this->classifier, 'predict')
+              && $this->classifierLoaded)) {
+            $modelManager = new ModelManager();
+            $this->classifier = $modelManager->restoreFromFile($this->modelPath);
+            $this->classifierLoaded = true;
+        }
 
         // Normalize input the same way training data was normalized
         $input = $this->normalizeFeatures($wind, $rainfall, $pressure, $temp, $humidity);

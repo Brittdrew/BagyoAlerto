@@ -125,7 +125,8 @@ class AdminController extends Controller
 
     private function buildStats(): array
     {
-        $severityCounts = TyphoonLog::selectRaw('severity_level, COUNT(*) as count')
+        $severityCounts = TyphoonLog::where('is_manual', false)
+            ->selectRaw('severity_level, COUNT(*) as count')
             ->groupBy('severity_level')
             ->pluck('count', 'severity_level');
 
@@ -136,7 +137,7 @@ class AdminController extends Controller
             'critical' => 4,
         ];
 
-        $recentAssessmentSeries = TyphoonLog::query()
+        $recentAssessmentSeries = TyphoonLog::where('is_manual', false)
             ->orderByDesc('id')
             ->limit(12)
             ->get(['severity_level'])
@@ -146,7 +147,8 @@ class AdminController extends Controller
             ->all();
 
         $recentAssessments = Recommendation::query()
-            ->with(['barangay:id,name', 'typhoonLog:id,severity_level'])
+            ->with(['barangay:id,name', 'typhoonLog:id,severity_level,is_manual'])
+            ->whereHas('typhoonLog', fn ($q) => $q->where('is_manual', false))
             ->orderByDesc('id')
             ->limit(6)
             ->get()
@@ -194,7 +196,7 @@ class AdminController extends Controller
             ->all();
 
         return [
-            'total_assessments' => TyphoonLog::count(),
+            'total_assessments' => TyphoonLog::where('is_manual', false)->count(),
             'severity_counts' => [
                 'low' => (int) ($severityCounts['low'] ?? 0),
                 'moderate' => (int) ($severityCounts['moderate'] ?? 0),
@@ -204,7 +206,7 @@ class AdminController extends Controller
             'total_capacity' => (int) EvacuationCenter::where('is_active', 1)->sum('capacity'),
             'total_barangays' => Barangay::count(),
             'total_evacuation_centers' => EvacuationCenter::where('is_active', 1)->count(),
-            'total_recommendations' => Recommendation::count(),
+            'total_recommendations' => Recommendation::whereHas('typhoonLog', fn ($q) => $q->where('is_manual', false))->count(),
             'assessments_over_time' => $recentAssessmentSeries,
             'assessments_history' => $recentAssessmentSeries,
             'recent_assessments' => $recentAssessments,
@@ -215,6 +217,7 @@ class AdminController extends Controller
     public function recommendations()
     {
         $recommendations = Recommendation::with(['barangay', 'evacuationCenter', 'typhoonLog'])
+            ->whereHas('typhoonLog', fn ($q) => $q->where('is_manual', false))
             ->orderBy('id', 'desc')
             ->get();
 

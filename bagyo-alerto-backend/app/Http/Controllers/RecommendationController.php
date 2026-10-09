@@ -10,6 +10,7 @@ class RecommendationController extends Controller
     public function index()
     {
         $recommendations = Recommendation::with(['barangay', 'evacuationCenter', 'typhoonLog'])
+            ->whereHas('typhoonLog', fn ($q) => $q->where('is_manual', false))
             ->orderBy('id', 'desc')
             ->get();
 

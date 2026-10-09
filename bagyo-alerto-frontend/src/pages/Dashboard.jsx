@@ -5,11 +5,12 @@ import { useNavigate } from "react-router-dom"
 import MapView from "../components/MapView"
 
 import Sidebar from "../components/Sidebar"
+import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
     Tornado, BarChart2, Clock, AlertTriangle, Info, Wind,
-    CloudRain, Gauge, Map, Edit3, Search, Route, Satellite,
+    CloudRain, Gauge, Edit3, Search, Route, Satellite,
     Loader, MapPin, Thermometer, Droplets, X
 } from "lucide-react"
 
@@ -41,11 +42,11 @@ function metricDisplay(value) {
 // --- Severity config (maps your backend severity_level to UI) ----------------
 export function calculateSeverityScore(wind, rain, pressure, temp, humidity) {
     const clamp = (val) => Math.min(Math.max(val, 0), 100);
-    const windPct = clamp((wind - 30) / 190 * 100);
-    const pressurePct = clamp((1013 - pressure) / 43 * 100);
+    const windPct = clamp((wind - 30) / 320 * 100);
+    const pressurePct = clamp((1013 - pressure) / 93 * 100);
     const rainPct = clamp(rain / 60 * 100);
     const humidityPct = clamp((humidity - 85) / 15 * 100);
-    const tempPct = clamp((30 - temp) / 6 * 100);
+    const tempPct = clamp((30 - temp) / 10 * 100);
     return Math.round(
         (windPct * 0.35) +
         (pressurePct * 0.30) +
@@ -66,14 +67,16 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
     else rank = 5;
 
     // Hard overrides — only upgrade, never downgrade
-    if (wind >= 220) {
-        rank = Math.max(rank, 5);
-    } else if (wind >= 120) {
-        rank = Math.max(rank, 4);
-    } else if (wind >= 60) {
-        rank = Math.max(rank, 3);
-    } else if (wind >= 45) {
-        rank = Math.max(rank, 2);
+    if (wind >= 185) {
+        rank = Math.max(rank, 5); // Signal 4–5
+    } else if (wind >= 118) {
+        rank = Math.max(rank, 5); // Signal 4–5
+    } else if (wind >= 89) {
+        rank = Math.max(rank, 4); // Signal 2–3
+    } else if (wind >= 62) {
+        rank = Math.max(rank, 4); // Signal 2–3
+    } else if (wind >= 39) {
+        rank = Math.max(rank, 3); // Signal 1
     }
 
     if (rain >= 30) {
@@ -173,7 +176,7 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
 }
 
 const RISK_COLORS = {
-    low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D",
+    low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D", catastrophic: "#7F1D1D",
 }
 
 
@@ -210,13 +213,12 @@ function getCardBadgeAndBorder(name, value) {
     }
 
     if (name === "wind_speed") {
-        if (num < 45) return { badge: null, border: null, barColor: "#378ADD" };
-        if (num <= 59) return { badge: "Watch", border: "#EF9F27", barColor: "#EF9F27" };
-        if (num <= 119) return { badge: "Signal 1", border: "#E24B4A", barColor: "#E24B4A" };
-        if (num <= 169) return { badge: "Signal 2", border: "#E24B4A", barColor: "#E24B4A" };
-        if (num <= 219) return { badge: "Signal 3", border: "#E24B4A", barColor: "#E24B4A" };
-        if (num <= 299) return { badge: "Signal 4", border: "#A32D2D", barColor: "#A32D2D" };
-        return { badge: "Signal 5", border: "#A32D2D", barColor: "#A32D2D" };
+        if (num < 39) return { badge: null, border: null, barColor: "#378ADD" };
+        if (num <= 61) return { badge: "Signal 1", border: "#EF9F27", barColor: "#EF9F27" };
+        if (num <= 88) return { badge: "Signal 2", border: "#D85A30", barColor: "#D85A30" };
+        if (num <= 117) return { badge: "Signal 3", border: "#E24B4A", barColor: "#E24B4A" };
+        if (num <= 184) return { badge: "Signal 4", border: "#A32D2D", barColor: "#A32D2D" };
+        return { badge: "Signal 5", border: "#6B1D2F", barColor: "#6B1D2F" };
     }
     if (name === "rainfall") {
         if (num < 7.5) return { badge: null, border: null, barColor: "#639922" };
@@ -404,7 +406,7 @@ function SeverityGauge({ score, wind = 0, rain = 0, pressure = 1013 }) {
                 {cfg.label}
             </div>
             <div style={{ fontSize: 11, color: "#888", textAlign: "center", margin: "3px 0 6px" }}>
-                {cfg.signal.startsWith("Signal") ? "PAGASA " : ""}{cfg.signal} · 5-factor weighted score
+                {cfg.signal.startsWith("Signal") ? "Wind equiv. " : ""}{cfg.signal} · 5-factor weighted score
             </div>
         </div>
     )
@@ -423,8 +425,8 @@ function FactorBar({ label, pct, color }) {
 }
 
 function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
-    const needsEvac = ["high", "critical"].includes(severity)
-    const isActive = ["moderate", "high", "critical"].includes(severity)
+    const needsEvac = ["high", "critical", "catastrophic"].includes(severity)
+    const isActive = ["moderate", "high", "critical", "catastrophic"].includes(severity)
 
     if (!selectedBarangay) {
         return (
@@ -476,7 +478,7 @@ function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{evacuationCenter.address}</div>
                     {evacuationCenter.distance !== undefined && evacuationCenter.distance !== null && (
                         <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
-                            <span>📍</span> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
+                            <MapPin size={11} style={{ color: "inherit" }} /> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
                         </div>
                     )}
                 </div>
@@ -514,13 +516,13 @@ function RecentHistory({ logs }) {
             )}
             {recent.map((log, i) => {
                 const tLog = log.typhoon_log
-                const score = tLog ? calculateSeverityScore(
+                const score = tLog ? (tLog.score ?? calculateSeverityScore(
                     parseFloat(tLog.wind_speed) || 0,
                     parseFloat(tLog.rainfall) || 0,
                     parseFloat(tLog.pressure) || 0,
                     parseFloat(tLog.temperature) || 0,
                     parseFloat(tLog.humidity) || 0
-                ) : 0
+                )) : 0
                 const cfg = getSeverityConfig(score)
                 const date = new Date(log.recommended_at)
                 const dateStr = date.toLocaleDateString("en-PH", { month: "short", year: "numeric" })
@@ -552,6 +554,8 @@ export default function Dashboard() {
     const [barangays, setBarangays] = useState([])
     const [selectedBarangay, setSelectedBarangay] = useState(null)
     const [formData, setFormData] = useState({ wind_speed: "", rainfall: "", pressure: "", temperature: "", humidity: "", barangay_id: null })
+    const [liveWeather, setLiveWeather] = useState(null)
+    const [isManualOverride, setIsManualOverride] = useState(false)
     const [extraWeather, setExtraWeather] = useState({ wind_gusts: "N/A" })
     const [weatherLoading, setWeatherLoading] = useState(false)
     const [weatherFetched, setWeatherFetched] = useState(false)
@@ -561,11 +565,22 @@ export default function Dashboard() {
     const [assessing, setAssessing] = useState(false)
     const [assessError, setAssessError] = useState(null)
     const [recentLogs, setRecentLogs] = useState([])
-    const [showMap, setShowMap] = useState(false)
     const [confirmModalOpen, setConfirmModalOpen] = useState(false)
+    const [isMobileScreen, setIsMobileScreen] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= 768 : false))
 
+    useEffect(() => {
+        const handleResize = () => setIsMobileScreen(window.innerWidth <= 768)
+        window.addEventListener("resize", handleResize)
+        return () => window.removeEventListener("resize", handleResize)
+    }, [])
 
     const weatherTimer = useRef(null)
+    const isManualOverrideRef = useRef(false)
+    const activeBarangayIdRef = useRef(null)
+
+    useEffect(() => {
+        isManualOverrideRef.current = isManualOverride
+    }, [isManualOverride])
 
     // -- Fetch barangays on mount ------------------------------------------------
     useEffect(() => {
@@ -582,10 +597,13 @@ export default function Dashboard() {
                         ? opts.find(b => String(b.value) === String(barangayId))
                         : null
                     if (saved) {
+                        // Seed the stale-response guard ref before the first fetch
+                        activeBarangayIdRef.current = saved.value
                         setSelectedBarangay(saved)
                         setFormData(f => ({ ...f, barangay_id: saved.value }))
                         fetchWeather(saved)
                     } else {
+                        activeBarangayIdRef.current = null
                         setSelectedBarangay(null)
                         setFormData(f => ({ ...f, barangay_id: null }))
                     }
@@ -606,32 +624,35 @@ export default function Dashboard() {
         if (!option?.latitude || !option?.longitude) return
         setWeatherLoading(true)
         setWeatherFetched(false)
-        setFormData(f => ({
-            ...f,
-            wind_speed: "",
-            rainfall: "",
-            pressure: "",
-            temperature: "",
-            humidity: "",
-        }))
+        if (!isManualOverrideRef.current) {
+            setFormData(f => ({
+                ...f,
+                wind_speed: "",
+                rainfall: "",
+                pressure: "",
+                temperature: "",
+                humidity: "",
+                barangay_id: option.value,
+            }))
+        }
         setExtraWeather({ wind_gusts: "N/A" })
         try {
             const [currentRes, hourlyRes] = await Promise.all([
-                axios.get(
+                fetch(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
                     `&current=${OPEN_METEO_CURRENT_FIELDS}` +
                     `&timezone=Asia%2FManila`
-                ),
-                axios.get(
+                ).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
+                fetch(
                     `https://api.open-meteo.com/v1/forecast` +
                     `?latitude=${option.latitude}&longitude=${option.longitude}` +
                     `&hourly=wind_speed_10m,temperature_2m&forecast_days=1` +
                     `&timezone=Asia%2FManila`
-                ),
+                ).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
             ])
 
-            const cur = currentRes.data.current
+            const cur = currentRes.current
             const windVal = pickCurrentMetric(cur, ["wind_speed_10m"])
             const rainVal = pickCurrentMetric(cur, ["precipitation", "rain"])
             const pressureVal = pickCurrentMetric(cur, ["surface_pressure"])
@@ -639,14 +660,21 @@ export default function Dashboard() {
             const humidityVal = pickCurrentMetric(cur, ["relativehumidity_2m", "relative_humidity_2m"])
             const gustVal = pickCurrentMetric(cur, ["windgusts_10m"])
 
-            setFormData(f => ({
-                ...f,
+            const liveMetrics = {
                 wind_speed: toFixedOrEmpty(windVal, 1),
                 rainfall: toFixedOrEmpty(rainVal, 1),
                 pressure: toFixedOrEmpty(pressureVal, 1),
                 temperature: toFixedOrEmpty(temperatureVal, 1),
                 humidity: toFixedOrEmpty(humidityVal, 1),
-            }))
+            }
+            setLiveWeather(liveMetrics)
+            if (!isManualOverrideRef.current) {
+                setFormData(f => ({
+                    ...f,
+                    ...liveMetrics,
+                    barangay_id: option.value,
+                }))
+            }
             setExtraWeather({
                 wind_gusts: metricDisplay(toFixedOrEmpty(gustVal, 1)),
             })
@@ -654,7 +682,7 @@ export default function Dashboard() {
             setWeatherFetched(true)
 
             // Build 6-point trend (last 6 hours)
-            const hourly = hourlyRes.data.hourly
+            const hourly = hourlyRes.hourly
             const nowH = new Date().getHours()
             const points = []
             for (let i = 5; i >= 0; i--) {
@@ -668,15 +696,58 @@ export default function Dashboard() {
             }
             setTrendData(points)
 
-            // Auto-refresh
+            // Auto-run assess on live weather when not in manual override mode
+            if (!isManualOverrideRef.current) {
+                runAssess({
+                    ...liveMetrics,
+                    barangay_id: option.value,
+                    manual_override: false,
+                    source: "auto",
+                })
+            }
+
+            // Auto-refresh timer every 10 minutes while page is open
             if (weatherTimer.current) clearInterval(weatherTimer.current)
             weatherTimer.current = setInterval(() => fetchWeather(option), WEATHER_REFRESH)
 
         } catch {
             setExtraWeather({ wind_gusts: "N/A" })
             console.error("Weather fetch failed")
+            // Point 7: show visible notice on weather fetch failure; keep retrying on timer
+            setAssessError(["__weather_error__"])
+            if (weatherTimer.current) clearInterval(weatherTimer.current)
+            weatherTimer.current = setInterval(() => fetchWeather(option), WEATHER_REFRESH)
         }
         setWeatherLoading(false)
+    }
+
+    // Auto-assess helper — includes stale-response guard (point 6)
+    async function runAssess(payload) {
+        if (!payload?.barangay_id) return
+        // Capture which barangay this request is for
+        const requestedBarangayId = payload.barangay_id
+        setAssessing(true)
+        setAssessError(null)
+        try {
+            const res = await axios.post(`${API_BASE}/typhoon/assess`, payload)
+            // Stale-response guard: discard result if the barangay changed while the request was in-flight
+            if (activeBarangayIdRef.current !== null &&
+                String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
+                console.info("[assess] Stale response discarded — barangay changed during request")
+                return
+            }
+            setResult(res.data)
+            fetchRecentLogs()
+        } catch (err) {
+            console.error("Auto-assess failed:", err.response?.status, err.message)
+            // Only surface the error if the barangay still matches
+            if (activeBarangayIdRef.current === null ||
+                String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
+                setAssessError(["__assess_error__"])
+            }
+        } finally {
+            setAssessing(false)
+        }
     }
 
     // -- Fetch recent history ----------------------------------------------------
@@ -691,30 +762,78 @@ export default function Dashboard() {
 
     // -- Barangay change ---------------------------------------------------------
     const handleBarangayChange = (option) => {
+        // Update stale-response guard ref immediately so in-flight requests are discarded
+        activeBarangayIdRef.current = option?.value ?? null
         setSelectedBarangay(option)
         setBarangayId(option?.value ?? null)
         setFormData(f => ({ ...f, barangay_id: option?.value ?? null }))
         setResult(null)
         setAssessError(null)
         setWeatherFetched(false)
+        setIsManualOverride(false)
+        isManualOverrideRef.current = false
         if (option) fetchWeather(option)
     }
 
     // -- Manual input change -----------------------------------------------------
     const handleChange = (e) => {
+        setIsManualOverride(true)
+        isManualOverrideRef.current = true
         setFormData(f => ({ ...f, [e.target.name]: e.target.value }))
     }
 
-    // -- Assess ------------------------------------------------------------------
+    const handleResetToLiveData = () => {
+        setIsManualOverride(false)
+        isManualOverrideRef.current = false
+        setResult(null)
+        setAssessError(null)
+        if (liveWeather) {
+            setFormData(f => ({
+                ...f,
+                ...liveWeather,
+                barangay_id: formData.barangay_id,
+            }))
+            runAssess({
+                ...liveWeather,
+                barangay_id: formData.barangay_id,
+                manual_override: false,
+                source: "auto",
+            })
+        } else if (selectedBarangay) {
+            fetchWeather(selectedBarangay)
+        }
+    }
+
+    // -- Assess (manual) ------------------------------------------------------------------
     const handleAssess = async () => {
+        const requestedBarangayId = formData.barangay_id
         setAssessing(true)
         setAssessError(null)
         try {
-            const res = await axios.post(`${API_BASE}/typhoon/assess`, formData)
+            const res = await axios.post(`${API_BASE}/typhoon/assess`, {
+                ...formData,
+                manual_override: isManualOverride,
+                source: "manual",
+            })
+            // Stale-response guard for manual assess too
+            if (activeBarangayIdRef.current !== null &&
+                String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
+                return
+            }
             setResult(res.data)
             fetchRecentLogs()
-        } catch {
-            setAssessError("Assessment failed. Please check your connection and try again.")
+        } catch (err) {
+            const status = err.response?.status
+            if (status === 422) {
+                // Surface validation field errors
+                const errors = err.response.data?.errors || {}
+                const messages = Object.values(errors).flat()
+                setAssessError(messages.length ? messages : ["Invalid input. Please check your values."])
+            } else if (status === 429) {
+                setAssessError(["Too many requests. Please wait a moment before assessing again."])
+            } else {
+                setAssessError(["Assessment failed. Please check your connection and try again."])
+            }
         }
         setAssessing(false)
     }
@@ -754,12 +873,11 @@ export default function Dashboard() {
     if (hasWind) {
         const windVal = parseFloat(formData.wind_speed)
         let r = 0
-        if (windVal >= 300) r = 5
-        else if (windVal >= 220) r = 5
-        else if (windVal >= 170) r = 4
-        else if (windVal >= 120) r = 4
-        else if (windVal >= 60) r = 3
-        else if (windVal >= 45) r = 1
+        if (windVal >= 185) r = 5
+        else if (windVal >= 118) r = 5
+        else if (windVal >= 89) r = 4
+        else if (windVal >= 62) r = 4
+        else if (windVal >= 39) r = 3
         maxRank = Math.max(maxRank, r)
     }
     if (hasRain) {
@@ -799,26 +917,24 @@ export default function Dashboard() {
     else if (maxRank === 4) conditionLabel = "Signal 2–3"
     else if (maxRank === 5) conditionLabel = "Signal 4–5"
 
-    // Progress-bar percentages — corrected PH-baseline formulas (match backend)
-    const clamp = (val) => Math.min(Math.max(val, 0), 100)
-    const windPct = Math.round(clamp((wind - 30) / 190 * 100))
-    const pressurePct = Math.round(clamp((1013 - pressure) / 43 * 100))
-    const rainPct = Math.round(clamp(rain / 60 * 100))
-    const humidityPct = Math.round(clamp((humidity - 85) / 15 * 100))
-    const tempPct = Math.round(clamp((30 - temperature) / 6 * 100))
+    // Factor bar percentages from assess API response (empty / 0 before assessment runs)
+    const windPct = result?.factors?.wind ?? 0
+    const rainPct = result?.factors?.rain ?? 0
+    const pressurePct = result?.factors?.pressure ?? 0
+    const tempPct = result?.factors?.temp ?? 0
+    const humidityPct = result?.factors?.humidity ?? 0
     const temperaturePct = tempPct
 
-    // -- 5-factor weighted composite score (0–100) — matches backend weights -----
-    const finalScore = Math.round(
-        (windPct * 0.35) +
-        (pressurePct * 0.30) +
-        (rainPct * 0.20) +
-        (humidityPct * 0.10) +
-        (tempPct * 0.05)
-    )
-    const compositeScore = result ? (result.score ?? finalScore) : null
+    const compositeScore = result?.score ?? null
 
     const severity = result?.severity || null
+    const activeSeverity = result?.severity || null
+
+    // Classify assessError into display type
+    const isWeatherError = Array.isArray(assessError) && assessError.includes("__weather_error__")
+    const isAssessError = Array.isArray(assessError) && assessError.includes("__assess_error__")
+    const isConditionsError = isWeatherError || isAssessError
+    const hasUserFacingErrors = Array.isArray(assessError) && !isConditionsError && assessError.length > 0
     const sevCfg = compositeScore !== null ? getSeverityConfig(compositeScore, wind, rain, pressure) : null
     const ruleBasedLabel = result?.classification || sevCfg?.label
     const mlPrediction = result?.ml_prediction || "Unavailable"
@@ -832,6 +948,15 @@ export default function Dashboard() {
     const alertBanner = () => {
         if (!result) return null
         const cfg = sevCfg
+        // Use local-equivalent wording, not official PAGASA branding
+        const signalStr = cfg.signal.startsWith("Signal")
+            ? `Wind equivalent to ${cfg.signal}`
+            : cfg.signal
+        const mainLabel = cfg.label || ""
+        const bannerTitle = (mainLabel.toLowerCase() === signalStr.toLowerCase() || mainLabel.toLowerCase().includes(cfg.signal.toLowerCase()))
+            ? signalStr
+            : `${signalStr} · ${mainLabel}`
+
         return (
             <div className="bakwit-alert-banner" style={{
                 background: cfg.alertBg, border: `0.5px solid ${cfg.alertBorder}`,
@@ -843,11 +968,16 @@ export default function Dashboard() {
                 </span>
                 <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: cfg.alertText }}>
-                        {cfg.signal.startsWith("Signal") ? "PAGASA " : ""}{cfg.signal} · {cfg.label}
+                        {bannerTitle}
                     </div>
                     <div style={{ fontSize: 11, color: cfg.alertText, opacity: 0.85, marginTop: 2 }}>
                         {result.message}
                     </div>
+                    {cfg.signal.startsWith("Signal") && (
+                        <div style={{ fontSize: 10, color: cfg.alertText, opacity: 0.65, marginTop: 3 }}>
+                            Official PAGASA bulletin: not yet integrated.
+                        </div>
+                    )}
                 </div>
             </div>
         )
@@ -876,6 +1006,12 @@ export default function Dashboard() {
         .bagyo-sidebar-item:hover { background: #f5f7ff !important; color: #185FA5 !important; }
         .bagyo-assess:hover:not(:disabled) { opacity: 0.88 !important; transform: translateY(-1px); }
         .bagyo-assess:active:not(:disabled) { transform: scale(0.98); }
+        /* Mobile: last lone metric card spans full width */
+        @media (max-width: 768px) {
+            .bakwit-metrics-grid > *:last-child:nth-child(odd) {
+                grid-column: 1 / -1;
+            }
+        }
       `}</style>
 
 
@@ -898,13 +1034,14 @@ export default function Dashboard() {
                             menuPortalTarget={document.body}
                             styles={selectStyles}
                         />
+                        {/* Sidebar badge — static area risk from database (selectedBarangay.riskLevel) */}
                         {selectedBarangay?.riskLevel && (
                             <div style={{
                                 marginTop: 8, fontSize: 11, fontWeight: 600, padding: "3px 10px",
                                 borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 5, color: "white",
                                 background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
                             }}>
-                                <AlertTriangle size={12} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
+                                <AlertTriangle size={12} /> Area risk: {selectedBarangay.riskLevel.toUpperCase()}
                             </div>
                         )}
                     </div>
@@ -944,9 +1081,6 @@ export default function Dashboard() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 14, fontWeight: 600, color: "white" }}>Dashboard</span>
                             <span style={styles.liveBadge}><LiveDot /> Live</span>
-                            <span style={{ ...styles.aiChip, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                <Tornado size={12} style={{ animation: "spin 3s linear infinite" }} /> AI-Powered
-                            </span>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255, 255, 255, 0.85)" }}>
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -964,19 +1098,62 @@ export default function Dashboard() {
                     {/* Content area */}
                     <div className="bakwit-content" style={styles.content}>
 
+                        {/* Top Resident Evacuation Alert Banner */}
+                        <EvacuationAlertBanner
+                            barangayId={formData.barangay_id}
+                            selectedBarangay={selectedBarangay}
+                            severity={activeSeverity}
+                        />
+
+                        {/* Conditions unavailable notice (weather or assess error) */}
+                        {isConditionsError && (
+                            <div style={{
+                                display: "flex", alignItems: "flex-start", gap: 10,
+                                background: "#FFF7ED", border: "1px solid #FED7AA",
+                                borderRadius: 8, padding: "10px 14px", marginBottom: 8,
+                                fontSize: 12, color: "#92400E",
+                            }}>
+                                <AlertTriangle size={15} style={{ color: "#F59E0B", flexShrink: 0, marginTop: 1 }} />
+                                <div>
+                                    <strong>Can&apos;t check conditions right now.</strong>
+                                    {" "}Follow PAGASA and your barangay officials.
+                                    <span style={{ fontSize: 10, color: "#B45309", marginLeft: 6 }}>
+                                        Retrying automatically…
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Field-level validation errors from manual assess */}
+                        {hasUserFacingErrors && (
+                            <div style={{
+                                background: "#FEF2F2", border: "1px solid #FECACA",
+                                borderRadius: 8, padding: "10px 14px", marginBottom: 8,
+                                fontSize: 12, color: "#991B1B",
+                            }}>
+                                {assessError.map((msg, i) => (
+                                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        <AlertTriangle size={13} style={{ color: "#EF4444", flexShrink: 0 }} />
+                                        {msg}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
                         {/* Mobile Barangay Selector directly at the top of page content under 768px */}
                         <div className="bakwit-mobile-barangay-bar">
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                                 <span style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                                     Active Barangay
                                 </span>
+                                {/* Mobile badge — static area risk from database */}
                                 {selectedBarangay?.riskLevel && (
                                     <span style={{
                                         fontSize: 10, fontWeight: 700, padding: "2px 8px",
                                         borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4, color: "white",
                                         background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
                                     }}>
-                                        <AlertTriangle size={11} /> {selectedBarangay.riskLevel.toUpperCase()} RISK
+                                        <AlertTriangle size={11} /> Area risk: {selectedBarangay.riskLevel.toUpperCase()}
                                     </span>
                                 )}
                             </div>
@@ -994,40 +1171,80 @@ export default function Dashboard() {
                             />
                         </div>
 
-                        {/* Prompt when no barangay is selected */}
-                        {!selectedBarangay ? (
-                            <div style={{
-                                background: "#FFF8E1",
-                                border: "1px solid #FFE082",
-                                borderRadius: 10,
-                                padding: "14px 18px",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 12,
-                                marginBottom: 12,
-                                boxShadow: "0 2px 8px rgba(245, 127, 23, 0.08)"
-                            }}>
-                                <MapPin size={22} style={{ color: "#F57F17", flexShrink: 0 }} />
-                                <div>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: "#E65100" }}>
-                                        Select your barangay
-                                    </div>
-                                    <div style={{ fontSize: 12, color: "#8D6E63", marginTop: 2 }}>
-                                        Please select your barangay from the sidebar to view weather conditions, risk alerts, and live evacuation routing.
-                                    </div>
-                                </div>
+                        {/* Mobile-only: live evacuation route directly after barangay selector (before weather cards) */}
+                        {isMobileScreen && selectedBarangay && (
+                            <div className="bakwit-mobile-evac-early" id="evacuation-map-section-mobile">
+                                <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
+                                <MapView evacuationCenter={result?.evacuation_center} barangay={selectedBarangay} />
                             </div>
-                        ) : result ? (
-                            alertBanner()
-                        ) : (
-                            <div style={{ background: "#EBF3FB", border: "0.5px solid #B5D4F4", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                                <Info size={16} style={{ color: "#0C447C" }} />
-                                <div style={{ fontSize: 12, color: "#0C447C" }}>
-                                    {weatherFetched
-                                        ? `Live weather loaded for ${selectedBarangay?.name}. Press Assess to evaluate severity.`
-                                        : "Weather data loading..."}
-                                </div>
-                            </div>
+                        )}
+
+                        {/* Main weather section (only when a barangay is selected) */}
+                        {selectedBarangay && (
+                            <>
+                                {isManualOverride && (
+                                    <div style={{
+                                        background: "#FFF8E1",
+                                        border: "1.5px solid #FFC107",
+                                        borderRadius: 8,
+                                        padding: "10px 14px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        marginBottom: 12,
+                                        boxShadow: "0 2px 6px rgba(255, 193, 7, 0.15)",
+                                    }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                            <span style={{
+                                                background: "#FF9800",
+                                                color: "white",
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                padding: "2px 8px",
+                                                borderRadius: 4,
+                                                textTransform: "uppercase",
+                                                letterSpacing: "0.04em"
+                                            }}>
+                                                TEST MODE
+                                            </span>
+                                            <span style={{ fontSize: 13, fontWeight: 700, color: "#B78103" }}>
+                                                Manual test values, not live data
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleResetToLiveData}
+                                            style={{
+                                                background: "#fff",
+                                                border: "1px solid #FFC107",
+                                                color: "#B78103",
+                                                borderRadius: 6,
+                                                padding: "5px 12px",
+                                                fontSize: 11,
+                                                fontWeight: 600,
+                                                cursor: "pointer",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 5,
+                                            }}
+                                        >
+                                            <RefreshCw size={12} /> Reset to live data
+                                        </button>
+                                    </div>
+                                )}
+                                {result ? (
+                                    alertBanner()
+                                ) : (
+                                    <div style={{ background: "#EBF3FB", border: "0.5px solid #B5D4F4", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                                        <Info size={16} style={{ color: "#0C447C" }} />
+                                        <div style={{ fontSize: 12, color: "#0C447C" }}>
+                                            {weatherFetched
+                                                ? `Live weather loaded for ${selectedBarangay?.name}. Press Assess to evaluate severity.`
+                                                : "Weather data loading..."}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
                         )}
 
                         {/* Metric cards */}
@@ -1067,12 +1284,18 @@ export default function Dashboard() {
                             />
                         </div>
 
-                        <div style={{ ...styles.card, padding: "9px 12px" }}>
+                        <div style={{
+                            ...styles.card,
+                            padding: "9px 12px",
+                            ...(isManualOverride ? { opacity: 0.45, filter: "grayscale(100%)", pointerEvents: "none", position: "relative" } : {})
+                        }}>
                             <div style={{ ...styles.cardHeader, marginBottom: 6 }}>
                                 <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
                                     <Info size={13} style={{ color: "#555" }} /> Bonus weather details
                                 </div>
-                                <span style={{ fontSize: 11, color: "#888" }}>Open-Meteo current</span>
+                                <span style={{ fontSize: 11, color: isManualOverride ? "#b45309" : "#888" }}>
+                                    {isManualOverride ? "Live data only (inactive)" : "Open-Meteo current"}
+                                </span>
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
                                 <div style={{ background: "#f8f9fc", border: "1px solid #eef1f5", borderRadius: 8, padding: "8px 10px" }}>
@@ -1086,12 +1309,17 @@ export default function Dashboard() {
 
                         {/* Trend chart + Severity gauge */}
                         <div className="bakwit-row2" style={styles.row2}>
-                            <div style={styles.card}>
+                            <div style={{
+                                ...styles.card,
+                                ...(isManualOverride ? { opacity: 0.45, filter: "grayscale(100%)", pointerEvents: "none", position: "relative" } : {})
+                            }}>
                                 <div style={styles.cardHeader}>
                                     <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
                                         <BarChart2 size={13} style={{ color: "#555" }} /> 6-hour wind trend
                                     </div>
-                                    <span onClick={() => navigate("/history")} style={styles.cardAction}>View history &gt;</span>
+                                    <span onClick={() => !isManualOverride && navigate("/history")} style={styles.cardAction}>
+                                        {isManualOverride ? "Live data only (inactive)" : "View history >"}
+                                    </span>
                                 </div>
                                 <TrendChart data={trendData} />
                             </div>
@@ -1099,9 +1327,21 @@ export default function Dashboard() {
                             <div style={styles.card}>
                                 <div style={styles.cardHeader}>
                                     <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                                        <Tornado size={13} style={{ animation: result ? "spin 4s linear infinite" : "none", color: "#555" }} /> AI severity score
+                                        <Tornado size={13} style={{ animation: result ? "spin 4s linear infinite" : "none", color: "#555" }} /> Severity assessment
                                     </div>
-                                    {!result && <span style={{ fontSize: 11, color: "#bbb" }}>Run assess first</span>}
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                        {result?.severity && (
+                                            <span style={{
+                                                fontSize: 10, fontWeight: 700, padding: "2px 9px",
+                                                borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4,
+                                                color: "white",
+                                                background: RISK_COLORS[result.severity.toLowerCase()] || "#888",
+                                            }}>
+                                                Current: {result.severity.toUpperCase()}
+                                            </span>
+                                        )}
+                                        {!result && <span style={{ fontSize: 11, color: "#bbb" }}>Run assess first</span>}
+                                    </div>
                                 </div>
                                 {result ? (
                                     <>
@@ -1114,7 +1354,7 @@ export default function Dashboard() {
                                                 </div>
                                             </div>
                                             <div style={styles.mlCompareBox}>
-                                                <div style={styles.mlCompareLabel}>ML Prediction</div>
+                                                <div style={styles.mlCompareLabel}>ML cross-check (advisory)</div>
                                                 <div style={styles.mlCompareScore}>{mlPrediction}</div>
                                                 <div style={styles.mlExplanation}>{mlExplanation}</div>
                                             </div>
@@ -1142,7 +1382,32 @@ export default function Dashboard() {
                                 <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
                                     <Edit3 size={13} style={{ color: "#555" }} /> Override weather values (optional)
                                 </div>
-                                <span style={{ fontSize: 11, color: "#aaa" }}>Auto-filled from live API</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    {isManualOverride && (
+                                        <button
+                                            type="button"
+                                            onClick={handleResetToLiveData}
+                                            style={{
+                                                background: "#FEF3C7",
+                                                border: "1px solid #F59E0B",
+                                                color: "#92400E",
+                                                borderRadius: 6,
+                                                padding: "3px 10px",
+                                                fontSize: 11,
+                                                fontWeight: 600,
+                                                cursor: "pointer",
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 4
+                                            }}
+                                        >
+                                            <RefreshCw size={11} /> Reset to live data
+                                        </button>
+                                    )}
+                                    <span style={{ fontSize: 11, color: isManualOverride ? "#b45309" : "#aaa" }}>
+                                        {isManualOverride ? "Custom values active" : "Auto-filled from live API"}
+                                    </span>
+                                </div>
                             </div>
                             <div className="bakwit-override-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
                                 {[
@@ -1193,47 +1458,38 @@ export default function Dashboard() {
                                             <Loader size={13} style={{ animation: "spin 1.5s linear infinite" }} /> Assessing...
                                         </>
                                     ) : (
-                                        <>
-                                            {maxRank === 0 && <><Search size={13} /> Assess</>}
-                                            {maxRank === 1 && "Assess - Watch Level"}
-                                            {maxRank === 2 && "Assess - Elevated"}
-                                            {maxRank === 3 && "Assess - Signal 1 Detected"}
-                                            {maxRank === 4 && "Assess - Signal 2–3"}
-                                            {maxRank === 5 && "URGENT - Assess Now"}
-                                        </>
+                                        <><Search size={13} /> Assess</>
                                     )}
                                 </button>
                             </div>
 
                             {assessError && (
-                                <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                                    <AlertTriangle size={14} /> {assessError}
+                                <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8 }}>
+                                    {Array.isArray(assessError) ? (
+                                        <ul style={{ margin: 0, padding: "0 0 0 16px" }}>
+                                            {assessError.map((msg, i) => (
+                                                <li key={i} style={{ marginBottom: 2 }}>{msg}</li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <AlertTriangle size={14} /> {assessError}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
 
                         {/* Evacuation routes + Recent history */}
                         <div className="bakwit-row3" style={styles.row3}>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                                <EvacRoutes evacuationCenter={result?.evacuation_center} severity={severity} selectedBarangay={selectedBarangay} />
-                                {selectedBarangay && (
-                                    <button
-                                        onClick={() => setShowMap(!showMap)}
-                                        style={{
-                                            marginTop: 8, minHeight: 44, padding: "10px 14px", background: "#1565c0", color: "white",
-                                            border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                                            display: "inline-flex", alignItems: "center", gap: 5, justifyContent: "center"
-                                        }}
-                                    >
-                                        <Map size={13} /> {showMap ? "Hide Map" : "View Live Evacuation Map"}
-                                    </button>
-                                )}
-                                {showMap && selectedBarangay && (
-                                    <div style={{ marginTop: 10 }}>
+                            {!isMobileScreen && (
+                                <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                                    <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
+                                    {selectedBarangay && (
                                         <MapView evacuationCenter={result?.evacuation_center} barangay={selectedBarangay} />
-                                    </div>
-                                )}
-                            </div>
+                                    )}
+                                </div>
+                            )}
                             <RecentHistory logs={recentLogs} />
                         </div>
 

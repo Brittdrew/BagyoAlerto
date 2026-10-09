@@ -7,3 +7,5 @@
 *.sw?
 .DS_Store
 Thumbs.db
+.env.bak
+backup/

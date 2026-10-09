@@ -14,6 +14,20 @@ class TyphoonLog extends Model
         'pressure',
         'temperature',
         'humidity',
-        'severity_level'
+        'severity_level',
+        'score',
+        'classification',
+        'ml_prediction',
+        'barangay_id',
+        'is_manual',
     ];
+
+    protected $casts = [
+        'is_manual' => 'boolean',
+    ];
+
+    public function barangay()
+    {
+        return $this->belongsTo(Barangay::class);
+    }
 }

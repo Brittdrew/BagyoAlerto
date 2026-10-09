@@ -16,7 +16,9 @@ Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);
 Route::get('/evacuation-centers/photo/{barangay_name}', [EvacuationCenterController::class, 'getPhotoByBarangay']);
 
-Route::post('/typhoon/assess', [TyphoonController::class, 'assess']);
+Route::get('/route', [\App\Http\Controllers\RouteController::class, 'show']);
+
+Route::middleware('throttle:20,1')->post('/typhoon/assess', [TyphoonController::class, 'assess']);
 
 Route::get('/recommendations', [RecommendationController::class, 'index']);
 Route::post('/recommendations', [RecommendationController::class, 'store']);

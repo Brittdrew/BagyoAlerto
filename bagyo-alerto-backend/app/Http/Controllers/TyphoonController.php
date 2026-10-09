@@ -14,13 +14,34 @@ class TyphoonController extends Controller
     public function assess(Request $request)
     {
         $request->validate([
-            'wind_speed'   => 'required|numeric',
-            'rainfall'     => 'required|numeric',
-            'pressure'     => 'required|numeric',
-            'temperature'  => 'nullable|numeric',
-            'humidity'     => 'nullable|numeric',
-            'barangay_id'  => 'required|integer'
+            'wind_speed'   => 'required|numeric|min:0|max:400',
+            'rainfall'     => 'required|numeric|min:0|max:300',
+            'pressure'     => 'required|numeric|min:850|max:1100',
+            'temperature'  => 'nullable|numeric|min:-10|max:50',
+            'humidity'     => 'nullable|numeric|min:0|max:100',
+            'barangay_id'  => 'required|integer|exists:barangays,id',
+        ], [
+            'wind_speed.min'    => 'Wind speed must be at least 0 km/h.',
+            'wind_speed.max'    => 'Wind speed cannot exceed 400 km/h.',
+            'rainfall.min'      => 'Rainfall must be at least 0 mm/hr.',
+            'rainfall.max'      => 'Rainfall cannot exceed 300 mm/hr.',
+            'pressure.min'      => 'Pressure must be at least 850 hPa.',
+            'pressure.max'      => 'Pressure cannot exceed 1100 hPa.',
+            'temperature.min'   => 'Temperature must be at least -10 °C.',
+            'temperature.max'   => 'Temperature cannot exceed 50 °C.',
+            'humidity.min'      => 'Humidity must be at least 0%.',
+            'humidity.max'      => 'Humidity cannot exceed 100%.',
+            'barangay_id.exists' => 'The selected barangay does not exist.',
         ]);
+
+        // ── Source field ──────────────────────────────────────────────────────
+        // Accept "auto" or "manual" only. Anything else (including absent) → "manual".
+        // Never return a validation error for this field.
+        $rawSource = $request->input('source', 'manual');
+        $source    = in_array($rawSource, ['auto', 'manual'], true) ? $rawSource : 'manual';
+        $isAuto    = $source === 'auto';
+
+        $isManual = (bool) $request->input('manual_override', false);
 
         $windSpeed   = $request->wind_speed;
         $rainfall    = $request->rainfall;
@@ -29,7 +50,7 @@ class TyphoonController extends Controller
         $humidity    = $request->humidity ?? 85;
 
         // Rule-Based Severity Scoring
-        list($severity, $score, $rank) = $this->calculateSeverity(
+        list($severity, $score, $rank, $factors) = $this->calculateSeverity(
             $windSpeed, $rainfall, $pressure, $temperature, $humidity
         );
 
@@ -58,23 +79,74 @@ class TyphoonController extends Controller
         // Check if rule-based and ML agree
         $agreement = $this->checkAgreement($classification, $mlPrediction);
 
-        // Log the typhoon data
-        $log = TyphoonLog::create([
-            'wind_speed'     => $windSpeed,
-            'rainfall'       => $rainfall,
-            'pressure'       => $pressure,
-            'temperature'    => $temperature,
-            'humidity'       => $humidity,
-            'severity_level' => $severity
-        ]);
+        // ── Log deduplication for auto-assess ────────────────────────────────
+        // For source="auto": find the most recent log for this barangay.
+        // If its severity_level already matches the newly computed severity, skip
+        // creating a new row and reuse the existing one.
+        // For source="manual": always create a new row (original behaviour).
+        $barangayId = $request->barangay_id;
+        $logWasCreated = false;
 
-        $barangay = Barangay::find($request->barangay_id);
+        if ($isAuto) {
+            $existingLog = TyphoonLog::where('barangay_id', $barangayId)
+                ->orderByDesc('logged_at')   // actual timestamp column in typhoon_logs
+                ->orderByDesc('id')
+                ->first();
+
+            if ($existingLog && $existingLog->severity_level === $severity) {
+                // Same severity as the latest row — skip the insert
+                $log = $existingLog;
+            } else {
+                // Severity changed (or no previous row) — create a new row
+                $log = TyphoonLog::create([
+                    'wind_speed'     => $windSpeed,
+                    'rainfall'       => $rainfall,
+                    'pressure'       => $pressure,
+                    'temperature'    => $temperature,
+                    'humidity'       => $humidity,
+                    'severity_level' => $severity,
+                    'score'          => $score,
+                    'classification' => $classification,
+                    'ml_prediction'  => $mlPrediction,
+                    'barangay_id'    => $barangayId,
+                    'is_manual'      => $isManual,
+                ]);
+                $logWasCreated = true;
+            }
+        } else {
+            // source="manual" — always log (original behaviour)
+            $log = TyphoonLog::create([
+                'wind_speed'     => $windSpeed,
+                'rainfall'       => $rainfall,
+                'pressure'       => $pressure,
+                'temperature'    => $temperature,
+                'humidity'       => $humidity,
+                'severity_level' => $severity,
+                'score'          => $score,
+                'classification' => $classification,
+                'ml_prediction'  => $mlPrediction,
+                'barangay_id'    => $barangayId,
+                'is_manual'      => $isManual,
+            ]);
+            $logWasCreated = true;
+        }
+
+        $barangay = Barangay::find($barangayId);
         $center   = null;
 
-        // Pick the nearest active evacuation center to the selected barangay
+        // Pick the nearest active evacuation center to the selected barangay.
+        // Use a single LEFT JOIN to count recommendations instead of withCount()
+        // (which fires one correlated subquery per row).
         if ($barangay) {
             $center = EvacuationCenter::where('is_active', true)
-                ->withCount('recommendations')
+                ->leftJoin(
+                    'recommendations',
+                    'evacuation_centers_list.id',
+                    '=',
+                    'recommendations.evacuation_center_id'
+                )
+                ->selectRaw('evacuation_centers_list.*, COUNT(recommendations.id) AS recommendations_count')
+                ->groupBy('evacuation_centers_list.id')
                 ->get()
                 ->map(function ($evacuationCenter) use ($barangay) {
                     $distance = $evacuationCenter->getDistanceTo(
@@ -88,10 +160,11 @@ class TyphoonController extends Controller
                 ->first();
         }
 
-        // Save recommendation
-        if ($center) {
+        // Save recommendation only for real (non-manual) assessments,
+        // and only when a new log row was actually created.
+        if ($center && !$isManual && $logWasCreated) {
             Recommendation::create([
-                'barangay_id'          => $request->barangay_id,
+                'barangay_id'          => $barangayId,
                 'evacuation_center_id' => $center->id,
                 'typhoon_log_id'       => $log->id
             ]);
@@ -108,6 +181,7 @@ class TyphoonController extends Controller
             'severity'          => $severity,
             'score'             => $score,
             'weather'           => $weatherData,
+            'factors'           => $factors,
             'classification'    => $classification,   // Rule-based signal label
             'ml_prediction'     => $mlPrediction,     // ML signal label
             'ml_explanation'    => $mlExplanation,
@@ -116,6 +190,7 @@ class TyphoonController extends Controller
             'evacuation_center' => $center
         ]);
     }
+
 
     /**
      * Rule-Based Severity Scoring
@@ -184,21 +259,17 @@ class TyphoonController extends Controller
 
         // --- Hard Wind Overrides (PAGASA official thresholds) ---
         // Wind speed can only RAISE the rank, never lower it.
-        // These match the exact same thresholds used in TyphoonMLService.
-        if ($wind_speed >= 221) {
+        // Aligned with official PAGASA TCWS brackets (39–61, 62–88, 89–117, 118–184, >=185)
+        if ($wind_speed >= 185) {
             $rank = max($rank, 7); // Signal 5
-        } elseif ($wind_speed >= 171) {
+        } elseif ($wind_speed >= 118) {
             $rank = max($rank, 6); // Signal 4
-        } elseif ($wind_speed >= 121) {
+        } elseif ($wind_speed >= 89) {
             $rank = max($rank, 5); // Signal 3
-        } elseif ($wind_speed >= 90) {
+        } elseif ($wind_speed >= 62) {
             $rank = max($rank, 4); // Signal 2
-        } elseif ($wind_speed >= 60) {
+        } elseif ($wind_speed >= 39) {
             $rank = max($rank, 3); // Signal 1
-        } elseif ($wind_speed >= 45) {
-            $rank = max($rank, 2); // Elevated
-        } elseif ($wind_speed >= 30) {
-            $rank = max($rank, 1); // Watch
         }
 
         // --- Rainfall Overrides ---
@@ -232,7 +303,15 @@ class TyphoonController extends Controller
             $severity = 'catastrophic';
         }
 
-        return [$severity, $score, $rank];
+        $factors = [
+            'wind'     => (int) round($windScore),
+            'pressure' => (int) round($pressureScore),
+            'rain'     => (int) round($rainScore),
+            'humidity' => (int) round($humidityScore),
+            'temp'     => (int) round($tempScore),
+        ];
+
+        return [$severity, $score, $rank, $factors];
     }
 
     /**
