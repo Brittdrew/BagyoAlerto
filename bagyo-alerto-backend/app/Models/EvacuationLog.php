@@ -16,14 +16,16 @@ class EvacuationLog extends Model
         'origin_barangay_id',
         'type',
         'headcount',
+        'source',
+        'device_id',
         'recorded_by',
     ];
 
     protected $casts = [
         'evacuation_center_id' => 'integer',
-        'origin_barangay_id' => 'integer',
-        'headcount' => 'integer',
-        'recorded_by' => 'integer',
+        'origin_barangay_id'   => 'integer',
+        'headcount'            => 'integer',
+        'recorded_by'          => 'integer',
     ];
 
     public function evacuationCenter()

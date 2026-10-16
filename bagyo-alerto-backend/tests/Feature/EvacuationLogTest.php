@@ -95,8 +95,15 @@ class EvacuationLogTest extends TestCase
                     $table->unsignedInteger('origin_barangay_id')->nullable();
                     $table->string('type', 20);
                     $table->unsignedInteger('headcount');
+                    $table->string('source', 20)->default('admin');
+                    $table->string('device_id', 255)->nullable();
                     $table->unsignedInteger('recorded_by')->nullable();
                     $table->timestamps();
+                });
+            } elseif (!Schema::hasColumn('evacuation_logs', 'source')) {
+                Schema::table('evacuation_logs', function ($table) {
+                    $table->string('source', 20)->default('admin');
+                    $table->string('device_id', 255)->nullable();
                 });
             }
         }

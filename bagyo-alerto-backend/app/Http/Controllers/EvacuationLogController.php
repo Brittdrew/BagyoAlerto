@@ -8,6 +8,7 @@ use App\Models\EvacuationLog;
 use App\Models\User;
 use App\Models\Admin;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 
 class EvacuationLogController extends Controller
@@ -64,10 +65,12 @@ class EvacuationLogController extends Controller
 
         $log = EvacuationLog::create([
             'evacuation_center_id' => $center->id,
-            'origin_barangay_id' => $validated['origin_barangay_id'] ?? null,
-            'type' => $validated['type'],
-            'headcount' => $validated['headcount'],
-            'recorded_by' => $recordedBy,
+            'origin_barangay_id'   => $validated['origin_barangay_id'] ?? null,
+            'type'                 => $validated['type'],
+            'headcount'            => $validated['headcount'],
+            'source'               => 'admin',
+            'device_id'            => null,
+            'recorded_by'          => $recordedBy,
         ]);
 
         // Keep current_occupancy column in sync
@@ -294,5 +297,94 @@ class EvacuationLogController extends Controller
             'address' => $center->address,
             'barangay_id' => (int) $center->barangay_id,
         ];
+    }
+
+    /**
+     * Public self-arrival endpoint — no auth required.
+     *
+     * POST /api/evacuation-centers/{centerId}/self-arrival
+     *
+     * Validates:
+     *   - Device must be within arrival_radius_meters of the center (422 if too far)
+     *   - Same device_id may not self-report at the same center within cooldown window (409)
+     *   - headcount 1-10, default 1
+     *   - Only creates arrivals, never departures
+     *
+     * Returns a slim occupancy payload (no personal data).
+     */
+    public function selfArrival(Request $request, $centerId)
+    {
+        $center = EvacuationCenter::find($centerId);
+        if (!$center) {
+            return response()->json(['message' => 'Evacuation center not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'device_id'          => 'required|string|max:255',
+            'latitude'           => 'required|numeric|between:-90,90',
+            'longitude'          => 'required|numeric|between:-180,180',
+            'headcount'          => 'sometimes|integer|min:1|max:10',
+            'origin_barangay_id' => 'nullable|integer|exists:barangays,id',
+        ]);
+
+        $headcount = $validated['headcount'] ?? 1;
+
+        // --- Distance check (Haversine) ---
+        // getDistanceTo() returns km; convert to metres for comparison.
+        $radiusMeters = (int) config('evacuation.arrival_radius_meters', 100);
+        $distanceMeters = $center->getDistanceTo(
+            (float) $validated['latitude'],
+            (float) $validated['longitude']
+        ) * 1000;
+
+        if ($distanceMeters > $radiusMeters) {
+            return response()->json([
+                'message'          => 'You are too far from this evacuation center to self-report.',
+                'distance_meters'  => round($distanceMeters, 1),
+                'radius_meters'    => $radiusMeters,
+            ], 422);
+        }
+
+        // --- Device cooldown check ---
+        $cooldownHours = (int) config('evacuation.self_arrival_cooldown_hours', 12);
+        $cutoff = Carbon::now()->subHours($cooldownHours);
+
+        $alreadyReported = EvacuationLog::where('evacuation_center_id', $center->id)
+            ->where('device_id', $validated['device_id'])
+            ->where('source', 'gps')
+            ->where('created_at', '>=', $cutoff)
+            ->exists();
+
+        if ($alreadyReported) {
+            return response()->json([
+                'message' => "This device has already self-reported at this center within the last {$cooldownHours} hours.",
+            ], 409);
+        }
+
+        // --- Create the arrival log ---
+        EvacuationLog::create([
+            'evacuation_center_id' => $center->id,
+            'origin_barangay_id'   => $validated['origin_barangay_id'] ?? null,
+            'type'                 => 'arrival',
+            'headcount'            => $headcount,
+            'source'               => 'gps',
+            'device_id'            => $validated['device_id'],
+            'recorded_by'          => null,
+        ]);
+
+        // Update the cached current_occupancy column
+        $newOccupancy = $this->getCurrentOccupancy($center->id);
+        $center->update(['current_occupancy' => max(0, $newOccupancy)]);
+
+        // --- Return slim occupancy payload ---
+        $occupancy = $this->computeCenterOccupancy($center->fresh());
+
+        return response()->json([
+            'message'    => 'Self-arrival recorded successfully.',
+            'current'    => $occupancy['current'],
+            'capacity'   => $occupancy['capacity'],
+            'free_space' => $occupancy['free_space'],
+            'status'     => $occupancy['status'],
+        ], 201);
     }
 }

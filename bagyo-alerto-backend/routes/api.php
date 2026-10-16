@@ -21,6 +21,12 @@ Route::get('/route', [\App\Http\Controllers\RouteController::class, 'show']);
 
 Route::middleware('throttle:20,1')->post('/typhoon/assess', [TyphoonController::class, 'assess']);
 
+// Public GPS self-arrival — no auth required, rate-limited to 10 requests per minute
+Route::middleware('throttle:10,1')->post(
+    '/evacuation-centers/{centerId}/self-arrival',
+    [EvacuationLogController::class, 'selfArrival']
+);
+
 Route::get('/recommendations', [RecommendationController::class, 'index']);
 Route::post('/recommendations', [RecommendationController::class, 'store']);
 Route::delete('/recommendations/{id}', [RecommendationController::class, 'destroy']);
