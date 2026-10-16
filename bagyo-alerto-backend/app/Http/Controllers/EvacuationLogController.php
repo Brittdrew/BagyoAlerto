@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Models\Admin;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class EvacuationLogController extends Controller
@@ -238,6 +239,80 @@ class EvacuationLogController extends Controller
             'arrivals_by_origin' => $arrivalsByOrigin,
             'arrivals_grouped_by_origin' => $arrivalsByOrigin,
         ]);
+    }
+
+    /**
+     * GET /api/evacuation-centers/overview
+     *
+     * Returns every evacuation center with aggregated occupancy data using
+     * only two DB queries (no per-center loop).
+     *
+     * Fields per row: id, name, barangay_id, barangay_name, current, capacity,
+     * free_space, status, over_capacity, over_by, latest_log_at.
+     *
+     * Numbers are identical to what /occupancy returns for each center.
+     */
+    public function overview(): \Illuminate\Http\JsonResponse
+    {
+        $threshold = (float) config('evacuation.almost_full_threshold', 70);
+
+        // ── Query 1: aggregate evacuation_logs per center ───────────────────
+        // One row per (evacuation_center_id, type) – pivot in PHP.
+        $logRows = DB::table('evacuation_logs')
+            ->selectRaw('evacuation_center_id, type, SUM(headcount) AS total')
+            ->groupBy('evacuation_center_id', 'type')
+            ->get()
+            ->groupBy('evacuation_center_id');
+
+        // ── Query 2: latest log timestamp per center ─────────────────────────
+        $latestLogs = DB::table('evacuation_logs')
+            ->selectRaw('evacuation_center_id, MAX(created_at) AS latest_log_at')
+            ->groupBy('evacuation_center_id')
+            ->pluck('latest_log_at', 'evacuation_center_id');
+
+        // ── Query 3: all centers with barangay name ──────────────────────────
+        $centers = EvacuationCenter::with('barangay:id,name')->orderBy('id')->get();
+
+        $result = $centers->map(function (EvacuationCenter $center) use ($logRows, $latestLogs, $threshold) {
+            $rows     = $logRows->get((string) $center->id, collect());
+            $arrivals = (int) ($rows->firstWhere('type', 'arrival')?->total ?? 0);
+            $departures = (int) ($rows->firstWhere('type', 'departure')?->total ?? 0);
+            $current  = max(0, $arrivals - $departures);
+            $capacity = (int) $center->capacity;
+            $freeSpace = max(0, $capacity - $current);
+
+            if ($capacity <= 0) {
+                $status = $current > 0 ? 'full' : 'available';
+            } else {
+                $pct = ($current / $capacity) * 100;
+                if ($current >= $capacity || $pct >= 100) {
+                    $status = 'full';
+                } elseif ($pct >= $threshold) {
+                    $status = 'almost_full';
+                } else {
+                    $status = 'available';
+                }
+            }
+
+            $overCapacity = $capacity > 0 && $current > $capacity;
+            $overBy       = $overCapacity ? ($current - $capacity) : 0;
+
+            return [
+                'id'             => (int) $center->id,
+                'name'           => $center->name,
+                'barangay_id'    => (int) $center->barangay_id,
+                'barangay_name'  => $center->barangay?->name ?? null,
+                'current'        => $current,
+                'capacity'       => $capacity,
+                'free_space'     => $freeSpace,
+                'status'         => $status,
+                'over_capacity'  => $overCapacity,
+                'over_by'        => $overBy,
+                'latest_log_at'  => $latestLogs->get($center->id),
+            ];
+        })->values();
+
+        return response()->json($result);
     }
 
     /**

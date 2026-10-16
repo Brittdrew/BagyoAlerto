@@ -4,12 +4,21 @@ namespace App\Http\Controllers;
 
 use App\Models\EvacuationCenter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class EvacuationCenterController extends Controller
 {
+    /** Cache key for the public evacuation center list. */
+    const CACHE_KEY = 'api.evacuation_centers.list';
+
+    /** GET /api/evacuation-centers — cached 60 s. */
     public function index()
     {
-        return response()->json(EvacuationCenter::with('barangay')->get());
+        $data = Cache::remember(self::CACHE_KEY, 60, function () {
+            return EvacuationCenter::with('barangay')->get()->toArray();
+        });
+
+        return response()->json($data);
     }
 
     public function show($id)

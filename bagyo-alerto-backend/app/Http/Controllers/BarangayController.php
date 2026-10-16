@@ -5,12 +5,21 @@ namespace App\Http\Controllers;
 use App\Models\Barangay;
 use App\Models\EvacuationCenter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class BarangayController extends Controller
 {
+    /** Cache key for the public barangay list. */
+    const CACHE_KEY = 'api.barangays.list';
+
+    /** GET /api/barangays — cached 60 s. */
     public function index()
     {
-        return response()->json(Barangay::all());
+        $data = Cache::remember(self::CACHE_KEY, 60, function () {
+            return Barangay::all()->toArray();
+        });
+
+        return response()->json($data);
     }
 
     public function show($id)

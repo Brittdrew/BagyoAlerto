@@ -18,6 +18,7 @@ import {
     ChevronDown,
     Building2,
     Smartphone,
+    LayoutList,
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
@@ -47,6 +48,10 @@ export default function AdminEvacuationMonitoring() {
     const [refreshing, setRefreshing] = useState(false)
     const [fetchError, setFetchError] = useState(null)
     const [lastUpdated, setLastUpdated] = useState(null)
+
+    // All-centers overview state
+    const [allOccupancies, setAllOccupancies] = useState([]) // { center, occupancy, latestLogTime }
+    const [overviewLoading, setOverviewLoading] = useState(false)
 
     // Form state
     const [logType, setLogType] = useState("arrival") // 'arrival' | 'departure'
@@ -190,6 +195,67 @@ export default function AdminEvacuationMonitoring() {
 
         return () => clearInterval(timer)
     }, [selectedCenterId, selectedBarangayId, fetchCenterData])
+
+    // ── All Centers Overview ──────────────────────────────────────────────────
+    const fetchAllOccupancies = useCallback(async (isInitial = false) => {
+        if (centers.length === 0) return
+        if (isInitial) setOverviewLoading(true)
+        try {
+            const results = await Promise.all(
+                centers.map((c) =>
+                    Promise.all([
+                        axios
+                            .get(`${API_BASE}/evacuation-centers/${c.id}/occupancy`, { headers: authHeaders() })
+                            .then((r) => r.data)
+                            .catch(() => null),
+                        axios
+                            .get(`${API_BASE}/evacuation-centers/${c.id}/logs`, { headers: authHeaders() })
+                            .then((r) => (r.data?.length > 0 ? r.data[0].created_at : null))
+                            .catch(() => null),
+                    ])
+                )
+            )
+            setAllOccupancies(
+                centers.map((c, i) => ({
+                    center: c,
+                    occupancy: results[i][0],
+                    latestLogTime: results[i][1],
+                }))
+            )
+        } catch (err) {
+            handleAuthError(err)
+        } finally {
+            if (isInitial) setOverviewLoading(false)
+        }
+    }, [centers, authHeaders, handleAuthError])
+
+    // Fetch overview whenever centers list is ready
+    useEffect(() => {
+        if (centers.length > 0) {
+            fetchAllOccupancies(true)
+        }
+    }, [centers]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Re-poll overview every 30 s
+    useEffect(() => {
+        if (centers.length === 0) return
+        const timer = setInterval(() => fetchAllOccupancies(false), 30000)
+        return () => clearInterval(timer)
+    }, [centers, fetchAllOccupancies])
+
+    // Handle clicking a row in the overview table
+    const handleOverviewRowClick = (item) => {
+        const bId = String(item.center.barangay_id)
+        const cId = String(item.center.id)
+        setSelectedBarangayId(bId)
+        setSelectedCenterId(cId)
+        setFormError(null)
+        setFormSuccess(null)
+        // Scroll down to detail panel
+        setTimeout(() => {
+            document.getElementById("em-detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })
+        }, 80)
+    }
 
     // Handle manual refresh button
     const handleManualRefresh = async () => {
@@ -358,6 +424,18 @@ export default function AdminEvacuationMonitoring() {
     // Override colors when over capacity (status is still 'full')
     const occupancyColor = isOverCapacity ? "#EF4444" : statusInfo.barColor
 
+    // Overview badge helpers
+    const getOverviewStatusInfo = (occ) => {
+        if (!occ) return { label: "No Data", bg: "#f1f5f9", color: "#64748b", border: "#cbd5e1" }
+        if (occ.over_capacity) return { label: "Over Capacity", bg: "#fcebeb", color: "#a32d2d", border: "#fca5a5" }
+        switch (occ.status) {
+            case "full":        return { label: "Full",        bg: "#fcebeb", color: "#a32d2d", border: "#fca5a5" }
+            case "almost_full": return { label: "Almost Full", bg: "#fef3c7", color: "#b45309", border: "#fcd34d" }
+            case "available":   return { label: "Available",   bg: "#e1f5ee", color: "#085041", border: "#6ee7b7" }
+            default:           return { label: "Available",   bg: "#e1f5ee", color: "#085041", border: "#6ee7b7" }
+        }
+    }
+
     return (
         <AdminLayout title="Evacuation Monitoring">
             {/* Top Toolbar / Filter Controls */}
@@ -440,6 +518,113 @@ export default function AdminEvacuationMonitoring() {
                 </div>
             </div>
 
+            {/* ── All Centers Overview ─────────────────────────────────── */}
+            <div style={styles.overviewCard}>
+                <div style={styles.overviewHeader}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <LayoutList size={16} style={{ color: "#1a237e" }} />
+                        <span style={styles.overviewTitle}>All Centers Overview</span>
+                        {allOccupancies.length > 0 && (
+                            <span style={styles.overviewCount}>{allOccupancies.length} centers</span>
+                        )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={styles.overviewHint}>Click a row to select that center ↓</span>
+                        {overviewLoading && <span style={styles.overviewLoading}>Loading…</span>}
+                    </div>
+                </div>
+
+                {allOccupancies.length === 0 && !overviewLoading && (
+                    <div style={styles.overviewEmpty}>No evacuation centers found.</div>
+                )}
+
+                {allOccupancies.length > 0 && (
+                    <div style={styles.overviewTableWrapper}>
+                        <table style={styles.overviewTable}>
+                            <thead>
+                                <tr>
+                                    <th style={styles.overviewTh}>Barangay</th>
+                                    <th style={styles.overviewTh}>Center Name</th>
+                                    <th style={{ ...styles.overviewTh, textAlign: "center" }}>Current / Capacity</th>
+                                    <th style={{ ...styles.overviewTh, textAlign: "center" }}>Status</th>
+                                    <th style={{ ...styles.overviewTh, textAlign: "right" }}>Latest Log</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allOccupancies.map((item) => {
+                                    const bName = barangays.find((b) => String(b.id) === String(item.center.barangay_id))?.name || "—"
+                                    const occ = item.occupancy
+                                    const current = occ ? Number(occ.current ?? 0) : 0
+                                    const capacity = occ ? Number(occ.capacity ?? item.center.capacity ?? 0) : Number(item.center.capacity ?? 0)
+                                    const pct = capacity > 0 ? Math.min(100, Math.round((current / capacity) * 100)) : (current > 0 ? 100 : 0)
+                                    const si = getOverviewStatusInfo(occ)
+                                    const isSelected = String(item.center.id) === String(selectedCenterId)
+                                    const latestLogFormatted = item.latestLogTime
+                                        ? new Date(item.latestLogTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                                        : "No logs yet"
+
+                                    return (
+                                        <tr
+                                            key={item.center.id}
+                                            onClick={() => handleOverviewRowClick(item)}
+                                            style={{
+                                                ...styles.overviewTr,
+                                                background: isSelected ? "#eef2ff" : undefined,
+                                                outline: isSelected ? "2px solid #4f46e5" : undefined,
+                                            }}
+                                            title={`Click to monitor ${item.center.name}`}
+                                        >
+                                            <td style={styles.overviewTd}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                                    <MapPin size={12} style={{ color: "#6366f1", flexShrink: 0 }} />
+                                                    <span style={{ fontWeight: 500, color: "#334155" }}>{bName}</span>
+                                                </div>
+                                            </td>
+                                            <td style={styles.overviewTd}>
+                                                <span style={{ fontWeight: 600, color: "#0f172a" }}>{item.center.name}</span>
+                                            </td>
+                                            <td style={{ ...styles.overviewTd, textAlign: "center" }}>
+                                                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                                                    <span style={{ fontWeight: 700, fontSize: 13, color: occ?.over_capacity ? "#EF4444" : "#1e293b" }}>
+                                                        {current.toLocaleString()}
+                                                        <span style={{ fontWeight: 400, color: "#94a3b8", fontSize: 12 }}> / {capacity.toLocaleString()}</span>
+                                                    </span>
+                                                    <div style={styles.overviewBarTrack}>
+                                                        <div style={{
+                                                            ...styles.overviewBarFill,
+                                                            width: `${pct}%`,
+                                                            backgroundColor: occ?.over_capacity ? "#EF4444" : si.color === "#085041" ? "#10B981" : si.color === "#b45309" ? "#F59E0B" : "#EF4444",
+                                                        }} />
+                                                    </div>
+                                                    <span style={{ fontSize: 10, color: "#94a3b8" }}>{pct}%</span>
+                                                </div>
+                                            </td>
+                                            <td style={{ ...styles.overviewTd, textAlign: "center" }}>
+                                                <span style={{
+                                                    ...styles.overviewBadge,
+                                                    background: si.bg,
+                                                    color: si.color,
+                                                    border: `1px solid ${si.border}`,
+                                                }}>
+                                                    {occ?.over_capacity ? `Over (+${Number(occ.over_by ?? 0)})` : si.label}
+                                                </span>
+                                            </td>
+                                            <td style={{ ...styles.overviewTd, textAlign: "right" }}>
+                                                <span style={{ fontSize: 12, color: "#64748b" }}>
+                                                    <Clock size={11} style={{ display: "inline", marginRight: 3, verticalAlign: "middle" }} />
+                                                    {latestLogFormatted}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+            {/* ── End All Centers Overview ───────────────────────────────── */}
+
             {fetchError && (
                 <div style={styles.alertError}>
                     <AlertCircle size={16} />
@@ -459,6 +644,7 @@ export default function AdminEvacuationMonitoring() {
             )}
 
             {selectedCenterId && (
+            <div id="em-detail-panel">
                 <div style={styles.mainGrid}>
                     {/* LEFT COLUMN: Occupancy Card & Record Headcount Form */}
                     <div style={styles.leftCol}>
@@ -827,12 +1013,113 @@ export default function AdminEvacuationMonitoring() {
                         </div>
                     </div>
                 </div>
+            </div>
             )}
         </AdminLayout>
     )
 }
 
 const styles = {
+    overviewCard: {
+        background: "#fff",
+        borderRadius: 12,
+        border: "1px solid #e2e8f0",
+        padding: "18px 20px",
+        marginBottom: 20,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+    },
+    overviewHeader: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 14,
+        flexWrap: "wrap",
+        gap: 8,
+    },
+    overviewTitle: {
+        fontSize: 14,
+        fontWeight: 700,
+        color: "#1a237e",
+        letterSpacing: 0.1,
+    },
+    overviewCount: {
+        fontSize: 11,
+        fontWeight: 600,
+        color: "#64748b",
+        background: "#f1f5f9",
+        padding: "2px 8px",
+        borderRadius: 12,
+    },
+    overviewHint: {
+        fontSize: 11,
+        color: "#94a3b8",
+        fontStyle: "italic",
+    },
+    overviewLoading: {
+        fontSize: 11,
+        color: "#4f46e5",
+        fontWeight: 600,
+        background: "#eef2ff",
+        padding: "2px 8px",
+        borderRadius: 10,
+    },
+    overviewEmpty: {
+        padding: "24px 0",
+        textAlign: "center",
+        color: "#94a3b8",
+        fontSize: 13,
+    },
+    overviewTableWrapper: {
+        overflowX: "auto",
+    },
+    overviewTable: {
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: 13,
+    },
+    overviewTh: {
+        padding: "8px 12px",
+        textAlign: "left",
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: 0.5,
+        color: "#64748b",
+        borderBottom: "2px solid #f1f5f9",
+        whiteSpace: "nowrap",
+    },
+    overviewTr: {
+        cursor: "pointer",
+        transition: "background 0.12s ease",
+        borderRadius: 6,
+    },
+    overviewTd: {
+        padding: "10px 12px",
+        borderBottom: "1px solid #f8fafc",
+        verticalAlign: "middle",
+    },
+    overviewBarTrack: {
+        width: 80,
+        height: 5,
+        background: "#e2e8f0",
+        borderRadius: 4,
+        overflow: "hidden",
+    },
+    overviewBarFill: {
+        height: "100%",
+        borderRadius: 4,
+        transition: "width 0.4s ease",
+    },
+    overviewBadge: {
+        display: "inline-block",
+        padding: "3px 9px",
+        borderRadius: 20,
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        whiteSpace: "nowrap",
+    },
     topBar: {
         display: "flex",
         flexWrap: "wrap",

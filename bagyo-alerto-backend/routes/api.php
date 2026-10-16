@@ -9,19 +9,25 @@ use App\Http\Controllers\AdminController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\EvacuationLogController;
 
+// ── Public list endpoints (responses cached 60 s inside controllers) ────────
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
 Route::get('/barangays/{id}/evacuation-target', [BarangayController::class, 'evacuationTarget']);
 
+// IMPORTANT: literal-segment routes MUST come before wildcard /{id} routes.
+// /evacuation-centers/overview  — auth required, registered first so "overview"
+//   is never captured as a numeric id.
+// /evacuation-centers/photo/{x} — public, same reason.
+Route::middleware('auth:sanctum')->get('/evacuation-centers/overview', [EvacuationLogController::class, 'overview']);
+Route::get('/evacuation-centers/photo/{barangay_name}', [EvacuationCenterController::class, 'getPhotoByBarangay']);
 Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);
-Route::get('/evacuation-centers/photo/{barangay_name}', [EvacuationCenterController::class, 'getPhotoByBarangay']);
 
 Route::get('/route', [\App\Http\Controllers\RouteController::class, 'show']);
 
 Route::middleware('throttle:20,1')->post('/typhoon/assess', [TyphoonController::class, 'assess']);
 
-// Public GPS self-arrival — no auth required, rate-limited to 10 requests per minute
+// Public GPS self-arrival — no auth required, rate-limited to 10 req/min
 Route::middleware('throttle:10,1')->post(
     '/evacuation-centers/{centerId}/self-arrival',
     [EvacuationLogController::class, 'selfArrival']
@@ -38,10 +44,11 @@ Route::get('/chat/history/{barangay}', [ChatController::class, 'historyByBaranga
 Route::delete('/chat/history/{id}', [ChatController::class, 'deleteLog']);
 Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
 
-// Admin authentication
+// Admin authentication (no auth middleware)
 Route::post('/admin/login', [AdminController::class, 'login']);
 Route::get('/admin/stats/stream', [AdminController::class, 'statsStream']);
 
+// ── Admin routes (auth:sanctum + /admin prefix) ─────────────────────────────
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/logout', [AdminController::class, 'logout']);
     Route::get('/me', [AdminController::class, 'me']);
@@ -72,7 +79,7 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::get('/barangays/{id}/evacuees', [EvacuationLogController::class, 'barangayEvacuees']);
 });
 
-// Evacuation Center Occupancy Tracking routes (all under auth:sanctum)
+// ── Non-prefixed auth:sanctum evacuation routes ──────────────────────────────
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'store']);
     Route::get('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'index']);
