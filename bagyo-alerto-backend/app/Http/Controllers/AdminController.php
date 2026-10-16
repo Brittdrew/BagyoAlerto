@@ -181,11 +181,11 @@ class AdminController extends Controller
         $scalars = DB::selectOne('
             SELECT
                 (SELECT COALESCE(SUM(capacity),0) FROM evacuation_centers_list WHERE is_active = 1) AS total_capacity,
-                (SELECT COUNT(*) FROM barangays)                                                      AS total_barangays,
-                (SELECT COUNT(*) FROM evacuation_centers_list WHERE is_active = 1)                    AS total_evacuation_centers,
+                (SELECT COUNT(*) FROM barangays)                                                     AS total_barangays,
+                (SELECT COUNT(*) FROM evacuation_centers_list WHERE is_active = 1)                  AS total_evacuation_centers,
                 (SELECT COUNT(*) FROM recommendations r
                  JOIN typhoon_logs tl ON tl.id = r.typhoon_log_id
-                 WHERE tl.is_manual = 0)                                                              AS total_recommendations
+                 WHERE tl.is_manual = FALSE)                                                         AS total_recommendations
         ');
 
         return [
