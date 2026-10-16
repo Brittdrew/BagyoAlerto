@@ -128,7 +128,7 @@ function formatWalkTime(minutes) {
     return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
 }
 
-export default function MapView({ evacuationCenter: initialCenter, barangay }) {
+export default function MapView({ evacuationCenter: initialCenter, barangay, onRoutingChange }) {
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
     const [target, setTarget] = useState(initialCenter || null)
@@ -234,6 +234,12 @@ export default function MapView({ evacuationCenter: initialCenter, barangay }) {
         setLastUpdated(Date.now())
         setSecondsAgo(0)
     }, [routeCoords, position, target])
+
+    // Notify parent when a drawn route appears or disappears
+    const routeActive = routeCoords.length > 1
+    useEffect(() => {
+        onRoutingChange?.(routeActive)
+    }, [routeActive, onRoutingChange])
 
     useEffect(() => {
         const timer = setInterval(() => {

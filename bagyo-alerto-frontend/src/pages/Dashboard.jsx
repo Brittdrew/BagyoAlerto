@@ -6,6 +6,7 @@ import MapView from "../components/MapView"
 
 import Sidebar from "../components/Sidebar"
 import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
+import SelfArrivalController from "../components/SelfArrivalController"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
@@ -572,6 +573,8 @@ export default function Dashboard() {
     const [recentLogs, setRecentLogs] = useState([])
     const [confirmModalOpen, setConfirmModalOpen] = useState(false)
     const [isMobileScreen, setIsMobileScreen] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= 768 : false))
+    // True while MapView has a drawn GPS route to the evacuation center
+    const [routingActive, setRoutingActive] = useState(false)
 
     useEffect(() => {
         const handleResize = () => setIsMobileScreen(window.innerWidth <= 768)
@@ -1174,6 +1177,12 @@ export default function Dashboard() {
                             severity={activeSeverity}
                         />
 
+                        {/* Self-arrival GPS controller — runs independently of severity */}
+                        <SelfArrivalController
+                            barangayId={formData.barangay_id}
+                            routingActive={routingActive}
+                        />
+
                         {/* Conditions unavailable notice (weather or assess error) */}
                         {isConditionsError && (
                             <div style={{
@@ -1246,7 +1255,11 @@ export default function Dashboard() {
                         {isMobileScreen && selectedBarangay && (
                             <div className="bakwit-mobile-evac-early" id="evacuation-map-section-mobile">
                                 <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
-                                <MapView evacuationCenter={result?.evacuation_center} barangay={selectedBarangay} />
+                                <MapView
+                                    evacuationCenter={result?.evacuation_center}
+                                    barangay={selectedBarangay}
+                                    onRoutingChange={setRoutingActive}
+                                />
                             </div>
                         )}
 
@@ -1557,7 +1570,11 @@ export default function Dashboard() {
                                 <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                                     <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
                                     {selectedBarangay && (
-                                        <MapView evacuationCenter={result?.evacuation_center} barangay={selectedBarangay} />
+                                    <MapView
+                                        evacuationCenter={result?.evacuation_center}
+                                        barangay={selectedBarangay}
+                                        onRoutingChange={setRoutingActive}
+                                    />
                                     )}
                                 </div>
                             )}

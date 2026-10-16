@@ -17,6 +17,7 @@ import {
     ShieldAlert,
     ChevronDown,
     Building2,
+    Smartphone,
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
@@ -724,6 +725,27 @@ export default function AdminEvacuationMonitoring() {
                                                     >
                                                         {isArrival ? "+ Arrival" : "- Departure"}
                                                     </span>
+                                                    {log.source === "gps" && (
+                                                        <span
+                                                            title="Submitted via the resident app (GPS self-arrival)"
+                                                            style={{
+                                                                display: "inline-flex",
+                                                                alignItems: "center",
+                                                                gap: 3,
+                                                                fontSize: 10,
+                                                                fontWeight: 700,
+                                                                color: "#4f46e5",
+                                                                background: "#eef2ff",
+                                                                border: "1px solid #c7d2fe",
+                                                                borderRadius: 10,
+                                                                padding: "2px 6px",
+                                                                width: "fit-content",
+                                                            }}
+                                                        >
+                                                            <Smartphone size={9} />
+                                                            via app
+                                                        </span>
+                                                    )}
                                                     <span style={styles.headcountBadge}>
                                                         {log.headcount} evacuee{log.headcount !== 1 ? "s" : ""}
                                                     </span>

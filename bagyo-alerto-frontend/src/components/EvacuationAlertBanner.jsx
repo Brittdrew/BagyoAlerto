@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { AlertTriangle, MapPin, Route, Navigation } from "lucide-react"
+import { AlertTriangle, MapPin, Route } from "lucide-react"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 import { useLiveLocation } from "../hooks/useLiveLocation"
 
