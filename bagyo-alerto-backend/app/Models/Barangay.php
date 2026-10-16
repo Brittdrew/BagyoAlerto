@@ -27,4 +27,9 @@ class Barangay extends Model
     {
         return $this->hasMany(Recommendation::class);
     }
+
+    public function evacuationLogs()
+    {
+        return $this->hasMany(EvacuationLog::class, 'origin_barangay_id');
+    }
 }

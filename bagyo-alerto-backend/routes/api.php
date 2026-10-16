@@ -7,6 +7,7 @@ use App\Http\Controllers\TyphoonController;
 use App\Http\Controllers\RecommendationController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\EvacuationLogController;
 
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
@@ -53,4 +54,28 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::delete('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersDestroy']);
     Route::post('/evacuation-centers/photo', [AdminController::class, 'uploadEvacuationCenterPhoto']);
     Route::delete('/evacuation-centers/photo/{barangay_name}', [AdminController::class, 'deleteEvacuationCenterPhoto']);
+
+    // Admin evacuation log and occupancy routes
+    Route::post('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'store']);
+    Route::get('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'index']);
+    Route::get('/evacuation-centers/{id}/occupancy', [EvacuationLogController::class, 'occupancy']);
+    Route::delete('/evacuation-centers/{centerId}/logs/{id?}', [EvacuationLogController::class, 'destroy']);
+    Route::post('/evacuation-logs', [EvacuationLogController::class, 'store']);
+    Route::get('/evacuation-logs', [EvacuationLogController::class, 'index']);
+    Route::delete('/evacuation-logs/{id}', [EvacuationLogController::class, 'destroy']);
+    Route::get('/barangays/{id}/evacuees', [EvacuationLogController::class, 'barangayEvacuees']);
+});
+
+// Evacuation Center Occupancy Tracking routes (all under auth:sanctum)
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'store']);
+    Route::get('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'index']);
+    Route::get('/evacuation-centers/{id}/occupancy', [EvacuationLogController::class, 'occupancy']);
+    Route::delete('/evacuation-centers/{centerId}/logs/{id?}', [EvacuationLogController::class, 'destroy']);
+
+    Route::post('/evacuation-logs', [EvacuationLogController::class, 'store']);
+    Route::get('/evacuation-logs', [EvacuationLogController::class, 'index']);
+    Route::delete('/evacuation-logs/{id}', [EvacuationLogController::class, 'destroy']);
+
+    Route::get('/barangays/{id}/evacuees', [EvacuationLogController::class, 'barangayEvacuees']);
 });

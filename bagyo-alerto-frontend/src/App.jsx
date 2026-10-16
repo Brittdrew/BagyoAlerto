@@ -8,6 +8,7 @@ import AdminLogin from './pages/admin/AdminLogin'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminBarangays from './pages/admin/AdminBarangays'
 import AdminEvacuationCenters from './pages/admin/AdminEvacuationCenters'
+import AdminEvacuationMonitoring from './pages/admin/AdminEvacuationMonitoring'
 import AdminHistory from './pages/admin/AdminHistory'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminWeather from './pages/admin/AdminWeather'
@@ -39,6 +40,9 @@ function App() {
           } />
           <Route path="/admin/evacuation-centers" element={
             <AdminProtectedRoute><AdminEvacuationCenters /></AdminProtectedRoute>
+          } />
+          <Route path="/admin/evacuation-monitoring" element={
+            <AdminProtectedRoute><AdminEvacuationMonitoring /></AdminProtectedRoute>
           } />
           <Route path="/admin/chat" element={
             <AdminProtectedRoute><AdminChat /></AdminProtectedRoute>

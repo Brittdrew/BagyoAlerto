@@ -14,6 +14,7 @@ const emptyForm = {
     latitude: "",
     longitude: "",
     capacity: "",
+    current_occupancy: "0",
     is_active: "1",
 }
 
@@ -190,6 +191,7 @@ export default function AdminEvacuationCenters() {
             latitude: String(c.latitude),
             longitude: String(c.longitude),
             capacity: String(c.capacity),
+            current_occupancy: String(c.current_occupancy ?? 0),
             is_active: c.is_active ? "1" : "0",
         })
         setModalOpen(true)
@@ -392,6 +394,7 @@ export default function AdminEvacuationCenters() {
                                 <th style={styles.th}>Barangay</th>
                                 <th style={styles.th}>Address</th>
                                 <th style={styles.th}>Capacity</th>
+                                <th style={styles.th}>Occupancy</th>
                                 <th style={styles.th}>Status</th>
                                 <th style={styles.th}>Actions</th>
                             </tr>
@@ -403,6 +406,14 @@ export default function AdminEvacuationCenters() {
                                     <td style={styles.td}>{c.barangay?.name || "—"}</td>
                                     <td style={styles.td}>{c.address}</td>
                                     <td style={styles.td}>{c.capacity?.toLocaleString()}</td>
+                                    <td style={styles.td}>
+                                        <span style={{ fontWeight: 600, color: (c.current_occupancy >= c.capacity) ? "#a32d2d" : (c.current_occupancy / c.capacity >= 0.7) ? "#b45309" : "#085041" }}>
+                                            {c.current_occupancy ?? 0}
+                                        </span>
+                                        <span style={{ fontSize: 11, color: "#888", marginLeft: 4 }}>
+                                            ({Math.round(((c.current_occupancy ?? 0) / (c.capacity || 1)) * 100)}%)
+                                        </span>
+                                    </td>
                                     <td style={styles.td}>
                                         <span style={{
                                             ...styles.badge,
@@ -473,6 +484,23 @@ export default function AdminEvacuationCenters() {
                                     </select>
                                 </div>
                             </div>
+                            {editingId && (
+                                <div style={styles.field}>
+                                    <label style={styles.label}>
+                                        Current Occupancy <span style={{ fontWeight: 400, color: "#888" }}>(read-only — tracked via Evacuation Monitoring)</span>
+                                    </label>
+                                    <input
+                                        style={{ ...styles.input, background: "#f5f7fa", color: "#666", cursor: "not-allowed" }}
+                                        type="number"
+                                        value={form.current_occupancy ?? 0}
+                                        readOnly
+                                        disabled
+                                    />
+                                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+                                        Occupancy is computed from arrival &amp; departure logs in Evacuation Monitoring.
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <div style={styles.modalFooter}>
                             <div onClick={closeModal} style={styles.cancelBtn}>Cancel</div>

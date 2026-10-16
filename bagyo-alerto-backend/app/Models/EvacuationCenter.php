@@ -38,6 +38,16 @@ class EvacuationCenter extends Model
         return $this->hasMany(Recommendation::class);
     }
 
+    public function evacuationLogs()
+    {
+        return $this->hasMany(EvacuationLog::class, 'evacuation_center_id');
+    }
+
+    public function logs()
+    {
+        return $this->hasMany(EvacuationLog::class, 'evacuation_center_id');
+    }
+
     /**
      * Calculate the distance in kilometers to a given latitude and longitude using the Haversine formula.
      */
