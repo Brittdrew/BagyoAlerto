@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
-use Laravel\Sanctum\PersonalAccessToken;
 
 class AdminController extends Controller
 {
@@ -88,47 +87,7 @@ class AdminController extends Controller
         return response()->json($this->buildStats());
     }
 
-    public function statsStream(Request $request)
-    {
-        $token = $request->query('token');
-        if (!$token) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
 
-        $accessToken = PersonalAccessToken::findToken($token);
-        if (!$accessToken || !($accessToken->tokenable instanceof Admin)) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-
-        return response()->stream(function () {
-            set_time_limit(0);
-            ignore_user_abort(true);
-
-            $previousPayload = null;
-
-            while (!connection_aborted()) {
-                $stats   = $this->buildStats();
-                $payload = json_encode($stats);
-
-                if ($payload !== $previousPayload) {
-                    echo "data: {$payload}\n\n";
-                    ob_flush();
-                    flush();
-                    $previousPayload = $payload;
-                } else {
-                    echo ": keep-alive\n\n";
-                    ob_flush();
-                    flush();
-                }
-
-                sleep(2);
-            }
-        }, 200, [
-            'Content-Type'  => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
-            'Connection'    => 'keep-alive',
-        ]);
-    }
 
     /**
      * Build dashboard stats.

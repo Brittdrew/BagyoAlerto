@@ -22,17 +22,27 @@ import {
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
+import { useAdminLists } from "../../context/AdminListsContext"
+import { useAdminPolling } from "../../hooks/useAdminPolling"
 
 const API_BASE = import.meta.env.VITE_API_BASE
+const OVERVIEW_TIMEOUT_MS = 10_000
 
 export default function AdminEvacuationMonitoring() {
     const { authHeaders, logout } = useAdminAuth()
     const navigate = useNavigate()
 
-    // Master data
-    const [barangays, setBarangays] = useState([])
-    const [centers, setCenters] = useState([])
-    const [loadingInitial, setLoadingInitial] = useState(true)
+    // Shared master lists — loaded once, not fetched again unless admin mutates
+    const {
+        barangays,
+        centers,
+        barangaysLoading,
+        centersLoading,
+        loadBarangays,
+        loadCenters,
+    } = useAdminLists()
+
+    const loadingInitial = barangaysLoading || centersLoading
 
     // Selection
     const [selectedBarangayId, setSelectedBarangayId] = useState("")
@@ -49,12 +59,13 @@ export default function AdminEvacuationMonitoring() {
     const [fetchError, setFetchError] = useState(null)
     const [lastUpdated, setLastUpdated] = useState(null)
 
-    // All-centers overview state
-    const [allOccupancies, setAllOccupancies] = useState([]) // { center, occupancy, latestLogTime }
-    const [overviewLoading, setOverviewLoading] = useState(false)
+    // Overview state
+    const [overviewRows, setOverviewRows] = useState([])       // raw rows from /overview
+    const [overviewLoading, setOverviewLoading] = useState(true) // true only on first load
+    const [overviewError, setOverviewError] = useState(null)
 
     // Form state
-    const [logType, setLogType] = useState("arrival") // 'arrival' | 'departure'
+    const [logType, setLogType] = useState("arrival")
     const [headcount, setHeadcount] = useState("1")
     const [originBarangayId, setOriginBarangayId] = useState("")
     const [submitting, setSubmitting] = useState(false)
@@ -74,44 +85,24 @@ export default function AdminEvacuationMonitoring() {
         return false
     }, [logout, navigate])
 
-    // Fetch initial master lists (barangays and evacuation centers)
+    // Load shared lists once on mount (no-op if already loaded by another page)
     useEffect(() => {
-        const fetchMasterData = async () => {
-            setLoadingInitial(true)
-            setFetchError(null)
-            try {
-                const [bRes, cRes] = await Promise.all([
-                    axios.get(`${API_BASE}/barangays`, { headers: authHeaders() }),
-                    axios.get(`${API_BASE}/evacuation-centers`, { headers: authHeaders() }),
-                ])
+        loadBarangays()
+        loadCenters()
+    }, [loadBarangays, loadCenters])
 
-                const bList = bRes.data || []
-                const cList = cRes.data || []
+    // Set default selection when lists arrive
+    useEffect(() => {
+        if (barangays.length > 0 && !selectedBarangayId) {
+            const firstBId = String(barangays[0].id)
+            setSelectedBarangayId(firstBId)
 
-                setBarangays(bList)
-                setCenters(cList)
-
-                if (bList.length > 0) {
-                    const firstBId = String(bList[0].id)
-                    setSelectedBarangayId(firstBId)
-
-                    // Find first center for this barangay
-                    const matchingCenters = cList.filter((c) => String(c.barangay_id) === firstBId)
-                    if (matchingCenters.length > 0) {
-                        setSelectedCenterId(String(matchingCenters[0].id))
-                    }
-                }
-            } catch (err) {
-                if (!handleAuthError(err)) {
-                    setFetchError("Failed to load initial barangay and evacuation center data.")
-                }
-            } finally {
-                setLoadingInitial(false)
+            if (centers.length > 0) {
+                const match = centers.find((c) => String(c.barangay_id) === firstBId)
+                if (match) setSelectedCenterId(String(match.id))
             }
         }
-
-        fetchMasterData()
-    }, [authHeaders, handleAuthError])
+    }, [barangays, centers]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // Centers filtered by selected barangay
     const filteredCenters = centers.filter(
@@ -131,7 +122,60 @@ export default function AdminEvacuationMonitoring() {
         }
     }, [currentCenter, selectedBarangayId])
 
-    // Fetch detailed center occupancy and logs
+    // ── Overview via single /overview endpoint ────────────────────────────────
+    const hasFirstOverview = useRef(false)
+
+    const fetchOverview = useCallback(async () => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), OVERVIEW_TIMEOUT_MS)
+        try {
+            const res = await axios.get(`${API_BASE}/evacuation-centers/overview`, {
+                headers: authHeaders(),
+                signal: controller.signal,
+            })
+            setOverviewRows(res.data || [])
+            setOverviewError(null)
+        } catch (err) {
+            if (axios.isCancel(err) || err.name === "CanceledError" || err.code === "ERR_CANCELED") {
+                setOverviewError("Request timed out. Check your connection and retry.")
+            } else if (!handleAuthError(err)) {
+                setOverviewError(err.response?.data?.message || "Failed to load overview.")
+            }
+        } finally {
+            clearTimeout(timeoutId)
+            if (!hasFirstOverview.current) {
+                hasFirstOverview.current = true
+                setOverviewLoading(false)
+            }
+        }
+    }, [authHeaders, handleAuthError])
+
+    // Poll overview every 30 s
+    useAdminPolling(fetchOverview, 30_000)
+
+    // Shape overview rows for the table — merge barangay_name from the response
+    // (backend already embeds it) so no barangays lookup needed
+    const allOccupancies = overviewRows.map((row) => ({
+        center: {
+            id: row.id,
+            name: row.name,
+            barangay_id: row.barangay_id,
+            capacity: row.capacity,
+        },
+        // Mimic the old occupancy shape so the existing JSX works unchanged
+        occupancy: {
+            current: row.current,
+            capacity: row.capacity,
+            free_space: row.free_space,
+            status: row.status,
+            over_capacity: row.over_capacity,
+            over_by: row.over_by,
+        },
+        latestLogTime: row.latest_log_at,
+        barangay_name: row.barangay_name,
+    }))
+
+    // ── Selected-center detail: occupancy + logs + evacuees ──────────────────
     const fetchCenterData = useCallback(async (centerId, barangayId, isSilent = false) => {
         if (!centerId) return
 
@@ -175,7 +219,6 @@ export default function AdminEvacuationMonitoring() {
         } else {
             setOccupancy(null)
             setLogs([])
-            // Still fetch evacuees for the barangay if barangay selected
             if (selectedBarangayId) {
                 axios
                     .get(`${API_BASE}/barangays/${selectedBarangayId}/evacuees`, { headers: authHeaders() })
@@ -185,63 +228,15 @@ export default function AdminEvacuationMonitoring() {
         }
     }, [selectedCenterId, selectedBarangayId, fetchCenterData, authHeaders, handleAuthError])
 
-    // 30-second polling interval
-    useEffect(() => {
-        if (!selectedCenterId) return
-
-        const timer = setInterval(() => {
-            fetchCenterData(selectedCenterId, selectedBarangayId, true)
-        }, 30000)
-
-        return () => clearInterval(timer)
+    // Stable poll function for selected-center data
+    const pollCenterData = useCallback(async () => {
+        if (selectedCenterId) {
+            await fetchCenterData(selectedCenterId, selectedBarangayId, true)
+        }
     }, [selectedCenterId, selectedBarangayId, fetchCenterData])
 
-    // ── All Centers Overview ──────────────────────────────────────────────────
-    const fetchAllOccupancies = useCallback(async (isInitial = false) => {
-        if (centers.length === 0) return
-        if (isInitial) setOverviewLoading(true)
-        try {
-            const results = await Promise.all(
-                centers.map((c) =>
-                    Promise.all([
-                        axios
-                            .get(`${API_BASE}/evacuation-centers/${c.id}/occupancy`, { headers: authHeaders() })
-                            .then((r) => r.data)
-                            .catch(() => null),
-                        axios
-                            .get(`${API_BASE}/evacuation-centers/${c.id}/logs`, { headers: authHeaders() })
-                            .then((r) => (r.data?.length > 0 ? r.data[0].created_at : null))
-                            .catch(() => null),
-                    ])
-                )
-            )
-            setAllOccupancies(
-                centers.map((c, i) => ({
-                    center: c,
-                    occupancy: results[i][0],
-                    latestLogTime: results[i][1],
-                }))
-            )
-        } catch (err) {
-            handleAuthError(err)
-        } finally {
-            if (isInitial) setOverviewLoading(false)
-        }
-    }, [centers, authHeaders, handleAuthError])
-
-    // Fetch overview whenever centers list is ready
-    useEffect(() => {
-        if (centers.length > 0) {
-            fetchAllOccupancies(true)
-        }
-    }, [centers]) // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Re-poll overview every 30 s
-    useEffect(() => {
-        if (centers.length === 0) return
-        const timer = setInterval(() => fetchAllOccupancies(false), 30000)
-        return () => clearInterval(timer)
-    }, [centers, fetchAllOccupancies])
+    // Poll selected-center data every 30 s (only when a center is selected)
+    useAdminPolling(pollCenterData, 30_000, !!selectedCenterId)
 
     // Handle clicking a row in the overview table
     const handleOverviewRowClick = (item) => {
@@ -534,7 +529,19 @@ export default function AdminEvacuationMonitoring() {
                     </div>
                 </div>
 
-                {allOccupancies.length === 0 && !overviewLoading && (
+                {overviewError && !overviewLoading && (
+                    <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, color: "#a32d2d", background: "#fcebeb", borderRadius: 8, margin: "4px 0 8px" }}>
+                        <AlertCircle size={15} />
+                        <span style={{ flex: 1, fontSize: 13 }}>{overviewError}</span>
+                        <button
+                            type="button"
+                            onClick={fetchOverview}
+                            style={{ fontSize: 12, padding: "4px 12px", borderRadius: 6, border: "1px solid #fca5a5", background: "#fff", color: "#a32d2d", cursor: "pointer", fontWeight: 600 }}
+                        >Retry</button>
+                    </div>
+                )}
+
+                {allOccupancies.length === 0 && !overviewLoading && !overviewError && (
                     <div style={styles.overviewEmpty}>No evacuation centers found.</div>
                 )}
 
@@ -552,7 +559,7 @@ export default function AdminEvacuationMonitoring() {
                             </thead>
                             <tbody>
                                 {allOccupancies.map((item) => {
-                                    const bName = barangays.find((b) => String(b.id) === String(item.center.barangay_id))?.name || "—"
+                                    const bName = item.barangay_name || "—"
                                     const occ = item.occupancy
                                     const current = occ ? Number(occ.current ?? 0) : 0
                                     const capacity = occ ? Number(occ.capacity ?? item.center.capacity ?? 0) : Number(item.center.capacity ?? 0)

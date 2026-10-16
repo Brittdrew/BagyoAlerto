@@ -46,7 +46,8 @@ Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
 
 // Admin authentication (no auth middleware)
 Route::post('/admin/login', [AdminController::class, 'login']);
-Route::get('/admin/stats/stream', [AdminController::class, 'statsStream']);
+
+
 
 // ── Admin routes (auth:sanctum + /admin prefix) ─────────────────────────────
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {

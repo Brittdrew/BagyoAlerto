@@ -1,12 +1,13 @@
-﻿import { useState, useEffect, useCallback } from "react"
+import { useState, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import axios from "axios"
 import { Loader, BarChart2, MapPin, School, Users, Radio, RefreshCw, Download, Plus } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
+import { useAdminPolling } from "../../hooks/useAdminPolling"
 
 const API_BASE = import.meta.env.VITE_API_BASE
-const POLL_MS = 2000
+const POLL_MS = 30_000
 
 const SEV_COLORS = {
     low: "#1D9E75",
@@ -81,44 +82,22 @@ export default function AdminDashboard() {
     const [error, setError] = useState(null)
     const [lastUpdated, setLastUpdated] = useState(null)
 
-    const fetchStats = useCallback(async (silent = false) => {
-        if (!silent) setLoading(true)
-        else setRefreshing(true)
-        if (!silent) setError(null)
-
+    const fetchStats = useCallback(async () => {
         try {
             const res = await axios.get(`${API_BASE}/admin/stats`, { headers: authHeaders() })
             setStats(res.data)
             setLastUpdated(new Date())
             setError(null)
         } catch {
-            if (!silent) setError("Failed to load dashboard stats.")
+            setError("Failed to load dashboard stats.")
         } finally {
             setLoading(false)
             setRefreshing(false)
         }
     }, [authHeaders])
 
-    useEffect(() => {
-        fetchStats()
-        const interval = setInterval(() => {
-            if (document.visibilityState === "visible") {
-                fetchStats(true)
-            }
-        }, POLL_MS)
-        
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === "visible") {
-                fetchStats(true)
-            }
-        }
-        document.addEventListener("visibilitychange", handleVisibilityChange)
-        
-        return () => {
-            clearInterval(interval)
-            document.removeEventListener("visibilitychange", handleVisibilityChange)
-        }
-    }, [fetchStats])
+    // Poll every 30 s; skips in-flight ticks; pauses on hidden tab
+    useAdminPolling(fetchStats, POLL_MS)
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })

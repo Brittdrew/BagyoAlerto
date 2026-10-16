@@ -3,6 +3,7 @@ import axios from "axios"
 import { Plus, Pencil, Trash2, Loader, Inbox, X } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
+import { useAdminLists } from "../../context/AdminListsContext"
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const RISK_LEVELS = ["low", "moderate", "high", "critical"]
@@ -12,6 +13,7 @@ const emptyForm = { name: "", city: "", latitude: "", longitude: "", risk_level:
 
 export default function AdminBarangays() {
     const { authHeaders } = useAdminAuth()
+    const { refreshBarangays } = useAdminLists()
     const [barangays, setBarangays] = useState([])
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -86,6 +88,7 @@ export default function AdminBarangays() {
             }
             closeModal()
             fetchBarangays()
+            refreshBarangays()
         } catch (err) {
             setError(err.response?.data?.message || "Failed to save barangay.")
         }
@@ -100,6 +103,7 @@ export default function AdminBarangays() {
             await axios.delete(`${API_BASE}/admin/barangays/${id}`, { headers: authHeaders() })
             setMessage("Barangay deleted successfully.")
             fetchBarangays()
+            refreshBarangays()
         } catch (err) {
             setError(err.response?.data?.message || "Failed to delete barangay.")
         }

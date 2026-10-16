@@ -3,6 +3,7 @@ import axios from "axios"
 import { Plus, Pencil, Trash2, Loader, Inbox, X, Upload, ImageOff } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
+import { useAdminLists } from "../../context/AdminListsContext"
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "")
@@ -20,6 +21,7 @@ const emptyForm = {
 
 export default function AdminEvacuationCenters() {
     const { authHeaders } = useAdminAuth()
+    const { refreshCenters } = useAdminLists()
     const [centers, setCenters] = useState([])
     const [barangays, setBarangays] = useState([])
     const [loading, setLoading] = useState(true)
@@ -231,6 +233,7 @@ export default function AdminEvacuationCenters() {
             }
             closeModal()
             fetchData()
+            refreshCenters()
         } catch (err) {
             setError(err.response?.data?.message || "Failed to save evacuation center.")
         }
@@ -245,6 +248,7 @@ export default function AdminEvacuationCenters() {
             await axios.delete(`${API_BASE}/admin/evacuation-centers/${id}`, { headers: authHeaders() })
             setMessage("Evacuation center deleted successfully.")
             fetchData()
+            refreshCenters()
         } catch (err) {
             setError(err.response?.data?.message || "Failed to delete evacuation center.")
         }
