@@ -18,8 +18,10 @@ Route::get('/barangays/{id}/evacuation-target', [BarangayController::class, 'eva
 // /evacuation-centers/overview  — auth required, registered first so "overview"
 //   is never captured as a numeric id.
 // /evacuation-centers/photo/{x} — public, same reason.
+// /evacuation-centers/nearest   — public, same reason.
 Route::middleware('auth:sanctum')->get('/evacuation-centers/overview', [EvacuationLogController::class, 'overview']);
 Route::get('/evacuation-centers/photo/{barangay_name}', [EvacuationCenterController::class, 'getPhotoByBarangay']);
+Route::get('/evacuation-centers/nearest', [EvacuationCenterController::class, 'nearest']);
 Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);
 

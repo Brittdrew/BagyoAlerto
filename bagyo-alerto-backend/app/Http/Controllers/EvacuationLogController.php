@@ -316,6 +316,35 @@ class EvacuationLogController extends Controller
     }
 
     /**
+     * Batch calculate current occupancy for evacuation centers from logs.
+     * Returns a collection keyed by evacuation_center_id => occupancy int.
+     *
+     * @param iterable|null $centerIds
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public static function getOccupancyCounts(?iterable $centerIds = null): \Illuminate\Support\Collection
+    {
+        $query = DB::table('evacuation_logs')
+            ->selectRaw('evacuation_center_id, type, SUM(headcount) AS total')
+            ->groupBy('evacuation_center_id', 'type');
+
+        if ($centerIds !== null) {
+            $query->whereIn('evacuation_center_id', $centerIds);
+        }
+
+        $logRows = $query->get()->groupBy('evacuation_center_id');
+
+        $occupancies = collect();
+        foreach ($logRows as $centerId => $rows) {
+            $arrivals = (int) ($rows->firstWhere('type', 'arrival')?->total ?? 0);
+            $departures = (int) ($rows->firstWhere('type', 'departure')?->total ?? 0);
+            $occupancies[$centerId] = max(0, $arrivals - $departures);
+        }
+
+        return $occupancies;
+    }
+
+    /**
      * Helper to calculate current occupancy (sum of arrivals minus sum of departures).
      */
     private function getCurrentOccupancy(int $centerId): int
