@@ -263,9 +263,9 @@ function ArrivalSuccessBanner({ centerName, onClose }) {
  *   - the device comes within 50 m of the designated evacuation center
  *   - the center has not already been reported this session / persistently
  *
- * @param {{ barangayId: string|number|null, routingActive: boolean }} props
+ * @param {{ barangayId: string|number|null, routingActive: boolean, targetCenter?: object|null }} props
  */
-export default function SelfArrivalController({ barangayId, routingActive }) {
+export default function SelfArrivalController({ barangayId, routingActive, targetCenter = null }) {
     const {
         showPrompt,
         centerName,
@@ -273,7 +273,7 @@ export default function SelfArrivalController({ barangayId, routingActive }) {
         onSkip,
         successMsg,
         clearSuccess,
-    } = useSelfArrival({ barangayId, enabled: Boolean(routingActive) })
+    } = useSelfArrival({ barangayId, enabled: Boolean(routingActive), targetCenter })
 
     return (
         <>

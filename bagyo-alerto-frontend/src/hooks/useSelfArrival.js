@@ -83,14 +83,14 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
  *   clearSuccess: () => void,
  * }}
  */
-export function useSelfArrival({ barangayId, enabled }) {
+export function useSelfArrival({ barangayId, enabled, targetCenter = null }) {
     const { barangayId: savedBarangayId } = useSavedBarangay()
     const activeBId = barangayId ?? savedBarangayId
 
     // Always watch GPS if we have a barangay — the same hook MapView uses
     const { position } = useLiveLocation(Boolean(activeBId))
 
-    const [center, setCenter] = useState(null)
+    const [center, setCenter] = useState(targetCenter || null)
     const [showPrompt, setShowPrompt] = useState(false)
     const [successMsg, setSuccessMsg] = useState(null)
 
@@ -100,8 +100,16 @@ export function useSelfArrival({ barangayId, enabled }) {
     // Prevents re-opening the prompt mid-session even if GPS drifts
     const promptFiredRef = useRef(false)
 
-    // Fetch the designated evacuation center for this barangay
+    // When the actual routed center changes, update the center to watch
     useEffect(() => {
+        if (targetCenter?.id) {
+            setCenter(targetCenter)
+        }
+    }, [targetCenter])
+
+    // Fetch the designated evacuation center for this barangay only if no targetCenter provided
+    useEffect(() => {
+        if (targetCenter?.id) return
         if (!activeBId) {
             setCenter(null)
             return
@@ -112,7 +120,7 @@ export function useSelfArrival({ barangayId, enabled }) {
             .then((data) => { if (mounted && data) setCenter(data) })
             .catch(() => { /* silently ignore */ })
         return () => { mounted = false }
-    }, [activeBId])
+    }, [activeBId, targetCenter?.id])
 
     // Proximity check — runs on every GPS update
     useEffect(() => {

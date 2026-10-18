@@ -575,6 +575,7 @@ export default function Dashboard() {
     const [isMobileScreen, setIsMobileScreen] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= 768 : false))
     // True while MapView has a drawn GPS route to the evacuation center
     const [routingActive, setRoutingActive] = useState(false)
+    const [routedCenter, setRoutedCenter] = useState(null)
 
     useEffect(() => {
         const handleResize = () => setIsMobileScreen(window.innerWidth <= 768)
@@ -1181,6 +1182,7 @@ export default function Dashboard() {
                         <SelfArrivalController
                             barangayId={formData.barangay_id}
                             routingActive={routingActive}
+                            targetCenter={routedCenter}
                         />
 
                         {/* Conditions unavailable notice (weather or assess error) */}
@@ -1259,6 +1261,7 @@ export default function Dashboard() {
                                     evacuationCenter={result?.evacuation_center}
                                     barangay={selectedBarangay}
                                     onRoutingChange={setRoutingActive}
+                                    onRoutedCenterChange={setRoutedCenter}
                                 />
                             </div>
                         )}
@@ -1574,6 +1577,7 @@ export default function Dashboard() {
                                         evacuationCenter={result?.evacuation_center}
                                         barangay={selectedBarangay}
                                         onRoutingChange={setRoutingActive}
+                                        onRoutedCenterChange={setRoutedCenter}
                                     />
                                     )}
                                 </div>

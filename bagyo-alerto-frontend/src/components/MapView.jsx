@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css"
 import L from "leaflet"
 import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints, Camera, Info } from "lucide-react"
 import { useLiveLocation } from "../hooks/useLiveLocation"
+import { useNearestCenter } from "../hooks/useNearestCenter"
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -128,12 +129,13 @@ function formatWalkTime(minutes) {
     return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
 }
 
-export default function MapView({ evacuationCenter: initialCenter, barangay, onRoutingChange }) {
+export default function MapView({ evacuationCenter: initialCenter, barangay, onRoutingChange, onRoutedCenterChange }) {
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
-    const [target, setTarget] = useState(initialCenter || null)
-    const [targetLoading, setTargetLoading] = useState(false)
-    const [targetError, setTargetError] = useState(null)
+    const [routeMode, setRouteMode] = useState("nearest") // "nearest" | "barangay" (session-only)
+    const [barangayTarget, setBarangayTarget] = useState(initialCenter || null)
+    const [barangayTargetLoading, setBarangayTargetLoading] = useState(false)
+    const [barangayTargetError, setBarangayTargetError] = useState(null)
 
     const [routeCoords, setRouteCoords] = useState([])
     const [routeDistance, setRouteDistance] = useState(null)
@@ -230,6 +232,54 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
     // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
     const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
 
+    // Call useNearestCenter with live GPS position
+    const {
+        nearestCenter,
+        isFull: nearestIsFull,
+        isFallback: nearestIsFallback,
+        fallbackNotice: nearestFallbackNotice,
+        loading: nearestLoading,
+    } = useNearestCenter(position, {
+        enabled: routeMode === "nearest" && Boolean(barangayId),
+    })
+
+    // Effective target based on routeMode and fallback
+    const target = useMemo(() => {
+        if (routeMode === "barangay") {
+            return barangayTarget
+        }
+        if (!nearestIsFallback && nearestCenter) {
+            return nearestCenter
+        }
+        return barangayTarget
+    }, [routeMode, nearestIsFallback, nearestCenter, barangayTarget])
+
+    const isFull = useMemo(() => {
+        if (routeMode === "nearest" && !nearestIsFallback && nearestCenter) {
+            return Boolean(nearestIsFull || nearestCenter.is_full || (nearestCenter.free_space !== undefined && nearestCenter.free_space <= 0))
+        }
+        if (barangayTarget) {
+            return Boolean(barangayTarget.current_occupancy >= barangayTarget.capacity)
+        }
+        return false
+    }, [routeMode, nearestIsFallback, nearestCenter, nearestIsFull, barangayTarget])
+
+    const fallbackNotice = useMemo(() => {
+        if (routeMode !== "nearest") return null
+        if (nearestIsFallback) {
+            return nearestFallbackNotice || "Using your barangay's designated evacuation center."
+        }
+        return null
+    }, [routeMode, nearestIsFallback, nearestFallbackNotice])
+
+    const targetLoading = (routeMode === "nearest" && nearestLoading && !barangayTarget) || (barangayTargetLoading && !target)
+    const targetError = routeMode === "barangay" ? barangayTargetError : (target ? null : (barangayTargetError || "No evacuation center available"))
+
+    // Notify parent whenever actual routed target center changes
+    useEffect(() => {
+        onRoutedCenterChange?.(target)
+    }, [target, onRoutedCenterChange])
+
     useEffect(() => {
         setLastUpdated(Date.now())
         setSecondsAgo(0)
@@ -248,21 +298,26 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
         return () => clearInterval(timer)
     }, [lastUpdated])
 
-    // Requirement 1: Fetch target from GET /api/barangays/{barangayId}/evacuation-target
+    // Reset routing cache when switching barangay or mode
     useEffect(() => {
-        if (!barangayId) {
-            return
-        }
-
         routeAbortRef.current?.abort()
         routeReqIdRef.current++
-        setTarget(null)
         setRouteCoords([])
         setIsOfflineRoute(false)
-        setTargetLoading(true)
         activeTargetIdRef.current = null
         lastFetchedPosRef.current = null
         lastFetchedTimeRef.current = 0
+    }, [barangayId, routeMode])
+
+    // Fetch barangay's designated target from GET /api/barangays/{barangayId}/evacuation-target
+    useEffect(() => {
+        if (!barangayId) {
+            setBarangayTarget(null)
+            return
+        }
+
+        setBarangayTarget(null)
+        setBarangayTargetLoading(true)
 
         let active = true
 
@@ -270,8 +325,8 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
             .then(async (res) => {
                 if (!active) return
                 if (res.status === 404) {
-                    setTarget(null)
-                    setTargetError("No evacuation center available")
+                    setBarangayTarget(null)
+                    setBarangayTargetError("No evacuation center available")
                     return
                 }
                 if (!res.ok) {
@@ -279,9 +334,9 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
                 }
                 const data = await res.json()
                 if (!active) return
-                setTarget(data)
-                setTargetError(null)
-                // Cache target in localStorage (Requirement 8)
+                setBarangayTarget(data)
+                setBarangayTargetError(null)
+                // Cache target in localStorage (Requirement 8 / 9)
                 try {
                     localStorage.setItem(`bakwit_target_${barangayId}`, JSON.stringify(data))
                 } catch (err) {
@@ -290,12 +345,12 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
             })
             .catch(() => {
                 if (!active) return
-                // Try reading cached target (Requirement 8)
+                // Try reading cached target (Requirement 8 / 9)
                 try {
                     const cached = localStorage.getItem(`bakwit_target_${barangayId}`)
                     if (cached) {
-                        setTarget(JSON.parse(cached))
-                        setTargetError(null)
+                        setBarangayTarget(JSON.parse(cached))
+                        setBarangayTargetError(null)
                         return
                     }
                 } catch (_e) {
@@ -303,15 +358,15 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
                 }
 
                 if (initialCenter) {
-                    setTarget(initialCenter)
-                    setTargetError(null)
+                    setBarangayTarget(initialCenter)
+                    setBarangayTargetError(null)
                 } else {
-                    setTarget(null)
-                    setTargetError("No evacuation center available")
+                    setBarangayTarget(null)
+                    setBarangayTargetError("No evacuation center available")
                 }
             })
             .finally(() => {
-                if (active) setTargetLoading(false)
+                if (active) setBarangayTargetLoading(false)
             })
 
         return () => {
@@ -533,7 +588,12 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
         : "#"
 
     const capacityNum = target?.capacity ? Number(target.capacity) : 0
-    const occupancyNum = target?.current_occupancy ? Number(target.current_occupancy) : 0
+    const occupancyNum = target?.occupancy !== undefined
+        ? Number(target.occupancy)
+        : (target?.current_occupancy !== undefined ? Number(target.current_occupancy) : 0)
+    const freeSpaceCount = target?.free_space !== undefined
+        ? Number(target.free_space)
+        : (capacityNum > 0 ? capacityNum - occupancyNum : null)
     const capacityPercent = capacityNum > 0
         ? Math.min(100, Math.max(0, Math.round((occupancyNum / capacityNum) * 100)))
         : 0
@@ -543,9 +603,112 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
     // Redesigned Info Panel
     const infoPanel = (
         <div style={isMobile ? styles.panelMobile : styles.panelDesktop}>
-            {/* 1. Hierarchy: Center name as title; address under it */}
+            {/* Session-only destination toggle: "Nearest center" vs "My barangay's center" */}
+            <div style={{
+                display: "flex",
+                background: "#f1f5f9",
+                borderRadius: 8,
+                padding: 3,
+                marginBottom: 12,
+                border: "1px solid #e2e8f0",
+                gap: 4,
+            }}>
+                <button
+                    type="button"
+                    id="route-mode-nearest"
+                    onClick={() => setRouteMode("nearest")}
+                    style={{
+                        flex: 1,
+                        padding: "7px 12px",
+                        fontSize: 12,
+                        fontWeight: routeMode === "nearest" ? 700 : 500,
+                        borderRadius: 6,
+                        border: "none",
+                        background: routeMode === "nearest" ? "#1a237e" : "transparent",
+                        color: routeMode === "nearest" ? "#ffffff" : "#64748b",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                    }}
+                >
+                    Nearest center
+                </button>
+                <button
+                    type="button"
+                    id="route-mode-barangay"
+                    onClick={() => setRouteMode("barangay")}
+                    style={{
+                        flex: 1,
+                        padding: "7px 12px",
+                        fontSize: 12,
+                        fontWeight: routeMode === "barangay" ? 700 : 500,
+                        borderRadius: 6,
+                        border: "none",
+                        background: routeMode === "barangay" ? "#1a237e" : "transparent",
+                        color: routeMode === "barangay" ? "#ffffff" : "#64748b",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                    }}
+                >
+                    My barangay's center
+                </button>
+            </div>
+
+            {/* Small notice when falling back to barangay center */}
+            {fallbackNotice && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    marginBottom: 10,
+                    fontSize: 12,
+                    color: "#1e40af",
+                }}>
+                    <MapPin size={15} style={{ color: "#2563eb", flexShrink: 0 }} />
+                    <span>{fallbackNotice}</span>
+                </div>
+            )}
+
+            {/* FULL Warning when all centers are full */}
+            {routeMode === "nearest" && isFull && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    marginBottom: 10,
+                    fontSize: 12,
+                    color: "#991b1b",
+                }}>
+                    <AlertTriangle size={15} style={{ color: "#dc2626", flexShrink: 0 }} />
+                    <span>Facility is at full capacity. Proceed with caution.</span>
+                </div>
+            )}
+
+            {/* 1. Hierarchy: Center name as title + FULL badge; address under it */}
             <div style={styles.titleBlock}>
-                <h3 style={styles.centerTitle}>{target?.name || "Evacuation Center"}</h3>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <h3 style={styles.centerTitle}>{target?.name || "Evacuation Center"}</h3>
+                    {isFull && (
+                        <span style={{
+                            background: "#dc2626",
+                            color: "#ffffff",
+                            fontSize: 11,
+                            fontWeight: 800,
+                            padding: "2px 7px",
+                            borderRadius: 4,
+                            letterSpacing: "0.5px",
+                        }}>
+                            FULL
+                        </span>
+                    )}
+                </div>
                 <p style={styles.centerAddress}>{target?.address || "Address unavailable"}</p>
             </div>
 
@@ -553,7 +716,9 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
             <div style={styles.figuresRow}>
                 <div style={styles.figureCard}>
                     <span style={styles.figureLabel}>Distance</span>
-                    <span style={styles.figureValue}>{routeDistance ? `${routeDistance} km` : "—"}</span>
+                    <span style={styles.figureValue}>
+                        {routeDistance ? `${routeDistance} km` : (target?.distance_km ? `${target.distance_km} km` : "—")}
+                    </span>
                 </div>
                 <div style={styles.figureCard}>
                     <span style={styles.figureLabel}>Walking Time</span>
@@ -561,10 +726,16 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
                 </div>
             </div>
 
-            {/* 2. Capacity: Thin progress bar with text "300 capacity" */}
+            {/* 2. Capacity & Free space section */}
             <div style={styles.capacitySection}>
                 <div style={styles.capacityHeader}>
-                    <span style={styles.capacityLabel}>Capacity</span>
+                    <span style={styles.capacityLabel}>
+                        {freeSpaceCount !== null ? (
+                            <span style={{ color: freeSpaceCount <= 0 ? "#dc2626" : "#059669", fontWeight: 700 }}>
+                                {freeSpaceCount <= 0 ? "0 free spaces" : `${freeSpaceCount} free spaces`}
+                            </span>
+                        ) : "Capacity"}
+                    </span>
                     <span style={styles.capacityValue}>
                         {capacityNum > 0 ? `${capacityNum} capacity` : "Capacity unavailable"}
                     </span>
@@ -574,6 +745,7 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
                         style={{
                             ...styles.progressFill,
                             width: `${capacityPercent}%`,
+                            background: freeSpaceCount !== null && freeSpaceCount <= 0 ? "#dc2626" : (capacityPercent >= 80 ? "#f59e0b" : "#1a237e"),
                         }}
                     />
                 </div>
