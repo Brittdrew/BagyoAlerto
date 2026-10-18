@@ -129,7 +129,14 @@ function formatWalkTime(minutes) {
     return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
 }
 
-export default function MapView({ evacuationCenter: initialCenter, barangay, onRoutingChange, onRoutedCenterChange }) {
+export default function MapView({
+    evacuationCenter: initialCenter,
+    barangay,
+    onRoutingChange,
+    onRoutedCenterChange,
+    onRouteDistanceChange,
+    onLiveGpsChange,
+}) {
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
     const [routeMode, setRouteMode] = useState("nearest") // "nearest" | "barangay" (session-only)
@@ -231,6 +238,7 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
 
     // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
     const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
+    const hasLiveGps = Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
 
     // Call useNearestCenter with live GPS position
     const {
@@ -279,6 +287,16 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
     useEffect(() => {
         onRoutedCenterChange?.(target)
     }, [target, onRoutedCenterChange])
+
+    // Notify parent of the computed route road distance
+    useEffect(() => {
+        onRouteDistanceChange?.(routeDistance)
+    }, [routeDistance, onRouteDistanceChange])
+
+    // Notify parent whether live GPS is active
+    useEffect(() => {
+        onLiveGpsChange?.(hasLiveGps)
+    }, [hasLiveGps, onLiveGpsChange])
 
     useEffect(() => {
         setLastUpdated(Date.now())
@@ -471,8 +489,6 @@ export default function MapView({ evacuationCenter: initialCenter, barangay, onR
     const hasArrived = distanceToCenterMeters !== null && distanceToCenterMeters <= 30
 
     // Coordinates for center & markers
-    const hasLiveGps = position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
-
     const startPoint = useMemo(() => {
         if (hasLiveGps) {
             return [position.lat, position.lng]

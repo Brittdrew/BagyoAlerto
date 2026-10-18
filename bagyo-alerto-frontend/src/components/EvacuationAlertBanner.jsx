@@ -79,6 +79,10 @@ export default function EvacuationAlertBanner({
     selectedBarangay,
     severity,
     onShowRoute,
+    routedCenter,
+    routeDistance,
+    evacuationCenter,
+    hasLiveGps: propHasLiveGps,
 }) {
     const { barangayId: storedBarangayId } = useSavedBarangay()
     const activeBarangayId = propBarangayId ?? storedBarangayId ?? selectedBarangay?.value ?? selectedBarangay?.id ?? null
@@ -158,18 +162,38 @@ export default function EvacuationAlertBanner({
 
     const styleCfg = SEVERITY_STYLES[normalizedSeverity] || SEVERITY_STYLES.critical
     const barangayName = selectedBarangay?.name || (targetCenter?.barangay_id ? `Barangay #${activeBarangayId}` : "your barangay")
-    const centerName = targetCenter?.name || "the nearest evacuation center"
 
-    // Requirement 2: Use live location for distance if available, otherwise omit the distance
-    const hasLiveGps = position && Number.isFinite(position.lat) && Number.isFinite(position.lng)
-    const distanceKm = hasLiveGps && targetCenter?.latitude && targetCenter?.longitude
-        ? calculateDistanceKm(position.lat, position.lng, Number(targetCenter.latitude), Number(targetCenter.longitude))
-        : null
+    const hasLiveGps = propHasLiveGps !== undefined
+        ? Boolean(propHasLiveGps)
+        : Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
+
+    const isLiveActive = Boolean(hasLiveGps && routedCenter)
+    const effectiveCenter = isLiveActive ? routedCenter : (evacuationCenter || targetCenter)
+    const centerName = effectiveCenter?.name || targetCenter?.name || "the nearest evacuation center"
+
+    // When live GPS routing is active, show road distance to routed center
+    // When no live location (GPS denied or unavailable), show distance from barangay center
+    let distanceClause = "."
+    if (isLiveActive) {
+        const liveDist = routeDistance
+            ?? (routedCenter?.distance_km ? `${routedCenter.distance_km}` : null)
+            ?? (effectiveCenter?.latitude && effectiveCenter?.longitude && position
+                ? calculateDistanceKm(position.lat, position.lng, Number(effectiveCenter.latitude), Number(effectiveCenter.longitude))
+                : null)
+        if (liveDist) {
+            distanceClause = `, ${liveDist} km away.`
+        }
+    } else {
+        const fallbackDist = evacuationCenter?.distance ?? targetCenter?.distance
+        if (fallbackDist !== undefined && fallbackDist !== null) {
+            distanceClause = `, ${parseFloat(fallbackDist).toFixed(1)} km from barangay center.`
+        }
+    }
 
     // Requirement 3: "Show route" button opens existing GPS routing to that center
     const handleShowRouteClick = () => {
         if (typeof onShowRoute === "function") {
-            onShowRoute(targetCenter)
+            onShowRoute(effectiveCenter || targetCenter)
             return
         }
 
@@ -270,8 +294,7 @@ export default function EvacuationAlertBanner({
                             color: "#FFFFFF",
                         }}
                     >
-                        Severity is {normalizedSeverity.toUpperCase()} in {barangayName}. Evacuate now to {centerName}
-                        {distanceKm ? `, ${distanceKm} km away.` : "."}
+                        Severity is {normalizedSeverity.toUpperCase()} in {barangayName}. Evacuate now to {centerName}{distanceClause}
                     </div>
                 </div>
             </div>

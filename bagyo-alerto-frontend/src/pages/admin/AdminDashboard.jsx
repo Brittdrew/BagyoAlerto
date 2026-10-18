@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import axios from "axios"
 import { Loader, BarChart2, MapPin, School, Users, Radio, RefreshCw, Download, Plus } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
+import PagasaSignalCard from "../../components/PagasaSignalCard"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { useAdminPolling } from "../../hooks/useAdminPolling"
 
@@ -171,6 +172,7 @@ export default function AdminDashboard() {
                 ) : (
                     stats && (
                         <>
+                            <PagasaSignalCard />
                             <div style={styles.grid}>
                                 <StatCard
                                     icon={<BarChart2 size={20} />}

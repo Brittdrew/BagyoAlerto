@@ -430,7 +430,15 @@ function FactorBar({ label, pct, color }) {
     )
 }
 
-function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
+function EvacRoutes({
+    evacuationCenter,
+    severity,
+    selectedBarangay,
+    routedCenter,
+    routeDistance,
+    hasLiveGps,
+    barangays = [],
+}) {
     const needsEvac = ["high", "critical", "catastrophic"].includes(severity)
     const isActive = ["moderate", "high", "critical", "catastrophic"].includes(severity)
 
@@ -448,7 +456,10 @@ function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
         )
     }
 
-    if (!evacuationCenter) {
+    const isLiveActive = Boolean(hasLiveGps && routedCenter)
+    const displayCenter = isLiveActive ? routedCenter : evacuationCenter
+
+    if (!displayCenter) {
         return (
             <div style={{ ...styles.evacCard, background: "#f8f9fa", border: "0.5px solid #e0e0e0" }}>
                 <div style={styles.evacHeader}>
@@ -460,6 +471,30 @@ function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
                 </p>
             </div>
         )
+    }
+
+    const targetBarangay = barangays.find(b => (b.id ?? b.value) === displayCenter.barangay_id)
+    const centerBarangayName = displayCenter.barangay_name
+        || displayCenter.barangay?.name
+        || targetBarangay?.name
+        || (typeof displayCenter.barangay === "string" ? displayCenter.barangay : null)
+        || selectedBarangay?.name
+        || ""
+    const barangayText = centerBarangayName
+        ? (centerBarangayName.toLowerCase().startsWith("brgy") ? centerBarangayName : `Brgy. ${centerBarangayName}`)
+        : (displayCenter.address || "")
+
+    // Distance display logic:
+    // When live GPS routing is active, show the same road distance shown on the route card, formatted the same way (e.g. 5.25 km away)
+    // When no live location (GPS denied or unavailable), keep using assess() center, but change label to "{N} km from barangay center" (e.g. 0.1 km from barangay center)
+    let distanceText = null
+    if (isLiveActive) {
+        const roadDist = routeDistance ?? (displayCenter.distance_km !== undefined ? displayCenter.distance_km : (displayCenter.distance !== undefined ? parseFloat(displayCenter.distance).toFixed(1) : null))
+        if (roadDist !== null && roadDist !== undefined) {
+            distanceText = `${roadDist} km away`
+        }
+    } else if (displayCenter.distance !== undefined && displayCenter.distance !== null) {
+        distanceText = `${parseFloat(displayCenter.distance).toFixed(1)} km from barangay center`
     }
 
     return (
@@ -480,11 +515,11 @@ function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
             <div style={{ ...styles.routeItem, borderBottom: `0.5px solid ${needsEvac ? "#F7C1C1" : "#eee"}` }}>
                 <div style={{ ...styles.routeNum, background: needsEvac ? "#E24B4A" : "#888" }}>1</div>
                 <div style={styles.routeInfo}>
-                    <div style={{ ...styles.routeName, color: needsEvac ? "#501313" : "#333" }}>{evacuationCenter.name}</div>
-                    <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{evacuationCenter.address}</div>
-                    {evacuationCenter.distance !== undefined && evacuationCenter.distance !== null && (
+                    <div style={{ ...styles.routeName, color: needsEvac ? "#501313" : "#333" }}>{displayCenter.name}</div>
+                    <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{barangayText}</div>
+                    {distanceText && (
                         <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
-                            <MapPin size={11} style={{ color: "inherit" }} /> {parseFloat(evacuationCenter.distance).toFixed(1)} km away
+                            <MapPin size={11} style={{ color: "inherit" }} /> {distanceText}
                         </div>
                     )}
                 </div>
@@ -496,7 +531,7 @@ function EvacRoutes({ evacuationCenter, severity, selectedBarangay }) {
                 </div>
                 <div style={styles.routeInfo}>
                     <div style={{ ...styles.routeName, color: needsEvac ? "#501313" : "#333" }}>
-                        Capacity: {evacuationCenter.capacity?.toLocaleString()} persons
+                        Capacity: {displayCenter.capacity?.toLocaleString()} persons
                     </div>
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>
                         {needsEvac ? "Mandatory evacuation recommended" : "Standby - monitor conditions"}
@@ -576,6 +611,8 @@ export default function Dashboard() {
     // True while MapView has a drawn GPS route to the evacuation center
     const [routingActive, setRoutingActive] = useState(false)
     const [routedCenter, setRoutedCenter] = useState(null)
+    const [routeDistance, setRouteDistance] = useState(null)
+    const [hasLiveGps, setHasLiveGps] = useState(false)
 
     useEffect(() => {
         const handleResize = () => setIsMobileScreen(window.innerWidth <= 768)
@@ -821,6 +858,8 @@ export default function Dashboard() {
         setResult(null)
         setAssessError(null)
         setWeatherFetched(false)
+        setRoutedCenter(null)
+        setRouteDistance(null)
         if (weatherTimer.current) clearTimeout(weatherTimer.current)
         clearAssessRetry()
         setIsManualOverride(false)
@@ -1020,15 +1059,39 @@ export default function Dashboard() {
     // Alert banner config based on result
     const alertBanner = () => {
         if (!result) return null
-        const cfg = sevCfg
-        // Use local-equivalent wording, not official PAGASA branding
-        const signalStr = cfg.signal.startsWith("Signal")
-            ? `Wind equivalent to ${cfg.signal}`
-            : cfg.signal
-        const mainLabel = cfg.label || ""
-        const bannerTitle = (mainLabel.toLowerCase() === signalStr.toLowerCase() || mainLabel.toLowerCase().includes(cfg.signal.toLowerCase()))
-            ? signalStr
-            : `${signalStr} · ${mainLabel}`
+        const isFloor = Boolean(result.floor_applied)
+
+        const SEVERITY_CARD_STYLES = {
+            low: { alertBg: "#E1F5EE", alertBorder: "#5DCAA5", alertText: "#085041", color: "#1D9E75" },
+            moderate: { alertBg: "#FAEEDA", alertBorder: "#EF9F27", alertText: "#633806", color: "#BA7517" },
+            high: { alertBg: "#FAECE7", alertBorder: "#F0997B", alertText: "#4A1B0C", color: "#D85A30" },
+            critical: { alertBg: "#FCEBEB", alertBorder: "#F09595", alertText: "#501313", color: "#A32D2D" },
+            catastrophic: { alertBg: "#FCEBEB", alertBorder: "#F09595", alertText: "#501313", color: "#7F1D1D" },
+        }
+
+        const sevKey = (result.severity || "low").toLowerCase()
+        const floorStyle = SEVERITY_CARD_STYLES[sevKey] || SEVERITY_CARD_STYLES.critical
+
+        const cfg = isFloor ? {
+            ...sevCfg,
+            alertBg: floorStyle.alertBg,
+            alertBorder: floorStyle.alertBorder,
+            alertText: floorStyle.alertText,
+            color: floorStyle.color,
+        } : sevCfg
+
+        let bannerTitle = ""
+        if (isFloor) {
+            bannerTitle = `PAGASA Signal ${result.pagasa_signal} in effect`
+        } else {
+            const signalStr = cfg.signal.startsWith("Signal")
+                ? `Wind equivalent to ${cfg.signal}`
+                : cfg.signal
+            const mainLabel = cfg.label || ""
+            bannerTitle = (mainLabel.toLowerCase() === signalStr.toLowerCase() || mainLabel.toLowerCase().includes(cfg.signal.toLowerCase()))
+                ? signalStr
+                : `${signalStr} · ${mainLabel}`
+        }
 
         return (
             <div className="bakwit-alert-banner" style={{
@@ -1037,7 +1100,7 @@ export default function Dashboard() {
                 width: "100%", boxSizing: "border-box",
             }}>
                 <span style={{ fontSize: 18, display: "flex", alignItems: "center" }}>
-                    {compositeScore <= 24 ? <Info size={18} style={{ color: cfg.alertText }} /> : <AlertTriangle size={18} style={{ color: cfg.alertText }} />}
+                    {isFloor || compositeScore > 24 ? <AlertTriangle size={18} style={{ color: cfg.alertText }} /> : <Info size={18} style={{ color: cfg.alertText }} />}
                 </span>
                 <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: cfg.alertText }}>
@@ -1046,7 +1109,7 @@ export default function Dashboard() {
                     <div style={{ fontSize: 11, color: cfg.alertText, opacity: 0.85, marginTop: 2 }}>
                         {result.message}
                     </div>
-                    {cfg.signal.startsWith("Signal") && (
+                    {!isFloor && cfg.signal.startsWith("Signal") && (
                         <div style={{ fontSize: 10, color: cfg.alertText, opacity: 0.65, marginTop: 3 }}>
                             Official PAGASA bulletin: not yet integrated.
                         </div>
@@ -1176,6 +1239,10 @@ export default function Dashboard() {
                             barangayId={formData.barangay_id}
                             selectedBarangay={selectedBarangay}
                             severity={activeSeverity}
+                            routedCenter={hasLiveGps ? routedCenter : null}
+                            routeDistance={hasLiveGps ? routeDistance : null}
+                            evacuationCenter={result?.evacuation_center}
+                            hasLiveGps={hasLiveGps}
                         />
 
                         {/* Self-arrival GPS controller — runs independently of severity */}
@@ -1256,12 +1323,22 @@ export default function Dashboard() {
                         {/* Mobile-only: live evacuation route directly after barangay selector (before weather cards) */}
                         {isMobileScreen && selectedBarangay && (
                             <div className="bakwit-mobile-evac-early" id="evacuation-map-section-mobile">
-                                <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
+                                <EvacRoutes
+                                    evacuationCenter={result?.evacuation_center}
+                                    severity={activeSeverity}
+                                    selectedBarangay={selectedBarangay}
+                                    routedCenter={routedCenter}
+                                    routeDistance={routeDistance}
+                                    hasLiveGps={hasLiveGps}
+                                    barangays={barangays}
+                                />
                                 <MapView
                                     evacuationCenter={result?.evacuation_center}
                                     barangay={selectedBarangay}
                                     onRoutingChange={setRoutingActive}
                                     onRoutedCenterChange={setRoutedCenter}
+                                    onRouteDistanceChange={setRouteDistance}
+                                    onLiveGpsChange={setHasLiveGps}
                                 />
                             </div>
                         )}
@@ -1416,7 +1493,7 @@ export default function Dashboard() {
                                     <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
                                         <Tornado size={13} style={{ animation: result ? "spin 4s linear infinite" : "none", color: "#555" }} /> Severity assessment
                                     </div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                                         {result?.severity && (
                                             <span style={{
                                                 fontSize: 10, fontWeight: 700, padding: "2px 9px",
@@ -1425,6 +1502,15 @@ export default function Dashboard() {
                                                 background: RISK_COLORS[result.severity.toLowerCase()] || "#888",
                                             }}>
                                                 Current: {result.severity.toUpperCase()}
+                                            </span>
+                                        )}
+                                        {result?.floor_applied && (
+                                            <span style={{
+                                                fontSize: 10, fontWeight: 600, padding: "2px 8px",
+                                                borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4,
+                                                color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a",
+                                            }}>
+                                                Raised by PAGASA Signal {result.pagasa_signal}
                                             </span>
                                         )}
                                         {!result && <span style={{ fontSize: 11, color: "#bbb" }}>Run assess first</span>}
@@ -1436,6 +1522,11 @@ export default function Dashboard() {
                                             <div style={styles.mlCompareBox}>
                                                 <div style={styles.mlCompareLabel}>Rule-Based</div>
                                                 <div style={styles.mlCompareScore}>Score: {compositeScore}</div>
+                                                {result?.floor_applied && (
+                                                    <div style={{ fontSize: 10, color: "#888", fontStyle: "italic", marginTop: 2 }}>
+                                                        Computed from weather data
+                                                    </div>
+                                                )}
                                                 <div style={{ ...styles.mlCompareResult, color: sevCfg.color }}>
                                                     {ruleBasedLabel}
                                                 </div>
@@ -1571,13 +1662,23 @@ export default function Dashboard() {
                         <div className="bakwit-row3" style={styles.row3}>
                             {!isMobileScreen && (
                                 <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                                    <EvacRoutes evacuationCenter={result?.evacuation_center} severity={activeSeverity} selectedBarangay={selectedBarangay} />
+                                    <EvacRoutes
+                                        evacuationCenter={result?.evacuation_center}
+                                        severity={activeSeverity}
+                                        selectedBarangay={selectedBarangay}
+                                        routedCenter={routedCenter}
+                                        routeDistance={routeDistance}
+                                        hasLiveGps={hasLiveGps}
+                                        barangays={barangays}
+                                    />
                                     {selectedBarangay && (
                                     <MapView
                                         evacuationCenter={result?.evacuation_center}
                                         barangay={selectedBarangay}
                                         onRoutingChange={setRoutingActive}
                                         onRoutedCenterChange={setRoutedCenter}
+                                        onRouteDistanceChange={setRouteDistance}
+                                        onLiveGpsChange={setHasLiveGps}
                                     />
                                     )}
                                 </div>
