@@ -6,6 +6,7 @@ use App\Models\TyphoonLog;
 use App\Models\EvacuationCenter;
 use App\Models\Recommendation;
 use App\Models\Barangay;
+use App\Models\PagasaSignal;
 use App\Services\TyphoonMLService;
 use Illuminate\Http\Request;
 
@@ -53,6 +54,27 @@ class TyphoonController extends Controller
         list($severity, $score, $rank, $factors) = $this->calculateSeverity(
             $windSpeed, $rainfall, $pressure, $temperature, $humidity
         );
+
+        // Apply PAGASA signal minimum severity floor
+        $computedSeverity = $severity;
+        $currentSignalData = PagasaSignal::current();
+        $pagasaSignal = (int) ($currentSignalData['signal'] ?? 0);
+
+        $signalFloors = config('pagasa.signal_floors', PagasaSignal::PAGASA_SIGNAL_FLOORS);
+        $severityOrder = config('pagasa.severity_order', PagasaSignal::SEVERITY_ORDER);
+
+        $floorSeverity = $signalFloors[$pagasaSignal] ?? 'none';
+        $floorApplied = false;
+
+        if ($floorSeverity !== 'none' && isset($severityOrder[$floorSeverity])) {
+            $computedRank = $severityOrder[$computedSeverity] ?? -1;
+            $floorRank    = $severityOrder[$floorSeverity] ?? -1;
+
+            if ($floorRank > $computedRank) {
+                $severity = $floorSeverity;
+                $floorApplied = true;
+            }
+        }
 
         // Rule-based label — now uses same labels as ML
         $classification = $this->getClassificationLabel($rank);
@@ -177,6 +199,8 @@ class TyphoonController extends Controller
             }
         }
 
+        $effectiveRank = $floorApplied ? max($rank, $pagasaSignal + 2) : $rank;
+
         return response()->json([
             'severity'          => $severity,
             'score'             => $score,
@@ -186,8 +210,11 @@ class TyphoonController extends Controller
             'ml_prediction'     => $mlPrediction,     // ML signal label
             'ml_explanation'    => $mlExplanation,
             'agreement'         => $agreement,         // Do both systems agree?
-            'message'           => $this->getSeverityMessage($rank),
-            'evacuation_center' => $center
+            'message'           => $this->getSeverityMessage($effectiveRank),
+            'evacuation_center' => $center,
+            'pagasa_signal'     => $pagasaSignal,
+            'floor_applied'     => $floorApplied,
+            'computed_severity' => $computedSeverity,
         ]);
     }
 

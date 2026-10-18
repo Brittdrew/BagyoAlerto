@@ -8,8 +8,10 @@ use App\Http\Controllers\RecommendationController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\EvacuationLogController;
+use App\Http\Controllers\PagasaSignalController;
 
 // ── Public list endpoints (responses cached 60 s inside controllers) ────────
+Route::get('/pagasa-signal', [PagasaSignalController::class, 'show']);
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
 Route::get('/barangays/{id}/evacuation-target', [BarangayController::class, 'evacuationTarget']);
@@ -58,6 +60,8 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::put('/password', [AdminController::class, 'changePassword']);
     Route::get('/stats', [AdminController::class, 'stats']);
     Route::get('/recommendations', [AdminController::class, 'recommendations']);
+
+    Route::post('/pagasa-signal', [PagasaSignalController::class, 'store']);
 
     Route::get('/barangays', [AdminController::class, 'barangaysIndex']);
     Route::post('/barangays', [AdminController::class, 'barangaysStore']);
