@@ -98,27 +98,74 @@ function getDistanceInMeters(lat1, lon1, lat2, lon2) {
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const API_ORIGIN = API_BASE ? API_BASE.replace(/\/api\/?$/, "") : ""
+const OSRM_URL_FOOT = (import.meta.env.VITE_OSRM_URL_FOOT || import.meta.env.VITE_OSRM_URL || "https://routing.openstreetmap.de/routed-foot").replace(/\/+$/, "")
+const OSRM_URL_CAR = (import.meta.env.VITE_OSRM_URL_CAR || "https://routing.openstreetmap.de/routed-car").replace(/\/+$/, "")
+const OSRM_PROFILE_FOOT = import.meta.env.VITE_OSRM_PROFILE_FOOT || import.meta.env.VITE_OSRM_PROFILE || "foot"
+const OSRM_PROFILE_CAR = import.meta.env.VITE_OSRM_PROFILE_CAR || "car"
 
-async function fetchOsrmRoute(startLng, startLat, endLng, endLat, { signal, timeoutMs = 20000 } = {}) {
-    const qs = new URLSearchParams({
-        from_lat: startLat, from_lng: startLng, to_lat: endLat, to_lng: endLng,
-    })
-    const controller = new AbortController()
-    const onAbort = () => controller.abort()
-    signal?.addEventListener("abort", onAbort)
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-        console.log("[Route] requesting", { startLat, startLng, endLat, endLng })
-        const res = await fetch(`${API_BASE}/route?${qs}`, { signal: controller.signal })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return await res.json() // { route, isBackup }
-    } finally {
-        clearTimeout(timer)
-        signal?.removeEventListener("abort", onAbort)
+async function fetchOsrmRoute(startLng, startLat, endLng, endLat, mode = "foot", { signal, timeoutMs = 20000 } = {}) {
+    const isCar = mode === "car"
+    const coords = `${startLng},${startLat};${endLng},${endLat}`
+
+    const primaryUrl = isCar ? OSRM_URL_CAR : OSRM_URL_FOOT
+    const primaryProfile = isCar ? OSRM_PROFILE_CAR : OSRM_PROFILE_FOOT
+
+    const primaryEndpoint = `${primaryUrl}/route/v1/${primaryProfile}/${coords}?overview=full&geometries=geojson`
+    const backupEndpoint = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+
+    const endpoints = [
+        { url: primaryEndpoint, isBackup: false },
+        { url: backupEndpoint, isBackup: true },
+    ]
+
+    for (const ep of endpoints) {
+        const controller = new AbortController()
+        const onAbort = () => controller.abort()
+        signal?.addEventListener("abort", onAbort)
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+            console.log(`[Route] requesting (${mode}):`, ep.url)
+            const res = await fetch(ep.url, { signal: controller.signal })
+            if (!res.ok) continue
+            const data = await res.json()
+            if (data.code === "Ok" && Array.isArray(data.routes) && data.routes[0]) {
+                return { route: data.routes[0], isBackup: ep.isBackup }
+            }
+        } catch (_err) {
+            // try next endpoint
+        } finally {
+            clearTimeout(timer)
+            signal?.removeEventListener("abort", onAbort)
+        }
     }
+
+    // Additional fallback for foot: try backend route proxy if available
+    if (!isCar && API_BASE) {
+        const qs = new URLSearchParams({
+            from_lat: startLat, from_lng: startLng, to_lat: endLat, to_lng: endLng,
+        })
+        const controller = new AbortController()
+        const onAbort = () => controller.abort()
+        signal?.addEventListener("abort", onAbort)
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+            const res = await fetch(`${API_BASE}/route?${qs}`, { signal: controller.signal })
+            if (res.ok) {
+                const data = await res.json()
+                if (data.route) return data
+            }
+        } catch (_err) {
+            // ignore
+        } finally {
+            clearTimeout(timer)
+            signal?.removeEventListener("abort", onAbort)
+        }
+    }
+
+    throw new Error("OSRM route service unavailable")
 }
 
-function formatWalkTime(minutes) {
+export function formatDuration(minutes) {
     if (minutes == null || !Number.isFinite(minutes)) return "—"
     const m = Math.round(minutes)
     if (m < 60) {
@@ -129,14 +176,38 @@ function formatWalkTime(minutes) {
     return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
 }
 
+export const formatWalkTime = formatDuration
+
 export default function MapView({
     evacuationCenter: initialCenter,
     barangay,
+    travelMode: propTravelMode,
+    onTravelModeChange: propOnTravelModeChange,
     onRoutingChange,
     onRoutedCenterChange,
     onRouteDistanceChange,
+    onRouteMinutesChange,
     onLiveGpsChange,
 }) {
+    const [internalTravelMode, setInternalTravelMode] = useState(() => {
+        try {
+            const s = localStorage.getItem("bakwit_travel_mode")
+            if (s === "car" || s === "foot") return s
+        } catch (_e) {}
+        return "foot"
+    })
+    const travelMode = propTravelMode || internalTravelMode
+    const handleTravelModeChange = useCallback((newMode) => {
+        if (propOnTravelModeChange) {
+            propOnTravelModeChange(newMode)
+        } else {
+            setInternalTravelMode(newMode)
+        }
+        try {
+            localStorage.setItem("bakwit_travel_mode", newMode)
+        } catch (_e) {}
+    }, [propOnTravelModeChange])
+
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
     const [routeMode, setRouteMode] = useState("nearest") // "nearest" | "barangay" (session-only)
@@ -173,7 +244,7 @@ export default function MapView({
     const routeAbortRef = useRef(null)
     const routeReqIdRef = useRef(0)
 
-    const loadRoute = useCallback(async ({ startLat, startLng, destLat, destLng, cacheKey, onFail }) => {
+    const loadRoute = useCallback(async ({ startLat, startLng, destLat, destLng, cacheKey, mode = travelMode, onFail }) => {
         routeAbortRef.current?.abort()
         const controller = new AbortController()
         routeAbortRef.current = controller
@@ -181,16 +252,21 @@ export default function MapView({
         setRouteLoading(true)
 
         try {
-            const { route, isBackup } = await fetchOsrmRoute(startLng, startLat, destLng, destLat, {
+            const { route, isBackup } = await fetchOsrmRoute(startLng, startLat, destLng, destLat, mode, {
                 signal: controller.signal,
             })
             if (reqId !== routeReqIdRef.current) return
 
             const coords = route.geometry.coordinates.map((c) => [c[1], c[0]])
             const distKm = (route.distance / 1000).toFixed(2)
-            const mins = isBackup
-                ? Math.max(1, Math.round((route.distance / 1000 / 4.5) * 60))
-                : Math.max(1, Math.round(route.duration / 60))
+            let mins
+            if (mode === "car") {
+                mins = Math.max(1, Math.round(route.duration / 60))
+            } else {
+                mins = isBackup
+                    ? Math.max(1, Math.round((route.distance / 1000 / 4.5) * 60))
+                    : Math.max(1, Math.round(route.duration / 60))
+            }
 
             setRouteCoords(coords)
             setRouteDistance(distKm)
@@ -227,12 +303,13 @@ export default function MapView({
             setRouteCoords([[startLat, startLng], [destLat, destLng]])
             const d = (getDistanceInMeters(startLat, startLng, destLat, destLng) / 1000).toFixed(2)
             setRouteDistance(d)
-            setRouteMinutes(Math.max(1, Math.round((d / 4) * 60)))
+            const fallbackSpeed = mode === "car" ? 30 : 4.5
+            setRouteMinutes(Math.max(1, Math.round((d / fallbackSpeed) * 60)))
             setIsOfflineRoute(true)
         } finally {
             if (reqId === routeReqIdRef.current) setRouteLoading(false)
         }
-    }, [])
+    }, [travelMode])
 
     useEffect(() => () => routeAbortRef.current?.abort(), [])
 
@@ -240,7 +317,7 @@ export default function MapView({
     const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
     const hasLiveGps = Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
 
-    // Call useNearestCenter with live GPS position
+    // Call useNearestCenter with live GPS position and travel mode
     const {
         nearestCenter,
         isFull: nearestIsFull,
@@ -249,6 +326,7 @@ export default function MapView({
         loading: nearestLoading,
     } = useNearestCenter(position, {
         enabled: routeMode === "nearest" && Boolean(barangayId),
+        mode: travelMode,
     })
 
     // Effective target based on routeMode and fallback
@@ -293,6 +371,11 @@ export default function MapView({
         onRouteDistanceChange?.(routeDistance)
     }, [routeDistance, onRouteDistanceChange])
 
+    // Notify parent of the computed route travel duration in minutes
+    useEffect(() => {
+        onRouteMinutesChange?.(routeMinutes)
+    }, [routeMinutes, onRouteMinutesChange])
+
     // Notify parent whether live GPS is active
     useEffect(() => {
         onLiveGpsChange?.(hasLiveGps)
@@ -325,7 +408,7 @@ export default function MapView({
         activeTargetIdRef.current = null
         lastFetchedPosRef.current = null
         lastFetchedTimeRef.current = 0
-    }, [barangayId, routeMode])
+    }, [barangayId, routeMode, travelMode])
 
     // Fetch barangay's designated target from GET /api/barangays/{barangayId}/evacuation-target
     useEffect(() => {
@@ -428,7 +511,8 @@ export default function MapView({
                 startLng: position.lng,
                 destLat,
                 destLng,
-                cacheKey: `bakwit_route_${barangayId}_${target.id}`,
+                cacheKey: `bakwit_route_${barangayId}_${target.id}_${travelMode}`,
+                mode: travelMode,
                 onFail: () => { lastFetchedPosRef.current = null },
             })
             return
@@ -441,9 +525,11 @@ export default function MapView({
                 startLng: Number(barangay.longitude),
                 destLat,
                 destLng,
+                cacheKey: `bakwit_route_fallback_${barangayId}_${target.id}_${travelMode}`,
+                mode: travelMode,
             })
         }
-    }, [target, position, barangayId, barangay?.latitude, barangay?.longitude, loadRoute])
+    }, [target, position, barangayId, barangay?.latitude, barangay?.longitude, travelMode, loadRoute])
 
     // Photo fetch effect
     useEffect(() => {
@@ -619,55 +705,139 @@ export default function MapView({
     // Redesigned Info Panel
     const infoPanel = (
         <div style={isMobile ? styles.panelMobile : styles.panelDesktop}>
-            {/* Session-only destination toggle: "Nearest center" vs "My barangay's center" */}
+            {/* Toggles: Destination ("Nearest center" vs "My barangay's center") + Travel Mode ("Walk" vs "Vehicle") */}
             <div style={{
                 display: "flex",
-                background: "#f1f5f9",
-                borderRadius: 8,
-                padding: 3,
+                flexWrap: "wrap",
+                gap: 8,
                 marginBottom: 12,
-                border: "1px solid #e2e8f0",
-                gap: 4,
             }}>
-                <button
-                    type="button"
-                    id="route-mode-nearest"
-                    onClick={() => setRouteMode("nearest")}
-                    style={{
-                        flex: 1,
-                        padding: "7px 12px",
-                        fontSize: 12,
-                        fontWeight: routeMode === "nearest" ? 700 : 500,
-                        borderRadius: 6,
-                        border: "none",
-                        background: routeMode === "nearest" ? "#1a237e" : "transparent",
-                        color: routeMode === "nearest" ? "#ffffff" : "#64748b",
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                    }}
-                >
-                    Nearest center
-                </button>
-                <button
-                    type="button"
-                    id="route-mode-barangay"
-                    onClick={() => setRouteMode("barangay")}
-                    style={{
-                        flex: 1,
-                        padding: "7px 12px",
-                        fontSize: 12,
-                        fontWeight: routeMode === "barangay" ? 700 : 500,
-                        borderRadius: 6,
-                        border: "none",
-                        background: routeMode === "barangay" ? "#1a237e" : "transparent",
-                        color: routeMode === "barangay" ? "#ffffff" : "#64748b",
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                    }}
-                >
-                    My barangay's center
-                </button>
+                <div style={{
+                    display: "flex",
+                    background: "#f1f5f9",
+                    borderRadius: 8,
+                    padding: 3,
+                    border: "1px solid #e2e8f0",
+                    gap: 4,
+                    flex: "1 1 200px",
+                }}>
+                    <button
+                        type="button"
+                        id="route-mode-nearest"
+                        onClick={() => setRouteMode("nearest")}
+                        style={{
+                            flex: 1,
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: routeMode === "nearest" ? 700 : 500,
+                            borderRadius: 6,
+                            border: "none",
+                            background: routeMode === "nearest" ? "#1a237e" : "transparent",
+                            color: routeMode === "nearest" ? "#ffffff" : "#64748b",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                        }}
+                    >
+                        Nearest center
+                    </button>
+                    <button
+                        type="button"
+                        id="route-mode-barangay"
+                        onClick={() => setRouteMode("barangay")}
+                        style={{
+                            flex: 1,
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: routeMode === "barangay" ? 700 : 500,
+                            borderRadius: 6,
+                            border: "none",
+                            background: routeMode === "barangay" ? "#1a237e" : "transparent",
+                            color: routeMode === "barangay" ? "#ffffff" : "#64748b",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                        }}
+                    >
+                        My barangay's center
+                    </button>
+                </div>
+
+                <div style={{
+                    display: "flex",
+                    background: "#f1f5f9",
+                    borderRadius: 8,
+                    padding: 3,
+                    border: "1px solid #e2e8f0",
+                    gap: 4,
+                    flex: "0 1 170px",
+                }}>
+                    <button
+                        type="button"
+                        id="travel-mode-walk"
+                        onClick={() => handleTravelModeChange("foot")}
+                        style={{
+                            flex: 1,
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: travelMode === "foot" ? 700 : 500,
+                            borderRadius: 6,
+                            border: "none",
+                            background: travelMode === "foot" ? "#1a237e" : "transparent",
+                            color: travelMode === "foot" ? "#ffffff" : "#64748b",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 4,
+                        }}
+                    >
+                        Walk
+                    </button>
+                    <button
+                        type="button"
+                        id="travel-mode-vehicle"
+                        onClick={() => handleTravelModeChange("car")}
+                        style={{
+                            flex: 1,
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: travelMode === "car" ? 700 : 500,
+                            borderRadius: 6,
+                            border: "none",
+                            background: travelMode === "car" ? "#1a237e" : "transparent",
+                            color: travelMode === "car" ? "#ffffff" : "#64748b",
+                            cursor: "pointer",
+                            transition: "all 0.15s ease",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 4,
+                        }}
+                    >
+                        Vehicle
+                    </button>
+                </div>
             </div>
+
+            {/* Small note when Vehicle is selected (Requirement 6) */}
+            {travelMode === "car" && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "#fffbeb",
+                    border: "1px solid #fde68a",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    marginBottom: 10,
+                    fontSize: 12,
+                    color: "#92400e",
+                    lineHeight: 1.35,
+                }}>
+                    <AlertTriangle size={15} style={{ color: "#d97706", flexShrink: 0 }} />
+                    <span>Roads may be flooded or blocked. Follow barangay officials' instructions.</span>
+                </div>
+            )}
 
             {/* Small notice when falling back to barangay center */}
             {fallbackNotice && (
@@ -728,7 +898,7 @@ export default function MapView({
                 <p style={styles.centerAddress}>{target?.address || "Address unavailable"}</p>
             </div>
 
-            {/* 1. Distance & Walking time as two large figures (tabular-nums) */}
+            {/* 1. Distance & Travel time as two large figures (tabular-nums) */}
             <div style={styles.figuresRow}>
                 <div style={styles.figureCard}>
                     <span style={styles.figureLabel}>Distance</span>
@@ -737,7 +907,7 @@ export default function MapView({
                     </span>
                 </div>
                 <div style={styles.figureCard}>
-                    <span style={styles.figureLabel}>Walking Time</span>
+                    <span style={styles.figureLabel}>{travelMode === "car" ? "Travel Time (Vehicle)" : "Walking Time"}</span>
                     <span style={styles.figureValue}>{formatWalkTime(routeMinutes)}</span>
                 </div>
             </div>

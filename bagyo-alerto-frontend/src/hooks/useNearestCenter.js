@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 
 const API_BASE = import.meta.env.VITE_API_BASE
+const OSRM_URL_FOOT = (import.meta.env.VITE_OSRM_URL_FOOT || import.meta.env.VITE_OSRM_URL || "https://routing.openstreetmap.de/routed-foot").replace(/\/+$/, "")
+const OSRM_URL_CAR = (import.meta.env.VITE_OSRM_URL_CAR || "https://routing.openstreetmap.de/routed-car").replace(/\/+$/, "")
+const OSRM_PROFILE_FOOT = import.meta.env.VITE_OSRM_PROFILE_FOOT || import.meta.env.VITE_OSRM_PROFILE || "foot"
+const OSRM_PROFILE_CAR = import.meta.env.VITE_OSRM_PROFILE_CAR || "car"
 
 /**
  * Request road durations from origin (user) to all candidate centers using OSRM Table service.
@@ -8,20 +12,24 @@ const API_BASE = import.meta.env.VITE_API_BASE
  *
  * @param {{ lat: number, lng: number }} userPos
  * @param {Array<{ latitude: number, longitude: number }>} candidates
+ * @param {"foot" | "car"} [mode="foot"]
  * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
  * @returns {Promise<number[]>} Durations in seconds corresponding to the candidates array
  */
-async function fetchOsrmTableDurations(userPos, candidates, { signal, timeoutMs = 8000 } = {}) {
+async function fetchOsrmTableDurations(userPos, candidates, mode = "foot", { signal, timeoutMs = 8000 } = {}) {
     if (!candidates || candidates.length === 0) return []
 
     // Coordinates: userLng,userLat;cand0Lng,cand0Lat;cand1Lng,cand1Lat...
     const coords = [`${userPos.lng},${userPos.lat}`, ...candidates.map((c) => `${c.longitude},${c.latitude}`)].join(";")
     const destIndices = candidates.map((_, i) => i + 1).join(";")
 
-    const servers = [
-        "https://router.project-osrm.org/table/v1/driving",
-        "https://routing.openstreetmap.de/routed-foot/table/v1/foot",
-    ]
+    const isCar = mode === "car"
+    const primaryUrl = isCar ? OSRM_URL_CAR : OSRM_URL_FOOT
+    const primaryProfile = isCar ? OSRM_PROFILE_CAR : OSRM_PROFILE_FOOT
+
+    const primaryServer = `${primaryUrl}/table/v1/${primaryProfile}`
+    const backupServer = "https://router.project-osrm.org/table/v1/driving"
+    const servers = primaryServer === backupServer ? [primaryServer] : [primaryServer, backupServer]
 
     for (const server of servers) {
         const controller = new AbortController()
@@ -53,16 +61,28 @@ async function fetchOsrmTableDurations(userPos, candidates, { signal, timeoutMs 
  *
  * Hook to find the optimal nearest evacuation center based on live GPS:
  * 1. Fetches candidate centers via GET /api/evacuation-centers/nearest?lat=..&lng=..&limit=3.
- * 2. Makes ONE OSRM table request (user -> all candidates) to get road durations.
+ * 2. Makes ONE OSRM table request (user -> all candidates) to get road durations for mode ("foot" | "car").
  * 3. Chooses the lowest-duration candidate that is not is_full (or lowest-duration with isFull=true if all full).
  * 4. Anti-flicker: Re-runs selection at most every 45 s, and only switches target if the new center
- *    is at least 20% faster than the current one.
+ *    is at least 20% faster than the current one. Mode change recalculates immediately without flip-flopping.
  * 5. Fallback: If GPS is unavailable/denied or nearest/OSRM fails, flags fallback.
  *
  * @param {{ lat: number, lng: number } | null} location - User's live coordinates.
- * @param {{ enabled?: boolean }} [options]
+ * @param {"foot" | "car" | { enabled?: boolean, mode?: "foot" | "car" }} [modeOrOptions="foot"]
+ * @param {{ enabled?: boolean, mode?: "foot" | "car" }} [extraOptions]
  */
-export function useNearestCenter(location, options = {}) {
+export function useNearestCenter(location, modeOrOptions = "foot", extraOptions = {}) {
+    let mode = "foot"
+    let options = {}
+
+    if (typeof modeOrOptions === "string") {
+        mode = modeOrOptions
+        options = extraOptions || {}
+    } else if (typeof modeOrOptions === "object" && modeOrOptions !== null) {
+        options = modeOrOptions
+        if (options.mode) mode = options.mode
+    }
+
     const { enabled = true } = options
 
     const [nearestCenter, setNearestCenter] = useState(null)
@@ -81,6 +101,7 @@ export function useNearestCenter(location, options = {}) {
     const lastEvaluationTimeRef = useRef(0)
     const currentTargetRef = useRef(null)
     const currentDurationRef = useRef(null)
+    const lastEvaluatedModeRef = useRef(mode)
     const abortRef = useRef(null)
     const evalIdRef = useRef(0)
 
@@ -93,12 +114,14 @@ export function useNearestCenter(location, options = {}) {
             setNearestCenter(null)
             currentTargetRef.current = null
             currentDurationRef.current = null
+            lastEvaluatedModeRef.current = mode
             return
         }
 
+        const modeChanged = lastEvaluatedModeRef.current !== mode
         const now = Date.now()
-        // Anti-flicker: re-run selection at most every 45 s, unless forced
-        if (!isForced && lastEvaluationTimeRef.current > 0 && (now - lastEvaluationTimeRef.current) < 45000) {
+        // Anti-flicker: re-run selection at most every 45 s, unless forced or mode changed
+        if (!isForced && !modeChanged && lastEvaluationTimeRef.current > 0 && (now - lastEvaluationTimeRef.current) < 45000) {
             return
         }
 
@@ -130,15 +153,16 @@ export function useNearestCenter(location, options = {}) {
                 setNearestCenter(null)
                 currentTargetRef.current = null
                 currentDurationRef.current = null
+                lastEvaluatedModeRef.current = mode
                 return
             }
 
             setCandidates(rawCandidates)
 
-            // 2. ONE OSRM table request (user -> all candidates) to get road duration
+            // 2. ONE OSRM table request (user -> all candidates) to get road duration for the selected mode
             let durations = []
             try {
-                durations = await fetchOsrmTableDurations({ lat, lng }, rawCandidates, {
+                durations = await fetchOsrmTableDurations({ lat, lng }, rawCandidates, mode, {
                     signal: controller.signal,
                     timeoutMs: 8000,
                 })
@@ -184,13 +208,14 @@ export function useNearestCenter(location, options = {}) {
                 return
             }
 
-            // 4. Anti-flicker: Only switch target if the new center is at least 20% faster than the current one.
+            // 4. Anti-flicker: Only switch target if the new center is at least 20% faster than the current one (within the same mode).
+            // When mode changes, we select the optimal center for that mode without comparing mismatched units.
             const prevTarget = currentTargetRef.current
             const prevDuration = currentDurationRef.current
 
             let finalTarget = chosen
 
-            if (prevTarget && prevTarget.id !== chosen.id) {
+            if (!modeChanged && prevTarget && prevTarget.id !== chosen.id) {
                 const prevWasFull = Boolean(prevTarget.is_full)
                 const newIsFull = Boolean(chosen.is_full)
 
@@ -213,6 +238,7 @@ export function useNearestCenter(location, options = {}) {
 
             currentTargetRef.current = finalTarget
             currentDurationRef.current = finalTarget.duration
+            lastEvaluatedModeRef.current = mode
             lastEvaluationTimeRef.current = Date.now()
 
             setNearestCenter(finalTarget)
@@ -231,9 +257,9 @@ export function useNearestCenter(location, options = {}) {
                 setLoading(false)
             }
         }
-    }, [enabled, hasGps, lat, lng])
+    }, [enabled, hasGps, lat, lng, mode])
 
-    // Trigger on location/enabled update (subject to 45s anti-flicker throttle)
+    // Trigger on location/enabled/mode update (subject to 45s anti-flicker throttle, except when mode changes)
     useEffect(() => {
         if (!enabled) {
             currentTargetRef.current = null
@@ -252,8 +278,9 @@ export function useNearestCenter(location, options = {}) {
             return
         }
 
-        evaluate(false)
-    }, [enabled, hasGps, lat, lng, evaluate])
+        const isModeChange = lastEvaluatedModeRef.current !== mode
+        evaluate(isModeChange)
+    }, [enabled, hasGps, lat, lng, mode, evaluate])
 
     // Scheduled 45s anti-flicker interval
     useEffect(() => {

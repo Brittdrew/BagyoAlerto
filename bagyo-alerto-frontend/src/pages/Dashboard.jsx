@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import axios from "axios"
 import Select from "react-select"
 import { useNavigate } from "react-router-dom"
-import MapView from "../components/MapView"
+import MapView, { formatWalkTime } from "../components/MapView"
 
 import Sidebar from "../components/Sidebar"
 import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
@@ -436,8 +436,11 @@ function EvacRoutes({
     selectedBarangay,
     routedCenter,
     routeDistance,
+    routeMinutes,
     hasLiveGps,
     barangays = [],
+    travelMode = "foot",
+    onTravelModeChange,
 }) {
     const needsEvac = ["high", "critical", "catastrophic"].includes(severity)
     const isActive = ["moderate", "high", "critical", "catastrophic"].includes(severity)
@@ -497,6 +500,24 @@ function EvacRoutes({
         distanceText = `${parseFloat(displayCenter.distance).toFixed(1)} km from barangay center`
     }
 
+    // ETA display logic for selected mode:
+    const modeLabel = travelMode === "car" ? "drive" : "walk"
+    let etaMins = (routeMinutes !== null && routeMinutes !== undefined && Number.isFinite(routeMinutes))
+        ? routeMinutes
+        : null
+
+    if (etaMins === null) {
+        const distNum = isLiveActive
+            ? (routeDistance ? parseFloat(routeDistance) : (displayCenter?.distance_km ? parseFloat(displayCenter.distance_km) : null))
+            : (displayCenter?.distance ? parseFloat(displayCenter.distance) : null)
+        if (distNum !== null && Number.isFinite(distNum)) {
+            const speed = travelMode === "car" ? 30 : 4.5
+            etaMins = Math.max(1, Math.round((distNum / speed) * 60))
+        }
+    }
+
+    const etaText = etaMins ? `~${formatWalkTime(etaMins)} ${modeLabel}` : null
+
     return (
         <div style={{
             ...styles.evacCard,
@@ -506,20 +527,99 @@ function EvacRoutes({
             <div style={styles.evacHeader}>
                 <Route size={15} style={{ color: needsEvac ? "#501313" : "#333" }} />
                 <span style={{ ...styles.evacTitle, color: needsEvac ? "#501313" : "#333" }}>Evacuation routes</span>
+
+                {onTravelModeChange && (
+                    <div style={{
+                        display: "inline-flex",
+                        background: "#e2e8f0",
+                        borderRadius: 6,
+                        padding: 2,
+                        marginLeft: "auto",
+                        marginRight: isActive ? 8 : 0,
+                        gap: 2,
+                    }}>
+                        <button
+                            type="button"
+                            id="evac-mode-walk"
+                            onClick={() => onTravelModeChange("foot")}
+                            style={{
+                                padding: "3px 8px",
+                                fontSize: 11,
+                                fontWeight: travelMode === "foot" ? 700 : 500,
+                                borderRadius: 4,
+                                border: "none",
+                                background: travelMode === "foot" ? "#1a237e" : "transparent",
+                                color: travelMode === "foot" ? "#ffffff" : "#475569",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Walk
+                        </button>
+                        <button
+                            type="button"
+                            id="evac-mode-vehicle"
+                            onClick={() => onTravelModeChange("car")}
+                            style={{
+                                padding: "3px 8px",
+                                fontSize: 11,
+                                fontWeight: travelMode === "car" ? 700 : 500,
+                                borderRadius: 4,
+                                border: "none",
+                                background: travelMode === "car" ? "#1a237e" : "transparent",
+                                color: travelMode === "car" ? "#ffffff" : "#475569",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Vehicle
+                        </button>
+                    </div>
+                )}
+
                 {isActive && (
-                    <span style={{ marginLeft: "auto", fontSize: 10, background: "#E24B4A", color: "#fff", padding: "2px 8px", borderRadius: 20 }}>
+                    <span style={{ fontSize: 10, background: "#E24B4A", color: "#fff", padding: "2px 8px", borderRadius: 20 }}>
                         ACTIVE
                     </span>
                 )}
             </div>
+
+            {/* Small note when Vehicle is selected (Requirement 6) */}
+            {travelMode === "car" && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "#fffbeb",
+                    border: "1px solid #fde68a",
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    marginTop: 8,
+                    marginBottom: 4,
+                    fontSize: 11,
+                    color: "#92400e",
+                    lineHeight: 1.35,
+                }}>
+                    <AlertTriangle size={13} style={{ color: "#d97706", flexShrink: 0 }} />
+                    <span>Roads may be flooded or blocked. Follow barangay officials' instructions.</span>
+                </div>
+            )}
+
             <div style={{ ...styles.routeItem, borderBottom: `0.5px solid ${needsEvac ? "#F7C1C1" : "#eee"}` }}>
                 <div style={{ ...styles.routeNum, background: needsEvac ? "#E24B4A" : "#888" }}>1</div>
                 <div style={styles.routeInfo}>
                     <div style={{ ...styles.routeName, color: needsEvac ? "#501313" : "#333" }}>{displayCenter.name}</div>
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>{barangayText}</div>
-                    {distanceText && (
-                        <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
-                            <MapPin size={11} style={{ color: "inherit" }} /> {distanceText}
+                    {(distanceText || etaText) && (
+                        <div style={{ fontSize: 11, fontWeight: 600, color: needsEvac ? "#A32D2D" : "#1565c0", marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            {distanceText && (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                    <MapPin size={11} style={{ color: "inherit" }} /> {distanceText}
+                                </span>
+                            )}
+                            {etaText && (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                    <Clock size={11} style={{ color: "inherit" }} /> {etaText}
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>
@@ -612,7 +712,26 @@ export default function Dashboard() {
     const [routingActive, setRoutingActive] = useState(false)
     const [routedCenter, setRoutedCenter] = useState(null)
     const [routeDistance, setRouteDistance] = useState(null)
+    const [routeMinutes, setRouteMinutes] = useState(null)
     const [hasLiveGps, setHasLiveGps] = useState(false)
+    const [travelMode, setTravelMode] = useState(() => {
+        try {
+            const saved = localStorage.getItem("bakwit_travel_mode")
+            if (saved === "car" || saved === "foot") return saved
+        } catch (_e) {
+            // ignore
+        }
+        return "foot"
+    })
+
+    const handleTravelModeChange = useCallback((newMode) => {
+        setTravelMode(newMode)
+        try {
+            localStorage.setItem("bakwit_travel_mode", newMode)
+        } catch (_e) {
+            // ignore
+        }
+    }, [])
 
     useEffect(() => {
         const handleResize = () => setIsMobileScreen(window.innerWidth <= 768)
@@ -1241,8 +1360,10 @@ export default function Dashboard() {
                             severity={activeSeverity}
                             routedCenter={hasLiveGps ? routedCenter : null}
                             routeDistance={hasLiveGps ? routeDistance : null}
+                            routeMinutes={hasLiveGps ? routeMinutes : null}
                             evacuationCenter={result?.evacuation_center}
                             hasLiveGps={hasLiveGps}
+                            travelMode={travelMode}
                         />
 
                         {/* Self-arrival GPS controller — runs independently of severity */}
@@ -1329,15 +1450,21 @@ export default function Dashboard() {
                                     selectedBarangay={selectedBarangay}
                                     routedCenter={routedCenter}
                                     routeDistance={routeDistance}
+                                    routeMinutes={routeMinutes}
                                     hasLiveGps={hasLiveGps}
                                     barangays={barangays}
+                                    travelMode={travelMode}
+                                    onTravelModeChange={handleTravelModeChange}
                                 />
                                 <MapView
                                     evacuationCenter={result?.evacuation_center}
                                     barangay={selectedBarangay}
+                                    travelMode={travelMode}
+                                    onTravelModeChange={handleTravelModeChange}
                                     onRoutingChange={setRoutingActive}
                                     onRoutedCenterChange={setRoutedCenter}
                                     onRouteDistanceChange={setRouteDistance}
+                                    onRouteMinutesChange={setRouteMinutes}
                                     onLiveGpsChange={setHasLiveGps}
                                 />
                             </div>
@@ -1668,16 +1795,22 @@ export default function Dashboard() {
                                         selectedBarangay={selectedBarangay}
                                         routedCenter={routedCenter}
                                         routeDistance={routeDistance}
+                                        routeMinutes={routeMinutes}
                                         hasLiveGps={hasLiveGps}
                                         barangays={barangays}
+                                        travelMode={travelMode}
+                                        onTravelModeChange={handleTravelModeChange}
                                     />
                                     {selectedBarangay && (
                                     <MapView
                                         evacuationCenter={result?.evacuation_center}
                                         barangay={selectedBarangay}
+                                        travelMode={travelMode}
+                                        onTravelModeChange={handleTravelModeChange}
                                         onRoutingChange={setRoutingActive}
                                         onRoutedCenterChange={setRoutedCenter}
                                         onRouteDistanceChange={setRouteDistance}
+                                        onRouteMinutesChange={setRouteMinutes}
                                         onLiveGpsChange={setHasLiveGps}
                                     />
                                     )}

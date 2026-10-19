@@ -65,6 +65,17 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
     return d > 0 ? d.toFixed(1) : "0.1"
 }
 
+function formatDuration(minutes) {
+    if (minutes == null || !Number.isFinite(minutes)) return "—"
+    const m = Math.round(minutes)
+    if (m < 60) {
+        return `${m} min`
+    }
+    const hrs = Math.floor(m / 60)
+    const remMins = m % 60
+    return remMins > 0 ? `${hrs} h ${remMins} min` : `${hrs} h`
+}
+
 /**
  * EvacuationAlertBanner
  *
@@ -73,6 +84,8 @@ function calculateDistanceKm(lat1, lon1, lat2, lon2) {
  * @param {object|null} [props.selectedBarangay] - Full barangay object ({ id, name, city, latitude, longitude })
  * @param {string|null} [props.severity] - Rule-based severity level ('low'|'moderate'|'high'|'critical'|'catastrophic')
  * @param {function} [props.onShowRoute] - Callback when clicking "Show route"
+ * @param {"foot" | "car"} [props.travelMode="foot"] - Current travel mode
+ * @param {number|null} [props.routeMinutes] - Travel duration in minutes
  */
 export default function EvacuationAlertBanner({
     barangayId: propBarangayId,
@@ -81,8 +94,10 @@ export default function EvacuationAlertBanner({
     onShowRoute,
     routedCenter,
     routeDistance,
+    routeMinutes,
     evacuationCenter,
     hasLiveGps: propHasLiveGps,
+    travelMode = "foot",
 }) {
     const { barangayId: storedBarangayId } = useSavedBarangay()
     const activeBarangayId = propBarangayId ?? storedBarangayId ?? selectedBarangay?.value ?? selectedBarangay?.id ?? null
@@ -171,8 +186,26 @@ export default function EvacuationAlertBanner({
     const effectiveCenter = isLiveActive ? routedCenter : (evacuationCenter || targetCenter)
     const centerName = effectiveCenter?.name || targetCenter?.name || "the nearest evacuation center"
 
-    // When live GPS routing is active, show road distance to routed center
-    // When no live location (GPS denied or unavailable), show distance from barangay center
+    const modeLabel = travelMode === "car" ? "drive" : "walk"
+
+    let etaMins = (routeMinutes !== null && routeMinutes !== undefined && Number.isFinite(routeMinutes))
+        ? routeMinutes
+        : null
+
+    if (etaMins === null) {
+        const distNum = isLiveActive
+            ? (routeDistance ? parseFloat(routeDistance) : (routedCenter?.distance_km ? parseFloat(routedCenter.distance_km) : null))
+            : (evacuationCenter?.distance ? parseFloat(evacuationCenter.distance) : (targetCenter?.distance ? parseFloat(targetCenter.distance) : null))
+        if (distNum !== null && Number.isFinite(distNum)) {
+            const speed = travelMode === "car" ? 30 : 4.5
+            etaMins = Math.max(1, Math.round((distNum / speed) * 60))
+        }
+    }
+
+    const etaSuffix = etaMins ? ` (~${formatDuration(etaMins)} ${modeLabel})` : ""
+
+    // When live GPS routing is active, show road distance and ETA to routed center
+    // When no live location (GPS denied or unavailable), show distance and ETA from barangay center
     let distanceClause = "."
     if (isLiveActive) {
         const liveDist = routeDistance
@@ -181,12 +214,12 @@ export default function EvacuationAlertBanner({
                 ? calculateDistanceKm(position.lat, position.lng, Number(effectiveCenter.latitude), Number(effectiveCenter.longitude))
                 : null)
         if (liveDist) {
-            distanceClause = `, ${liveDist} km away.`
+            distanceClause = `, ${liveDist} km away${etaSuffix}.`
         }
     } else {
         const fallbackDist = evacuationCenter?.distance ?? targetCenter?.distance
         if (fallbackDist !== undefined && fallbackDist !== null) {
-            distanceClause = `, ${parseFloat(fallbackDist).toFixed(1)} km from barangay center.`
+            distanceClause = `, ${parseFloat(fallbackDist).toFixed(1)} km from barangay center${etaSuffix}.`
         }
     }
 
@@ -296,6 +329,24 @@ export default function EvacuationAlertBanner({
                     >
                         Severity is {normalizedSeverity.toUpperCase()} in {barangayName}. Evacuate now to {centerName}{distanceClause}
                     </div>
+
+                    {travelMode === "car" && (
+                        <div
+                            style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: "#ffecb3",
+                                marginTop: 6,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                lineHeight: 1.3,
+                            }}
+                        >
+                            <AlertTriangle size={13} style={{ color: "#ffd54f", flexShrink: 0 }} />
+                            <span>Roads may be flooded or blocked. Follow barangay officials' instructions.</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
