@@ -47,7 +47,7 @@ class OllamaService
     public function chat(string $systemPrompt, string $userMessage): ?string
     {
         try {
-            Log::info('Ollama chat() called, url: ' . $this->baseUrl);
+            Log::info('Ollama chat() called, url: ' . $this->baseUrl . ', model: ' . $this->model);
             Log::info('Ollama timeout: ' . $this->timeout);
 
             $response = Http::timeout($this->timeout)
