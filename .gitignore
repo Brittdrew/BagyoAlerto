@@ -9,3 +9,5 @@
 Thumbs.db
 .env.bak
 backup/
+
+/storage/logs/*.log
