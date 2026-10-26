@@ -4,12 +4,51 @@ import { Plus, Pencil, Trash2, Loader, Inbox, X } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { useAdminLists } from "../../context/AdminListsContext"
+import { HazardBadge } from "../../components/HazardBadge"
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const RISK_LEVELS = ["low", "moderate", "high", "critical"]
 const RISK_COLORS = { low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D" }
 
-const emptyForm = { name: "", city: "", latitude: "", longitude: "", risk_level: "low" }
+// Susceptibility select options  — value="" sends null to the backend
+const SUSCEPTIBILITY_OPTIONS = [
+    { value: "", label: "No zone mapped" },
+    { value: "low", label: "Low" },
+    { value: "moderate", label: "Moderate" },
+    { value: "high", label: "High" },
+    { value: "very_high", label: "Very high" },
+]
+
+const emptyForm = {
+    name: "",
+    city: "",
+    latitude: "",
+    longitude: "",
+    risk_level: "low",
+    flood_susceptibility: "",
+    landslide_susceptibility: "",
+}
+
+/** Compact hazard-source / checked-at secondary line shown in the table cell */
+function HazardMeta({ source, checkedAt }) {
+    if (!source && !checkedAt) return null
+    const isManual = source && source.startsWith("manual")
+    return (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, marginTop: 4 }}>
+            {isManual && (
+                <span style={styles.manualTag}>manual</span>
+            )}
+            {source && (
+                <span style={styles.metaText} title={source}>{source}</span>
+            )}
+            {checkedAt && (
+                <span style={styles.metaText}>
+                    {new Date(checkedAt).toLocaleDateString()}
+                </span>
+            )}
+        </div>
+    )
+}
 
 export default function AdminBarangays() {
     const { authHeaders } = useAdminAuth()
@@ -35,7 +74,7 @@ export default function AdminBarangays() {
         setLoading(false)
     }
 
-    useEffect(() => { fetchBarangays() }, [])
+    useEffect(() => { fetchBarangays() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const openAdd = () => {
         setEditingId(null)
@@ -52,6 +91,8 @@ export default function AdminBarangays() {
             latitude: String(b.latitude),
             longitude: String(b.longitude),
             risk_level: b.risk_level,
+            flood_susceptibility: b.flood_susceptibility ?? "",
+            landslide_susceptibility: b.landslide_susceptibility ?? "",
         })
         setModalOpen(true)
         setMessage(null)
@@ -77,6 +118,8 @@ export default function AdminBarangays() {
             latitude: parseFloat(form.latitude),
             longitude: parseFloat(form.longitude),
             risk_level: form.risk_level,
+            flood_susceptibility: form.flood_susceptibility || null,
+            landslide_susceptibility: form.landslide_susceptibility || null,
         }
         try {
             if (editingId) {
@@ -141,6 +184,8 @@ export default function AdminBarangays() {
                                 <th style={styles.th}>Latitude</th>
                                 <th style={styles.th}>Longitude</th>
                                 <th style={styles.th}>Risk Level</th>
+                                <th style={styles.th}>Flood</th>
+                                <th style={styles.th}>Landslide</th>
                                 <th style={styles.th}>Actions</th>
                             </tr>
                         </thead>
@@ -159,6 +204,15 @@ export default function AdminBarangays() {
                                         }}>
                                             {b.risk_level}
                                         </span>
+                                    </td>
+                                    {/* Flood column */}
+                                    <td style={styles.td}>
+                                        <HazardBadge type="flood" level={b.flood_susceptibility ?? null} />
+                                        <HazardMeta source={b.hazard_source} checkedAt={b.hazard_checked_at} />
+                                    </td>
+                                    {/* Landslide column */}
+                                    <td style={styles.td}>
+                                        <HazardBadge type="landslide" level={b.landslide_susceptibility ?? null} />
                                     </td>
                                     <td style={styles.td}>
                                         <div style={styles.actions}>
@@ -209,6 +263,41 @@ export default function AdminBarangays() {
                                     {RISK_LEVELS.map((r) => <option key={r} value={r}>{r}</option>)}
                                 </select>
                             </div>
+
+                            {/* Hazard susceptibility fields — super-admin only.
+                                There is only one admin role in this system; the section is always shown. */}
+                            <div style={styles.hazardSection}>
+                                <div style={styles.hazardSectionTitle}>Hazard Susceptibility (MGB)</div>
+                                <div style={styles.hazardHelper}>
+                                    Auto-filled from MGB maps via GeoRisk. Editing marks the value as manual.
+                                </div>
+                                <div style={styles.row}>
+                                    <div style={{ ...styles.field, flex: 1 }}>
+                                        <label style={styles.label}>Flood</label>
+                                        <select
+                                            style={styles.input}
+                                            value={form.flood_susceptibility}
+                                            onChange={(e) => setForm({ ...form, flood_susceptibility: e.target.value })}
+                                        >
+                                            {SUSCEPTIBILITY_OPTIONS.map((o) => (
+                                                <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div style={{ ...styles.field, flex: 1 }}>
+                                        <label style={styles.label}>Landslide</label>
+                                        <select
+                                            style={styles.input}
+                                            value={form.landslide_susceptibility}
+                                            onChange={(e) => setForm({ ...form, landslide_susceptibility: e.target.value })}
+                                        >
+                                            {SUSCEPTIBILITY_OPTIONS.map((o) => (
+                                                <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div style={styles.modalFooter}>
                             <div onClick={closeModal} style={styles.cancelBtn}>Cancel</div>
@@ -236,17 +325,24 @@ const styles = {
     },
     tableWrap: {
         background: "#fff", borderRadius: 10, border: "1px solid #e8ecf0",
-        overflow: "hidden", minHeight: 200,
+        overflow: "auto", minHeight: 200,
     },
     table: { width: "100%", borderCollapse: "collapse" },
     th: {
         textAlign: "left", padding: "12px 16px", fontSize: 11,
         fontWeight: 600, color: "#888", textTransform: "uppercase",
         letterSpacing: 0.5, background: "#f8f9fc", borderBottom: "1px solid #e8ecf0",
+        whiteSpace: "nowrap",
     },
     tr: { borderBottom: "1px solid #f0f0f0" },
-    td: { padding: "12px 16px", fontSize: 13, color: "#333" },
+    td: { padding: "12px 16px", fontSize: 13, color: "#333", verticalAlign: "top" },
     badge: { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, textTransform: "capitalize" },
+    manualTag: {
+        display: "inline-block", padding: "1px 6px", borderRadius: 10,
+        fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e",
+        border: "1px solid #fde68a", whiteSpace: "nowrap",
+    },
+    metaText: { fontSize: 10, color: "#999", whiteSpace: "nowrap" },
     actions: { display: "flex", gap: 8 },
     editBtn: { padding: 6, borderRadius: 6, background: "#f0f4ff", color: "#1a237e", cursor: "pointer" },
     deleteBtn: { padding: 6, borderRadius: 6, background: "#fcebeb", color: "#a32d2d", cursor: "pointer" },
@@ -257,16 +353,37 @@ const styles = {
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
     },
-    modal: { background: "#fff", borderRadius: 12, width: "100%", maxWidth: 480, boxShadow: "0 8px 32px rgba(0,0,0,0.2)" },
-    modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 20px", borderBottom: "1px solid #eee" },
+    modal: {
+        background: "#fff", borderRadius: 12, width: "100%", maxWidth: 520,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        // Flex-column: header and footer are always visible; only body scrolls
+        display: "flex", flexDirection: "column",
+        maxHeight: "calc(100vh - 60px)",
+    },
+    modalHeader: {
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "18px 20px", borderBottom: "1px solid #eee",
+        flexShrink: 0,
+    },
     modalTitle: { margin: 0, fontSize: 16, fontWeight: 600, color: "#1a237e" },
     closeBtn: { cursor: "pointer", color: "#888", padding: 4 },
-    modalBody: { padding: "20px" },
-    modalFooter: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid #eee" },
+    modalBody: { padding: "20px", overflowY: "auto", flex: "1 1 auto" },
+    modalFooter: {
+        display: "flex", justifyContent: "flex-end", gap: 10,
+        padding: "14px 20px", borderTop: "1px solid #eee",
+        flexShrink: 0,
+    },
     field: { marginBottom: 14 },
     row: { display: "flex", gap: 12 },
     label: { display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 5 },
     input: { width: "100%", padding: "9px 11px", border: "1px solid #ddd", borderRadius: 8, fontSize: 13, boxSizing: "border-box" },
     cancelBtn: { padding: "8px 16px", borderRadius: 8, fontSize: 13, cursor: "pointer", color: "#666", border: "1px solid #ddd" },
     saveBtn: { padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "#1a237e", color: "#fff" },
+    hazardSection: {
+        marginTop: 4, marginBottom: 6,
+        background: "#f8faff", border: "1px solid #dde3f5",
+        borderRadius: 8, padding: "12px 14px",
+    },
+    hazardSectionTitle: { fontSize: 12, fontWeight: 700, color: "#1a237e", marginBottom: 4 },
+    hazardHelper: { fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.4 },
 }

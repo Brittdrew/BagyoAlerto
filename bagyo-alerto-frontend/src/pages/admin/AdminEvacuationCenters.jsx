@@ -4,6 +4,35 @@ import { Plus, Pencil, Trash2, Loader, Inbox, X, Upload, ImageOff } from "lucide
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { useAdminLists } from "../../context/AdminListsContext"
+import { HazardBadge } from "../../components/HazardBadge"
+
+// Susceptibility select options — value="" sends null to the backend
+const SUSCEPTIBILITY_OPTIONS = [
+    { value: "", label: "No zone mapped" },
+    { value: "low", label: "Low" },
+    { value: "moderate", label: "Moderate" },
+    { value: "high", label: "High" },
+    { value: "very_high", label: "Very high" },
+]
+
+/** Compact source/date meta shown under a hazard badge in the table */
+function HazardMeta({ source, checkedAt }) {
+    if (!source && !checkedAt) return null
+    const isManual = source && source.startsWith("manual")
+    return (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 3, marginTop: 4 }}>
+            {isManual && (
+                <span style={{
+                    display: "inline-block", padding: "1px 6px", borderRadius: 10,
+                    fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e",
+                    border: "1px solid #fde68a", whiteSpace: "nowrap",
+                }}>manual</span>
+            )}
+            {source && <span style={{ fontSize: 10, color: "#999" }} title={source}>{source}</span>}
+            {checkedAt && <span style={{ fontSize: 10, color: "#bbb" }}>{new Date(checkedAt).toLocaleDateString()}</span>}
+        </div>
+    )
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "")
@@ -17,6 +46,8 @@ const emptyForm = {
     capacity: "",
     current_occupancy: "0",
     is_active: "1",
+    flood_susceptibility: "",
+    landslide_susceptibility: "",
 }
 
 export default function AdminEvacuationCenters() {
@@ -195,6 +226,8 @@ export default function AdminEvacuationCenters() {
             capacity: String(c.capacity),
             current_occupancy: String(c.current_occupancy ?? 0),
             is_active: c.is_active ? "1" : "0",
+            flood_susceptibility: c.flood_susceptibility ?? "",
+            landslide_susceptibility: c.landslide_susceptibility ?? "",
         })
         setModalOpen(true)
         setMessage(null)
@@ -222,6 +255,8 @@ export default function AdminEvacuationCenters() {
             longitude: parseFloat(form.longitude),
             capacity: parseInt(form.capacity, 10),
             is_active: form.is_active === "1",
+            flood_susceptibility: form.flood_susceptibility || null,
+            landslide_susceptibility: form.landslide_susceptibility || null,
         }
         try {
             if (editingId) {
@@ -254,6 +289,12 @@ export default function AdminEvacuationCenters() {
         }
     }
 
+    // Summary: count active centers in high/very_high hazard zone
+    const highHazardCount = centers.filter(
+        (c) => c.is_active && (c.hazard_level === "high" || c.hazard_level === "very_high")
+    ).length
+    const activeCentersCount = centers.filter((c) => c.is_active).length
+
     return (
         <AdminLayout title="Evacuation Centers">
             <div style={styles.toolbar}>
@@ -262,6 +303,19 @@ export default function AdminEvacuationCenters() {
                     <Plus size={16} /> Add Center
                 </div>
             </div>
+
+            {/* High-hazard summary line */}
+            {!loading && centers.length > 0 && (
+                <div style={{
+                    fontSize: 13, color: highHazardCount > 0 ? "#92400e" : "#555",
+                    background: highHazardCount > 0 ? "#fffbeb" : "#f8f9fc",
+                    border: `1px solid ${highHazardCount > 0 ? "#fde68a" : "#e8ecf0"}`,
+                    borderRadius: 8, padding: "8px 14px", marginBottom: 14,
+                    display: "inline-block",
+                }}>
+                    <strong>{highHazardCount}</strong> of <strong>{activeCentersCount}</strong> active center{activeCentersCount !== 1 ? "s" : ""} {highHazardCount === 1 ? "is" : "are"} in a high or very high hazard area (flood or landslide).
+                </div>
+            )}
 
             {/* Photo Management Panel */}
             <div style={styles.photoPanel}>
@@ -400,6 +454,8 @@ export default function AdminEvacuationCenters() {
                                 <th style={styles.th}>Capacity</th>
                                 <th style={styles.th}>Occupancy</th>
                                 <th style={styles.th}>Status</th>
+                                <th style={styles.th}>Flood</th>
+                                <th style={styles.th}>Landslide</th>
                                 <th style={styles.th}>Actions</th>
                             </tr>
                         </thead>
@@ -426,6 +482,15 @@ export default function AdminEvacuationCenters() {
                                         }}>
                                             {c.is_active ? "Active" : "Inactive"}
                                         </span>
+                                    </td>
+                                    {/* Flood hazard column */}
+                                    <td style={{ ...styles.td, verticalAlign: "top" }}>
+                                        <HazardBadge type="flood" level={c.flood_susceptibility ?? null} />
+                                        <HazardMeta source={c.hazard_source} checkedAt={c.hazard_checked_at} />
+                                    </td>
+                                    {/* Landslide hazard column */}
+                                    <td style={{ ...styles.td, verticalAlign: "top" }}>
+                                        <HazardBadge type="landslide" level={c.landslide_susceptibility ?? null} />
                                     </td>
                                     <td style={styles.td}>
                                         <div style={styles.actions}>
@@ -505,6 +570,40 @@ export default function AdminEvacuationCenters() {
                                     </div>
                                 </div>
                             )}
+
+                            {/* Hazard susceptibility selects */}
+                            <div style={hazardSectionStyle}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: "#1a237e", marginBottom: 4 }}>Hazard Susceptibility (MGB)</div>
+                                <div style={{ fontSize: 11, color: "#888", marginBottom: 12, lineHeight: 1.4 }}>
+                                    Auto-filled from MGB maps via GeoRisk. Editing marks the value as manual.
+                                </div>
+                                <div style={styles.row}>
+                                    <div style={{ ...styles.field, flex: 1 }}>
+                                        <label style={styles.label}>Flood</label>
+                                        <select
+                                            style={styles.input}
+                                            value={form.flood_susceptibility}
+                                            onChange={(e) => setForm({ ...form, flood_susceptibility: e.target.value })}
+                                        >
+                                            {SUSCEPTIBILITY_OPTIONS.map((o) => (
+                                                <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div style={{ ...styles.field, flex: 1 }}>
+                                        <label style={styles.label}>Landslide</label>
+                                        <select
+                                            style={styles.input}
+                                            value={form.landslide_susceptibility}
+                                            onChange={(e) => setForm({ ...form, landslide_susceptibility: e.target.value })}
+                                        >
+                                            {SUSCEPTIBILITY_OPTIONS.map((o) => (
+                                                <option key={o.value} value={o.value}>{o.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div style={styles.modalFooter}>
                             <div onClick={closeModal} style={styles.cancelBtn}>Cancel</div>
@@ -520,6 +619,12 @@ export default function AdminEvacuationCenters() {
             )}
         </AdminLayout>
     )
+}
+
+const hazardSectionStyle = {
+    marginTop: 4, marginBottom: 6,
+    background: "#f8faff", border: "1px solid #dde3f5",
+    borderRadius: 8, padding: "12px 14px",
 }
 
 const styles = {
@@ -550,12 +655,26 @@ const styles = {
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
     },
-    modal: { background: "#fff", borderRadius: 12, width: "100%", maxWidth: 520, boxShadow: "0 8px 32px rgba(0,0,0,0.2)" },
-    modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 20px", borderBottom: "1px solid #eee" },
+    modal: {
+        background: "#fff", borderRadius: 12, width: "100%", maxWidth: 520,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        // Flex-column: header and footer are always visible; only body scrolls
+        display: "flex", flexDirection: "column",
+        maxHeight: "calc(100vh - 60px)",
+    },
+    modalHeader: {
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "18px 20px", borderBottom: "1px solid #eee",
+        flexShrink: 0,
+    },
     modalTitle: { margin: 0, fontSize: 16, fontWeight: 600, color: "#1a237e" },
     closeBtn: { cursor: "pointer", color: "#888", padding: 4 },
-    modalBody: { padding: "20px" },
-    modalFooter: { display: "flex", justifyContent: "flex-end", gap: 10, padding: "14px 20px", borderTop: "1px solid #eee" },
+    modalBody: { padding: "20px", overflowY: "auto", flex: "1 1 auto" },
+    modalFooter: {
+        display: "flex", justifyContent: "flex-end", gap: 10,
+        padding: "14px 20px", borderTop: "1px solid #eee",
+        flexShrink: 0,
+    },
     field: { marginBottom: 14 },
     row: { display: "flex", gap: 12 },
     label: { display: "block", fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 5 },
