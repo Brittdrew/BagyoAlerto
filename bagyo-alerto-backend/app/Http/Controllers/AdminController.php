@@ -258,12 +258,26 @@ class AdminController extends Controller
         }
 
         $data = $request->validate([
-            'name'       => 'required|string|max:255',
-            'city'       => 'required|string|max:255',
-            'latitude'   => 'required|numeric',
-            'longitude'  => 'required|numeric',
-            'risk_level' => ['required', Rule::in(['low', 'moderate', 'high', 'critical'])],
+            'name'                     => 'required|string|max:255',
+            'city'                     => 'required|string|max:255',
+            'latitude'                 => 'required|numeric',
+            'longitude'                => 'required|numeric',
+            'risk_level'               => ['required', Rule::in(['low', 'moderate', 'high', 'critical'])],
+            'flood_susceptibility'     => ['nullable', Rule::in(['low', 'moderate', 'high', 'very_high'])],
+            'landslide_susceptibility' => ['nullable', Rule::in(['low', 'moderate', 'high', 'very_high'])],
         ]);
+
+        // When either susceptibility field changes, tag the source and timestamp.
+        $hazardChanged =
+            array_key_exists('flood_susceptibility', $data) &&
+                $data['flood_susceptibility'] !== $barangay->flood_susceptibility
+            || array_key_exists('landslide_susceptibility', $data) &&
+                $data['landslide_susceptibility'] !== $barangay->landslide_susceptibility;
+
+        if ($hazardChanged) {
+            $data['hazard_source']     = 'manual (admin)';
+            $data['hazard_checked_at'] = now();
+        }
 
         $barangay->update($data);
         Cache::forget(BarangayController::CACHE_KEY);
@@ -322,14 +336,28 @@ class AdminController extends Controller
         }
 
         $data = $request->validate([
-            'name'       => 'required|string|max:255',
-            'barangay_id' => 'required|integer|exists:barangays,id',
-            'address'    => 'required|string|max:500',
-            'latitude'   => 'required|numeric',
-            'longitude'  => 'required|numeric',
-            'capacity'   => 'required|integer|min:1',
-            'is_active'  => 'required|boolean',
+            'name'                     => 'required|string|max:255',
+            'barangay_id'              => 'required|integer|exists:barangays,id',
+            'address'                  => 'required|string|max:500',
+            'latitude'                 => 'required|numeric',
+            'longitude'                => 'required|numeric',
+            'capacity'                 => 'required|integer|min:1',
+            'is_active'                => 'required|boolean',
+            'flood_susceptibility'     => ['nullable', Rule::in(['low', 'moderate', 'high', 'very_high'])],
+            'landslide_susceptibility' => ['nullable', Rule::in(['low', 'moderate', 'high', 'very_high'])],
         ]);
+
+        // When either susceptibility field changes, tag the source and timestamp.
+        $hazardChanged =
+            array_key_exists('flood_susceptibility', $data) &&
+                $data['flood_susceptibility'] !== $center->flood_susceptibility
+            || array_key_exists('landslide_susceptibility', $data) &&
+                $data['landslide_susceptibility'] !== $center->landslide_susceptibility;
+
+        if ($hazardChanged) {
+            $data['hazard_source']     = 'manual (admin)';
+            $data['hazard_checked_at'] = now();
+        }
 
         $center->update($data);
         $center->load('barangay');

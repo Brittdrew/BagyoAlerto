@@ -210,6 +210,10 @@ export default function MapView({
     onRouteDistanceChange,
     onRouteMinutesChange,
     onLiveGpsChange,
+    // Hazard suggestion / preferred-center override
+    preferredCenterId,
+    onHazardSuggestionChange,
+    onNearestCenterOverrideRef,   // receives { setPreferredCenter, clearPreferredCenter }
 }) {
     const [internalTravelMode, setInternalTravelMode] = useState(() => {
         try {
@@ -366,10 +370,33 @@ export default function MapView({
         isFallback: nearestIsFallback,
         fallbackNotice: nearestFallbackNotice,
         loading: nearestLoading,
+        lowerHazardSuggestion,
+        setPreferredCenter,
+        clearPreferredCenter,
     } = useNearestCenter(position, {
         enabled: routeMode === "nearest" && Boolean(barangayId),
         mode: travelMode,
     })
+
+    // Forward preferred center ID into hook when parent supplies it
+    useEffect(() => {
+        if (preferredCenterId != null) {
+            setPreferredCenter(preferredCenterId)
+        } else {
+            clearPreferredCenter()
+        }
+    }, [preferredCenterId, setPreferredCenter, clearPreferredCenter])
+
+    // Surface hazard suggestion and override controls to parent
+    useEffect(() => {
+        onHazardSuggestionChange?.(lowerHazardSuggestion)
+    }, [lowerHazardSuggestion, onHazardSuggestionChange])
+
+    useEffect(() => {
+        if (onNearestCenterOverrideRef) {
+            onNearestCenterOverrideRef.current = { setPreferredCenter, clearPreferredCenter }
+        }
+    }, [setPreferredCenter, clearPreferredCenter, onNearestCenterOverrideRef])
 
     // Effective target based on routeMode and fallback
     const target = useMemo(() => {

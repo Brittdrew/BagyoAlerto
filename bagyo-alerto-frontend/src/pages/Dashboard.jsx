@@ -7,6 +7,7 @@ import MapView, { formatWalkTime } from "../components/MapView"
 import Sidebar from "../components/Sidebar"
 import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
 import SelfArrivalController from "../components/SelfArrivalController"
+import HazardCenterPanel from "../components/HazardCenterPanel"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
@@ -441,6 +442,11 @@ function EvacRoutes({
     barangays = [],
     travelMode = "foot",
     onTravelModeChange,
+    // Hazard panel props
+    lowerHazardSuggestion,
+    isOverrideActive,
+    onRouteHere,
+    onBackToNearest,
 }) {
     const needsEvac = ["high", "critical", "catastrophic"].includes(severity)
     const isActive = ["moderate", "high", "critical", "catastrophic"].includes(severity)
@@ -638,6 +644,18 @@ function EvacRoutes({
                     </div>
                 </div>
             </div>
+
+            {/* Hazard badges + warning + lower-hazard suggestion (only when live GPS routed) */}
+            {isLiveActive && (
+                <HazardCenterPanel
+                    center={displayCenter}
+                    lowerHazardSuggestion={lowerHazardSuggestion}
+                    isOverrideActive={Boolean(isOverrideActive)}
+                    onRouteHere={onRouteHere}
+                    onBackToNearest={onBackToNearest}
+                    travelMode={travelMode}
+                />
+            )}
         </div>
     )
 }
@@ -723,6 +741,12 @@ export default function Dashboard() {
         }
         return "foot"
     })
+
+    // Hazard suggestion + preferred-center override state
+    const [preferredCenterId, setPreferredCenterId] = useState(null)
+    const [lowerHazardSuggestion, setLowerHazardSuggestion] = useState(null)
+    // Ref that MapView fills with { setPreferredCenter, clearPreferredCenter }
+    const nearestOverrideRef = useRef(null)
 
     const handleTravelModeChange = useCallback((newMode) => {
         setTravelMode(newMode)
@@ -979,6 +1003,8 @@ export default function Dashboard() {
         setWeatherFetched(false)
         setRoutedCenter(null)
         setRouteDistance(null)
+        setPreferredCenterId(null)
+        setLowerHazardSuggestion(null)
         if (weatherTimer.current) clearTimeout(weatherTimer.current)
         clearAssessRetry()
         setIsManualOverride(false)
@@ -1448,13 +1474,17 @@ export default function Dashboard() {
                                     evacuationCenter={result?.evacuation_center}
                                     severity={activeSeverity}
                                     selectedBarangay={selectedBarangay}
-                                    routedCenter={routedCenter}
-                                    routeDistance={routeDistance}
-                                    routeMinutes={routeMinutes}
+                                    routedCenter={hasLiveGps ? routedCenter : null}
+                                    routeDistance={hasLiveGps ? routeDistance : null}
+                                    routeMinutes={hasLiveGps ? routeMinutes : null}
                                     hasLiveGps={hasLiveGps}
                                     barangays={barangays}
                                     travelMode={travelMode}
                                     onTravelModeChange={handleTravelModeChange}
+                                    lowerHazardSuggestion={lowerHazardSuggestion}
+                                    isOverrideActive={preferredCenterId != null}
+                                    onRouteHere={(id) => setPreferredCenterId(id)}
+                                    onBackToNearest={() => setPreferredCenterId(null)}
                                 />
                                 <MapView
                                     evacuationCenter={result?.evacuation_center}
@@ -1466,6 +1496,9 @@ export default function Dashboard() {
                                     onRouteDistanceChange={setRouteDistance}
                                     onRouteMinutesChange={setRouteMinutes}
                                     onLiveGpsChange={setHasLiveGps}
+                                    preferredCenterId={preferredCenterId}
+                                    onHazardSuggestionChange={setLowerHazardSuggestion}
+                                    onNearestCenterOverrideRef={nearestOverrideRef}
                                 />
                             </div>
                         )}
@@ -1793,13 +1826,17 @@ export default function Dashboard() {
                                         evacuationCenter={result?.evacuation_center}
                                         severity={activeSeverity}
                                         selectedBarangay={selectedBarangay}
-                                        routedCenter={routedCenter}
-                                        routeDistance={routeDistance}
-                                        routeMinutes={routeMinutes}
+                                        routedCenter={hasLiveGps ? routedCenter : null}
+                                        routeDistance={hasLiveGps ? routeDistance : null}
+                                        routeMinutes={hasLiveGps ? routeMinutes : null}
                                         hasLiveGps={hasLiveGps}
                                         barangays={barangays}
                                         travelMode={travelMode}
                                         onTravelModeChange={handleTravelModeChange}
+                                        lowerHazardSuggestion={lowerHazardSuggestion}
+                                        isOverrideActive={preferredCenterId != null}
+                                        onRouteHere={(id) => setPreferredCenterId(id)}
+                                        onBackToNearest={() => setPreferredCenterId(null)}
                                     />
                                     {selectedBarangay && (
                                     <MapView
@@ -1812,6 +1849,9 @@ export default function Dashboard() {
                                         onRouteDistanceChange={setRouteDistance}
                                         onRouteMinutesChange={setRouteMinutes}
                                         onLiveGpsChange={setHasLiveGps}
+                                        preferredCenterId={preferredCenterId}
+                                        onHazardSuggestionChange={setLowerHazardSuggestion}
+                                        onNearestCenterOverrideRef={nearestOverrideRef}
                                     />
                                     )}
                                 </div>

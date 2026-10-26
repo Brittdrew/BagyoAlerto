@@ -6,15 +6,27 @@ const OSRM_URL_CAR = (import.meta.env.VITE_OSRM_URL_CAR || "https://routing.open
 const OSRM_PROFILE_FOOT = import.meta.env.VITE_OSRM_PROFILE_FOOT || import.meta.env.VITE_OSRM_PROFILE || "foot"
 const OSRM_PROFILE_CAR = import.meta.env.VITE_OSRM_PROFILE_CAR || "car"
 
+/** Susceptibility rank (null → treated as unknown, not lower than anything) */
+const HAZARD_RANK = { low: 1, moderate: 2, high: 3, very_high: 4 }
+
 /**
  * Request road durations from origin (user) to all candidate centers using OSRM Table service.
  * Makes ONE table request: user -> all candidates.
+ *
+ * Durations returned are mode-consistent:
+ *   Car  → OSRM table duration (server uses road-speed data).
+ *   Foot → derived from OSRM road distance at 4.5 km/h, matching MapView loadRoute exactly:
+ *            mins = distance_km / 4.5  →  seconds = (distM / 1000 / 4.5) * 3600
+ *          Falls back to scaling OSRM seconds by (30 / 4.5) when distance annotation is absent.
+ *
+ * This guarantees the 10-min suggestion threshold and the +N label are correct for the active
+ * travel mode regardless of which backup OSRM server (foot vs driving) actually responds.
  *
  * @param {{ lat: number, lng: number }} userPos
  * @param {Array<{ latitude: number, longitude: number }>} candidates
  * @param {"foot" | "car"} [mode="foot"]
  * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
- * @returns {Promise<number[]>} Durations in seconds corresponding to the candidates array
+ * @returns {Promise<(number|null)[]>} Mode-consistent durations in seconds per candidate
  */
 async function fetchOsrmTableDurations(userPos, candidates, mode = "foot", { signal, timeoutMs = 8000 } = {}) {
     if (!candidates || candidates.length === 0) return []
@@ -31,6 +43,12 @@ async function fetchOsrmTableDurations(userPos, candidates, mode = "foot", { sig
     const backupServer = "https://router.project-osrm.org/table/v1/driving"
     const servers = primaryServer === backupServer ? [primaryServer] : [primaryServer, backupServer]
 
+    // Speed constants — mirror MapView loadRoute:
+    //   foot: (route.distance / 1000 / 4.5) * 60 minutes
+    //   car:  route.duration from OSRM (seconds)
+    const WALK_KMH = 4.5
+    const CAR_KMH  = 30   // only used as fallback scale when distance annotation is missing
+
     for (const server of servers) {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -38,15 +56,42 @@ async function fetchOsrmTableDurations(userPos, candidates, mode = "foot", { sig
         signal?.addEventListener("abort", onAbort)
 
         try {
-            const url = `${server}/${coords}?sources=0&destinations=${destIndices}`
+            // Request distance annotation alongside duration so we can derive foot seconds
+            // from road distance independently of the server's speed model.
+            const url = `${server}/${coords}?sources=0&destinations=${destIndices}&annotations=duration,distance`
             const res = await fetch(url, { signal: controller.signal })
             if (!res.ok) continue
             const data = await res.json()
-            if (data.code === "Ok" && Array.isArray(data.durations?.[0])) {
-                return data.durations[0]
-            }
+            if (data.code !== "Ok") continue
+
+            const osrmDurations = data.durations?.[0]  // seconds (server speed model)
+            const osrmDistances = data.distances?.[0]  // metres along road network
+
+            if (!Array.isArray(osrmDurations)) continue
+
+            const seconds = osrmDurations.map((osrmSec, i) => {
+                if (isCar) {
+                    // Car: OSRM duration is correct for road speeds.
+                    return (osrmSec !== null && Number.isFinite(osrmSec)) ? osrmSec : null
+                }
+
+                // Foot: compute from road distance at 4.5 km/h — same as MapView loadRoute.
+                const distM = Array.isArray(osrmDistances) ? osrmDistances[i] : null
+                if (distM !== null && distM !== undefined && Number.isFinite(distM) && distM > 0) {
+                    return (distM / 1000 / WALK_KMH) * 3600  // seconds at walking pace
+                }
+
+                // Distance annotation absent (older server) — scale driving seconds to foot pace.
+                if (osrmSec !== null && Number.isFinite(osrmSec)) {
+                    return osrmSec * (CAR_KMH / WALK_KMH)
+                }
+
+                return null
+            })
+
+            return seconds
         } catch {
-            // try backup server
+            // try next server
         } finally {
             clearTimeout(timer)
             signal?.removeEventListener("abort", onAbort)
@@ -57,15 +102,58 @@ async function fetchOsrmTableDurations(userPos, candidates, mode = "foot", { sig
 }
 
 /**
+ * Compute lower-hazard suggestion among a set of candidates with durations.
+ *
+ * A candidate qualifies if it:
+ *  - Is NOT the current routed center
+ *  - Is active (is_active !== false)
+ *  - Has free_space > 0  (capacity - occupancy)
+ *  - Has a strictly lower hazard_level rank (null = unknown, never counts as "lower")
+ *  - Travel duration is at most 600 s (10 min) longer than the routed center's
+ *
+ * Returns the closest qualifying candidate (shortest travel time), or null.
+ */
+function computeLowerHazardSuggestion(routedCenter, candidatesWithDurations) {
+    if (!routedCenter) return null
+
+    const routedRank = HAZARD_RANK[routedCenter.hazard_level] ?? 0
+    // Only suggest if routed center is high or very_high
+    if (routedRank < HAZARD_RANK["high"]) return null
+
+    const routedDuration = routedCenter.duration ?? Infinity
+
+    const qualifying = candidatesWithDurations
+        .filter((c) => {
+            if (c.id === routedCenter.id) return false
+            if (c.is_active === false) return false
+            const freeSpace = (c.free_space ?? (c.capacity - (c.occupancy ?? c.current_occupancy ?? 0)))
+            if (freeSpace <= 0) return false
+            const cRank = HAZARD_RANK[c.hazard_level] ?? 0
+            if (cRank === 0 || cRank >= routedRank) return false  // null or not lower
+            const duration = c.duration ?? Infinity
+            if (!Number.isFinite(duration)) return false
+            if (duration - routedDuration > 600) return false // more than 10 min longer
+            return true
+        })
+        .sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity))
+
+    return qualifying[0] ?? null
+}
+
+/**
  * useNearestCenter
  *
  * Hook to find the optimal nearest evacuation center based on live GPS:
- * 1. Fetches candidate centers via GET /api/evacuation-centers/nearest?lat=..&lng=..&limit=3.
+ * 1. Fetches candidate centers via GET /api/evacuation-centers/nearest?lat=..&lng=..&limit=5.
  * 2. Makes ONE OSRM table request (user -> all candidates) to get road durations for mode ("foot" | "car").
  * 3. Chooses the lowest-duration candidate that is not is_full (or lowest-duration with isFull=true if all full).
  * 4. Anti-flicker: Re-runs selection at most every 45 s, and only switches target if the new center
  *    is at least 20% faster than the current one. Mode change recalculates immediately without flip-flopping.
  * 5. Fallback: If GPS is unavailable/denied or nearest/OSRM fails, flags fallback.
+ * 6. preferredCenterId override: when set, the preferred center is used as the result instead of
+ *    the auto-selected nearest. Expose setPreferredCenterId and clearPreferredCenterId.
+ * 7. lowerHazardSuggestion: When routed center is high or very_high, computes a lower-hazard candidate
+ *    within 10 min extra travel time. Null if none qualifies.
  *
  * @param {{ lat: number, lng: number } | null} location - User's live coordinates.
  * @param {"foot" | "car" | { enabled?: boolean, mode?: "foot" | "car" }} [modeOrOptions="foot"]
@@ -92,6 +180,8 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
     const [isFull, setIsFull] = useState(false)
     const [isFallback, setIsFallback] = useState(false)
     const [fallbackNotice, setFallbackNotice] = useState(null)
+    const [preferredCenterId, setPreferredCenterId] = useState(null)
+    const [lowerHazardSuggestion, setLowerHazardSuggestion] = useState(null)
 
     const lat = location?.lat ?? location?.latitude
     const lng = location?.lng ?? location?.longitude
@@ -104,6 +194,18 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
     const lastEvaluatedModeRef = useRef(mode)
     const abortRef = useRef(null)
     const evalIdRef = useRef(0)
+    // Store all candidates with durations for suggestion computation
+    const candidatesWithDurationsRef = useRef([])
+
+    /** Set a preferred center override — only accepts an id that exists in candidates */
+    const setPreferredCenter = useCallback((id) => {
+        setPreferredCenterId(id ?? null)
+    }, [])
+
+    /** Clear the preferred center override (reverts to nearest) */
+    const clearPreferredCenter = useCallback(() => {
+        setPreferredCenterId(null)
+    }, [])
 
     const evaluate = useCallback(async (isForced = false) => {
         if (!enabled) return
@@ -112,6 +214,7 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
             setIsFallback(true)
             setFallbackNotice("Location unavailable. Routing to your barangay center.")
             setNearestCenter(null)
+            setLowerHazardSuggestion(null)
             currentTargetRef.current = null
             currentDurationRef.current = null
             lastEvaluatedModeRef.current = mode
@@ -134,8 +237,8 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
         setError(null)
 
         try {
-            // 1. Call GET /api/evacuation-centers/nearest?lat=..&lng=..&limit=3
-            const res = await fetch(`${API_BASE}/evacuation-centers/nearest?lat=${lat}&lng=${lng}&limit=3`, {
+            // 1. Call GET /api/evacuation-centers/nearest?lat=..&lng=..&limit=5
+            const res = await fetch(`${API_BASE}/evacuation-centers/nearest?lat=${lat}&lng=${lng}&limit=5`, {
                 signal: controller.signal,
             })
 
@@ -151,6 +254,7 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
                 setIsFallback(true)
                 setFallbackNotice("No nearby centers found. Using barangay center.")
                 setNearestCenter(null)
+                setLowerHazardSuggestion(null)
                 currentTargetRef.current = null
                 currentDurationRef.current = null
                 lastEvaluatedModeRef.current = mode
@@ -185,6 +289,7 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
                     duration: (d !== null && d !== undefined && Number.isFinite(d)) ? d : Infinity,
                 }
             })
+            candidatesWithDurationsRef.current = candidatesWithDurations
 
             // 3. Selection: Choose lowest-duration candidate that is not is_full.
             // If all are full, choose nearest by duration and show a "FULL" warning.
@@ -245,6 +350,9 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
             setIsFull(allFull || Boolean(finalTarget.is_full))
             setIsFallback(false)
             setFallbackNotice(null)
+
+            // 5. Compute lower-hazard suggestion against the auto-selected nearest
+            setLowerHazardSuggestion(computeLowerHazardSuggestion(finalTarget, candidatesWithDurations))
         } catch (err) {
             if (currentEvalId !== evalIdRef.current) return
             if (controller.signal.aborted) return
@@ -268,6 +376,7 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
             setNearestCenter(null)
             setIsFallback(false)
             setFallbackNotice(null)
+            setLowerHazardSuggestion(null)
             return
         }
 
@@ -297,8 +406,18 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
         abortRef.current?.abort()
     }, [])
 
+    // Derive the effective routed center:
+    // If preferredCenterId is set and found in candidates, use that one.
+    const effectiveCenter = (() => {
+        if (preferredCenterId != null) {
+            const preferred = candidatesWithDurationsRef.current.find((c) => c.id === preferredCenterId)
+            if (preferred) return preferred
+        }
+        return nearestCenter
+    })()
+
     return {
-        nearestCenter,
+        nearestCenter: effectiveCenter,
         candidates,
         loading,
         error,
@@ -306,6 +425,12 @@ export function useNearestCenter(location, modeOrOptions = "foot", extraOptions 
         isFallback,
         fallbackNotice,
         refetch: () => evaluate(true),
+        // Hazard suggestion API
+        lowerHazardSuggestion,
+        preferredCenterId,
+        setPreferredCenter,
+        clearPreferredCenter,
+        isOverrideActive: preferredCenterId != null,
     }
 }
 

@@ -15,7 +15,8 @@ class EvacuationCenterController extends Controller
     public function index()
     {
         $data = Cache::remember(self::CACHE_KEY, 60, function () {
-            return EvacuationCenter::with('barangay')->get()->toArray();
+            // Use map + toArray so $appends accessors (hazard_level) are included.
+            return EvacuationCenter::with('barangay')->get()->map->toArray()->values()->all();
         });
 
         return response()->json($data);
@@ -81,17 +82,22 @@ class EvacuationCenterController extends Controller
             $isFull = $freeSpace <= 0;
 
             return [
-                'id'            => (int) $center->id,
-                'name'          => (string) $center->name,
-                'barangay_id'   => $center->barangay_id !== null ? (int) $center->barangay_id : null,
-                'latitude'      => (float) $center->latitude,
-                'longitude'     => (float) $center->longitude,
-                'capacity'      => $capacity,
-                'occupancy'     => $occupancy,
-                'free_space'    => $freeSpace,
-                'is_full'       => $isFull,
-                'distance_km'   => round($distance, 2),
-                '_raw_distance' => $distance,
+                'id'                       => (int) $center->id,
+                'name'                     => (string) $center->name,
+                'barangay_id'              => $center->barangay_id !== null ? (int) $center->barangay_id : null,
+                'latitude'                 => (float) $center->latitude,
+                'longitude'                => (float) $center->longitude,
+                'capacity'                 => $capacity,
+                'occupancy'                => $occupancy,
+                'free_space'               => $freeSpace,
+                'is_full'                  => $isFull,
+                'distance_km'              => round($distance, 2),
+                '_raw_distance'            => $distance,
+                'flood_susceptibility'     => $center->flood_susceptibility,
+                'landslide_susceptibility' => $center->landslide_susceptibility,
+                'hazard_level'             => $center->hazard_level,
+                'hazard_source'            => $center->hazard_source,
+                'hazard_checked_at'        => $center->hazard_checked_at,
             ];
         });
 

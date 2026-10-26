@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { AlertTriangle, MapPin, Route } from "lucide-react"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 import { useLiveLocation } from "../hooks/useLiveLocation"
+import { HazardBadge } from "./HazardBadge"
 
 const API_BASE = import.meta.env.VITE_API_BASE
 
@@ -329,6 +330,14 @@ export default function EvacuationAlertBanner({
                     >
                         Severity is {normalizedSeverity.toUpperCase()} in {barangayName}. Evacuate now to {centerName}{distanceClause}
                     </div>
+
+                    {/* Hazard badges for the routed center (PART 2) */}
+                    {effectiveCenter && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                            <HazardBadge type="flood" level={effectiveCenter.flood_susceptibility ?? null} />
+                            <HazardBadge type="landslide" level={effectiveCenter.landslide_susceptibility ?? null} />
+                        </div>
+                    )}
 
                     {travelMode === "car" && (
                         <div

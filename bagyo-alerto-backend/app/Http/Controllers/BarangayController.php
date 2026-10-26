@@ -16,7 +16,8 @@ class BarangayController extends Controller
     public function index()
     {
         $data = Cache::remember(self::CACHE_KEY, 60, function () {
-            return Barangay::all()->toArray();
+            // Use map + toArray so $appends accessors (hazard_level) are included.
+            return Barangay::all()->map->toArray()->values()->all();
         });
 
         return response()->json($data);
@@ -82,15 +83,20 @@ class BarangayController extends Controller
     private function formatCenter(EvacuationCenter $center, bool $isFallback = false): array
     {
         return [
-            'id' => (int) $center->id,
-            'name' => (string) $center->name,
-            'address' => $center->address,
-            'latitude' => (float) $center->latitude,
-            'longitude' => (float) $center->longitude,
-            'capacity' => (int) $center->capacity,
-            'current_occupancy' => (int) $center->current_occupancy,
-            'barangay_id' => (int) $center->barangay_id,
-            'is_fallback' => $isFallback,
+            'id'                       => (int) $center->id,
+            'name'                     => (string) $center->name,
+            'address'                  => $center->address,
+            'latitude'                 => (float) $center->latitude,
+            'longitude'                => (float) $center->longitude,
+            'capacity'                 => (int) $center->capacity,
+            'current_occupancy'        => (int) $center->current_occupancy,
+            'barangay_id'              => (int) $center->barangay_id,
+            'is_fallback'              => $isFallback,
+            'flood_susceptibility'     => $center->flood_susceptibility,
+            'landslide_susceptibility' => $center->landslide_susceptibility,
+            'hazard_level'             => $center->hazard_level,
+            'hazard_source'            => $center->hazard_source,
+            'hazard_checked_at'        => $center->hazard_checked_at,
         ];
     }
 

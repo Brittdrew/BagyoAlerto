@@ -19,14 +19,54 @@ class EvacuationCenter extends Model
         'longitude',
         'capacity',
         'current_occupancy',
-        'is_active'
+        'is_active',
+        'flood_susceptibility',
+        'landslide_susceptibility',
+        'hazard_source',
+        'hazard_checked_at',
     ];
 
     protected $casts = [
         'current_occupancy' => 'integer',
-        'capacity' => 'integer',
-        'is_active' => 'boolean',
+        'capacity'          => 'integer',
+        'is_active'         => 'boolean',
     ];
+
+    protected $appends = ['hazard_level'];
+
+    /** Susceptibility rank order (ascending severity). */
+    private static array $RANK = [
+        'low'       => 1,
+        'moderate'  => 2,
+        'high'      => 3,
+        'very_high' => 4,
+    ];
+
+    /**
+     * Returns the worst of flood_susceptibility and landslide_susceptibility.
+     * Ordering: low < moderate < high < very_high.
+     * If only one is set, returns that one. If both are null, returns null.
+     */
+    public function getHazardLevelAttribute(): ?string
+    {
+        $flood     = $this->flood_susceptibility;
+        $landslide = $this->landslide_susceptibility;
+
+        if ($flood === null && $landslide === null) {
+            return null;
+        }
+        if ($flood === null) {
+            return $landslide;
+        }
+        if ($landslide === null) {
+            return $flood;
+        }
+
+        $rankF = self::$RANK[$flood]     ?? 0;
+        $rankL = self::$RANK[$landslide] ?? 0;
+
+        return $rankF >= $rankL ? $flood : $landslide;
+    }
 
     public function barangay()
     {
