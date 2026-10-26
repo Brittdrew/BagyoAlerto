@@ -5,6 +5,28 @@ import L from "leaflet"
 import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints, Camera, Info } from "lucide-react"
 import { useLiveLocation } from "../hooks/useLiveLocation"
 import { useNearestCenter } from "../hooks/useNearestCenter"
+import { HazardControl, HazardOverlayRenderer } from "./HazardOverlay"
+
+const HAZARD_LS_KEY = "bakwit_hazard_layers"
+const HAZARD_DEFAULT_OPACITY = 0.55
+
+function loadHazardState() {
+    try {
+        const raw = localStorage.getItem(HAZARD_LS_KEY)
+        if (!raw) return null
+        return JSON.parse(raw)
+    } catch (_e) {
+        return null
+    }
+}
+
+function saveHazardState(val) {
+    try {
+        localStorage.setItem(HAZARD_LS_KEY, JSON.stringify(val))
+    } catch (_e) {
+        /* ignore */
+    }
+}
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -211,6 +233,26 @@ export default function MapView({
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
     const [routeMode, setRouteMode] = useState("nearest") // "nearest" | "barangay" (session-only)
+
+    // Hazard overlay state (persisted via localStorage in HazardOverlay too, but we
+    // own it here so HazardControl (outside MapContainer) and HazardOverlayRenderer
+    // (inside MapContainer) share a single source of truth).
+    const [hazardLayers, setHazardLayers] = useState(() => {
+        const stored = loadHazardState()
+        return stored?.activeLayers ?? { flood: false, landslide: false }
+    })
+    const [hazardOpacity, setHazardOpacity] = useState(() => {
+        const stored = loadHazardState()
+        return stored?.opacity ?? HAZARD_DEFAULT_OPACITY
+    })
+
+    useEffect(() => {
+        saveHazardState({ activeLayers: hazardLayers, opacity: hazardOpacity })
+    }, [hazardLayers, hazardOpacity])
+
+    const handleHazardToggle = useCallback((key) => {
+        setHazardLayers((prev) => ({ ...prev, [key]: !prev[key] }))
+    }, [])
     const [barangayTarget, setBarangayTarget] = useState(initialCenter || null)
     const [barangayTargetLoading, setBarangayTargetLoading] = useState(false)
     const [barangayTargetError, setBarangayTargetError] = useState(null)
@@ -1008,6 +1050,14 @@ export default function MapView({
                     </button>
                 </div>
 
+                {/* Hazard overlay control panel – positioned below Street/Satellite toggle */}
+                <HazardControl
+                    activeLayers={hazardLayers}
+                    opacity={hazardOpacity}
+                    onToggleLayer={handleHazardToggle}
+                    onOpacityChange={setHazardOpacity}
+                />
+
                 {!mapReady && <div style={styles.loadingOverlay}>Loading map...</div>}
                 {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 48 : 0 }}>Updating route...</div>}
                 <MapContainer
@@ -1022,6 +1072,9 @@ export default function MapView({
                         url={mapType === "satellite" ? SATELLITE_URL : STREET_TILES_URL}
                         attribution={mapType === "satellite" ? SATELLITE_ATTRIBUTION : STREET_ATTRIBUTION}
                     />
+
+                    {/* Hazard overlay renderer – inside MapContainer so useMap() works */}
+                    <HazardOverlayRenderer activeLayers={hazardLayers} opacity={hazardOpacity} />
 
                     {/* Requirement 3: Accuracy circle sized from GPS accuracy */}
                     {hasLiveGps && Number.isFinite(accuracy) && accuracy > 0 && (
