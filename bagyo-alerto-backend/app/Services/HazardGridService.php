@@ -331,6 +331,289 @@ class HazardGridService
         return $earthRadius * $c;
     }
 
+    /**
+     * Generate up to 3 detour via points around the worst hazard stretch of the route.
+     *
+     * - Score the fastest route, find the worst contiguous stretch (highest summed exposure using weights in config/hazard.php).
+     * - Around the midpoint of that stretch, sample candidate points perpendicular to the route direction, left and right, at 250-800 m.
+     * - Keep only points whose grid cell is a lower hazard class than the stretch (and never high/very_high), prefer lowest class then smallest offset. Max 3, at least ~200 m apart.
+     *
+     * @param  array<int, array<int, float>|array{lat: float, lng: float}>  $routeCoords
+     * @param  string  $mode  'foot' | 'car'
+     * @return array<int, array{0: float, 1: float}>
+     */
+    public function detourPoints(array $routeCoords, string $mode = 'foot'): array
+    {
+        $this->ensureLoaded();
+
+        $n = count($routeCoords);
+        if ($n < 2) {
+            return [];
+        }
+
+        $weights = config('hazard.weights', [
+            'none' => 0, 'low' => 0, 'moderate' => 1, 'high' => 3, 'very_high' => 5,
+            0 => 0, 1 => 0, 2 => 1, 3 => 3, 4 => 5,
+        ]);
+
+        // 1. Densify edges and sample hazard along the route
+        $steps = [];
+        for ($i = 0; $i < $n - 1; $i++) {
+            [$lat1, $lng1] = $this->extractCoord($routeCoords[$i]);
+            [$lat2, $lng2] = $this->extractCoord($routeCoords[$i + 1]);
+
+            $d = $this->haversineDistance($lat1, $lng1, $lat2, $lng2);
+            if ($d <= 0.0001) {
+                continue;
+            }
+
+            $k = max(1, (int) ceil($d / 25.0));
+            $stepD = $d / $k;
+
+            for ($s = 1; $s <= $k; $s++) {
+                $t1 = ($s - 1) / $k;
+                $t2 = $s / $k;
+                $tMid = ($s - 0.5) / $k;
+
+                $sStartLat = $lat1 + $t1 * ($lat2 - $lat1);
+                $sStartLng = $lng1 + $t1 * ($lng2 - $lng1);
+                $sEndLat = $lat1 + $t2 * ($lat2 - $lat1);
+                $sEndLng = $lng1 + $t2 * ($lng2 - $lng1);
+                $sMidLat = $lat1 + $tMid * ($lat2 - $lat1);
+                $sMidLng = $lng1 + $tMid * ($lng2 - $lng1);
+
+                $sample = $this->lookup($sMidLat, $sMidLng);
+                $w = max($sample[0], $sample[1]);
+                $weight = $weights[$w] ?? 0;
+                $stepExp = $stepD * $weight;
+
+                $steps[] = [
+                    'startLat'     => $sStartLat,
+                    'startLng'     => $sStartLng,
+                    'endLat'       => $sEndLat,
+                    'endLng'       => $sEndLng,
+                    'midLat'       => $sMidLat,
+                    'midLng'       => $sMidLng,
+                    'length_m'     => $stepD,
+                    'hazard_class' => $w,
+                    'weight'       => $weight,
+                    'exposure'     => $stepExp,
+                ];
+            }
+        }
+
+        if (empty($steps)) {
+            return [];
+        }
+
+        // 2. Identify contiguous hazard stretches where weight > 0
+        $stretches = [];
+        $currentStretch = null;
+
+        foreach ($steps as $st) {
+            if ($st['weight'] > 0) {
+                if ($currentStretch === null) {
+                    $currentStretch = [
+                        'steps'    => [],
+                        'exposure' => 0.0,
+                        'length_m' => 0.0,
+                        'maxClass' => 0,
+                    ];
+                }
+                $currentStretch['steps'][] = $st;
+                $currentStretch['exposure'] += $st['exposure'];
+                $currentStretch['length_m'] += $st['length_m'];
+                if ($st['hazard_class'] > $currentStretch['maxClass']) {
+                    $currentStretch['maxClass'] = $st['hazard_class'];
+                }
+            } else {
+                if ($currentStretch !== null) {
+                    $stretches[] = $currentStretch;
+                    $currentStretch = null;
+                }
+            }
+        }
+        if ($currentStretch !== null) {
+            $stretches[] = $currentStretch;
+        }
+
+        if (empty($stretches)) {
+            return [];
+        }
+
+        // Find the worst contiguous stretch (highest summed exposure)
+        usort($stretches, fn($a, $b) => $b['exposure'] <=> $a['exposure']);
+        $worstStretch = $stretches[0];
+
+        if ($worstStretch['exposure'] <= 0.0 || $worstStretch['length_m'] <= 0.0) {
+            return [];
+        }
+
+        $stretchClass = $worstStretch['maxClass'];
+        $stretchSteps = $worstStretch['steps'];
+        $totalStretchLen = $worstStretch['length_m'];
+
+        // 3. Find the midpoint of that stretch (halfway by distance)
+        $halfLen = $totalStretchLen / 2.0;
+        $cumLen = 0.0;
+        $midLat = $stretchSteps[0]['midLat'];
+        $midLng = $stretchSteps[0]['midLng'];
+        $routeBearing = 0.0;
+
+        foreach ($stretchSteps as $st) {
+            if ($cumLen + $st['length_m'] >= $halfLen) {
+                $rem = $halfLen - $cumLen;
+                $frac = $st['length_m'] > 0 ? ($rem / $st['length_m']) : 0.5;
+                $frac = max(0.0, min(1.0, $frac));
+                $midLat = $st['startLat'] + $frac * ($st['endLat'] - $st['startLat']);
+                $midLng = $st['startLng'] + $frac * ($st['endLng'] - $st['startLng']);
+                $routeBearing = $this->calculateBearing($st['startLat'], $st['startLng'], $st['endLat'], $st['endLng']);
+                break;
+            }
+            $cumLen += $st['length_m'];
+        }
+
+        if ($routeBearing === 0.0 && count($stretchSteps) > 1) {
+            $first = $stretchSteps[0];
+            $last = end($stretchSteps);
+            $routeBearing = $this->calculateBearing($first['startLat'], $first['startLng'], $last['endLat'], $last['endLng']);
+        }
+
+        // 4. Sample candidate points around the midpoint perpendicular to route direction, left and right, at 250-800 m
+        $offsets = [250, 350, 500, 650, 800];
+
+        // Sample centers around midpoint: midpoint, and if stretch is long enough, around 30% and 70%
+        $centers = [[$midLat, $midLng, $routeBearing]];
+        if ($totalStretchLen >= 300.0) {
+            foreach ([0.3, 0.7] as $pct) {
+                $targetLen = $totalStretchLen * $pct;
+                $cLen = 0.0;
+                foreach ($stretchSteps as $st) {
+                    if ($cLen + $st['length_m'] >= $targetLen) {
+                        $rem = $targetLen - $cLen;
+                        $frac = $st['length_m'] > 0 ? ($rem / $st['length_m']) : 0.5;
+                        $cLat = $st['startLat'] + $frac * ($st['endLat'] - $st['startLat']);
+                        $cLng = $st['startLng'] + $frac * ($st['endLng'] - $st['startLng']);
+                        $cBrg = $this->calculateBearing($st['startLat'], $st['startLng'], $st['endLat'], $st['endLng']);
+                        $centers[] = [$cLat, $cLng, $cBrg];
+                        break;
+                    }
+                    $cLen += $st['length_m'];
+                }
+            }
+        }
+
+        $candidates = [];
+        $bbox = self::$meta['bbox'] ?? null;
+
+        foreach ($centers as [$cLat, $cLng, $cBrg]) {
+            $lBrg = fmod($cBrg - 90.0 + 360.0, 360.0);
+            $rBrg = fmod($cBrg + 90.0, 360.0);
+
+            foreach ($offsets as $offset) {
+                foreach ([$lBrg, $rBrg] as $brg) {
+                    [$pLat, $pLng] = $this->destinationPoint($cLat, $cLng, (float) $offset, $brg);
+
+                    // Ensure point is within bounding box if bbox is defined
+                    if ($bbox) {
+                        if ($pLat < $bbox['min_lat'] || $pLat > $bbox['max_lat'] ||
+                            $pLng < $bbox['min_lng'] || $pLng > $bbox['max_lng']) {
+                            continue;
+                        }
+                    }
+
+                    $sample = $this->lookup($pLat, $pLng);
+                    $pClass = max($sample[0], $sample[1]);
+
+                    // Condition: lower hazard class than the stretch AND never high (3) or very_high (4)
+                    if ($pClass < $stretchClass && $pClass < 3) {
+                        $candidates[] = [
+                            'lat'      => round($pLat, 6),
+                            'lng'      => round($pLng, 6),
+                            'class'    => $pClass,
+                            'offset_m' => (float) $offset,
+                        ];
+                    }
+                }
+            }
+        }
+
+        if (empty($candidates)) {
+            return [];
+        }
+
+        // 5. Prefer lowest class then smallest offset
+        usort($candidates, function ($a, $b) {
+            if ($a['class'] !== $b['class']) {
+                return $a['class'] <=> $b['class'];
+            }
+            return $a['offset_m'] <=> $b['offset_m'];
+        });
+
+        // 6. Max 3, at least ~200 m apart
+        $selected = [];
+        foreach ($candidates as $cand) {
+            $tooClose = false;
+            foreach ($selected as $s) {
+                if ($this->haversineDistance($cand['lat'], $cand['lng'], $s[0], $s[1]) < 195.0) {
+                    $tooClose = true;
+                    break;
+                }
+            }
+
+            if (! $tooClose) {
+                $selected[] = [$cand['lat'], $cand['lng']];
+                if (count($selected) === 3) {
+                    break;
+                }
+            }
+        }
+
+        return $selected;
+    }
+
+    /**
+     * Compute initial compass bearing from point 1 to point 2 in degrees (0..360).
+     */
+    public function calculateBearing(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $phi1 = deg2rad($lat1);
+        $phi2 = deg2rad($lat2);
+        $dLng = deg2rad($lng2 - $lng1);
+
+        $y = sin($dLng) * cos($phi2);
+        $x = cos($phi1) * sin($phi2) - sin($phi1) * cos($phi2) * cos($dLng);
+
+        $bearing = atan2($y, $x);
+        return fmod((rad2deg($bearing) + 360.0), 360.0);
+    }
+
+    /**
+     * Compute destination point coordinate given start point, distance in meters, and bearing in degrees.
+     *
+     * @return array{0: float, 1: float} [lat, lng]
+     */
+    public function destinationPoint(float $lat, float $lng, float $distanceM, float $bearingDeg): array
+    {
+        $earthRadius = 6371000.0;
+        $delta = $distanceM / $earthRadius;
+        $theta = deg2rad($bearingDeg);
+
+        $phi1 = deg2rad($lat);
+        $lambda1 = deg2rad($lng);
+
+        $phi2 = asin(sin($phi1) * cos($delta) + cos($phi1) * sin($delta) * cos($theta));
+        $lambda2 = $lambda1 + atan2(
+            sin($theta) * sin($delta) * cos($phi1),
+            cos($delta) - sin($phi1) * sin($phi2)
+        );
+
+        return [
+            rad2deg($phi2),
+            fmod(rad2deg($lambda2) + 540.0, 360.0) - 180.0,
+        ];
+    }
+
     private function ensureLoaded(): void
     {
         if (! self::$loaded || self::$meta === null) {

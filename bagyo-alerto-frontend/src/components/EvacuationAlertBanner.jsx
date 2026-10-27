@@ -373,7 +373,7 @@ export default function EvacuationAlertBanner({
                                     }}
                                 >
                                     <Shield size={12} style={{ color: routePref === "safest" ? "#16a34a" : "#86efac" }} />
-                                    <span>Safest ({routeSafetyInfo.safest.distanceKm} km · {formatDuration(routeSafetyInfo.safest.durationMins)})</span>
+                                    <span>Safest ({Number.isFinite(Number(routeSafetyInfo.safest?.distanceKm)) ? Number(routeSafetyInfo.safest.distanceKm).toFixed(1) : "--"} km · {formatDuration(routeSafetyInfo.safest?.durationMins)})</span>
                                 </button>
                                 <button
                                     type="button"
@@ -392,7 +392,7 @@ export default function EvacuationAlertBanner({
                                         gap: 5,
                                     }}
                                 >
-                                    <span>Fastest ({routeSafetyInfo.fastest.distanceKm} km · {formatDuration(routeSafetyInfo.fastest.durationMins)})</span>
+                                    <span>Fastest ({Number.isFinite(Number(routeSafetyInfo.fastest?.distanceKm)) ? Number(routeSafetyInfo.fastest.distanceKm).toFixed(1) : "--"} km · {formatDuration(routeSafetyInfo.fastest?.durationMins)})</span>
                                 </button>
                             </div>
                             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", lineHeight: 1.3 }}>
@@ -402,28 +402,52 @@ export default function EvacuationAlertBanner({
                     )}
 
                     {/* Single route exposure summary if no separate safest option */}
-                    {!routeSafetyInfo?.hasSafestOption && routeSafetyInfo?.singleRoute?.meters_by_class && (
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", marginTop: 6 }}>
-                            {formatExposureSummary(routeSafetyInfo.singleRoute.meters_by_class)}
+                    {!routeSafetyInfo?.hasSafestOption && routeSafetyInfo?.singleRoute && (
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", marginTop: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            {routeSafetyInfo.singleRouteLabel && (
+                                <span style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    background: "rgba(255,255,255,0.2)",
+                                    color: "#ffffff",
+                                    padding: "2px 7px",
+                                    borderRadius: 10,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                }}>
+                                    <Shield size={10} /> {routeSafetyInfo.singleRouteLabel}
+                                </span>
+                            )}
+                            {routeSafetyInfo.singleRoute.meters_by_class && (
+                                <span>{formatExposureSummary(routeSafetyInfo.singleRoute.meters_by_class)}</span>
+                            )}
                         </div>
                     )}
 
                     {/* High hazard remaining warning */}
-                    {getHighHazardMeters((routePref === "fastest" ? routeSafetyInfo?.fastest : routeSafetyInfo?.safest)?.meters_by_class) > 0 && (
-                        <div style={{
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: "#ffecb3",
-                            marginTop: 6,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            lineHeight: 1.3,
-                        }}>
-                            <AlertTriangle size={13} style={{ color: "#ffd54f", flexShrink: 0 }} />
-                            <span>This route still crosses {getHighHazardMeters((routePref === "fastest" ? routeSafetyInfo?.fastest : routeSafetyInfo?.safest)?.meters_by_class)} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
-                        </div>
-                    )}
+                    {(() => {
+                        const activeCand = routeSafetyInfo?.hasSafestOption
+                            ? (routePref === "fastest" ? routeSafetyInfo.fastest : routeSafetyInfo.safest)
+                            : (routeSafetyInfo?.singleRoute || null)
+                        const highMeters = activeCand ? getHighHazardMeters(activeCand.meters_by_class) : 0
+                        if (highMeters <= 0) return null
+                        return (
+                            <div style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: "#ffecb3",
+                                marginTop: 6,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                lineHeight: 1.3,
+                            }}>
+                                <AlertTriangle size={13} style={{ color: "#ffd54f", flexShrink: 0 }} />
+                                <span>This route still crosses {highMeters.toLocaleString()} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
+                            </div>
+                        )
+                    })()}
 
                     {travelMode === "car" && (
                         <div

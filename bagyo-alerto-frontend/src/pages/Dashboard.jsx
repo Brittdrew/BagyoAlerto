@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import React, { Component, useState, useEffect, useRef, useCallback } from "react"
 import axios from "axios"
 import Select from "react-select"
 import { useNavigate } from "react-router-dom"
@@ -41,6 +41,27 @@ function pickCurrentMetric(current, keys) {
 function toFixedOrEmpty(value, digits = 1) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return ""
     return Number(value).toFixed(digits)
+}
+
+function fmtKm(v, digits = 1) {
+    if (v === null || v === undefined) return "--"
+    const num = Number(v)
+    if (!Number.isFinite(num)) return "--"
+    return num.toFixed(digits)
+}
+
+function fmtMins(v) {
+    if (v === null || v === undefined) return "--"
+    const num = Number(v)
+    if (!Number.isFinite(num)) return "--"
+    return String(Math.max(1, Math.round(num)))
+}
+
+function fmtMeters(v) {
+    if (v === null || v === undefined) return "--"
+    const num = Number(v)
+    if (!Number.isFinite(num)) return "--"
+    return num.toLocaleString()
 }
 
 function metricDisplay(value) {
@@ -432,11 +453,55 @@ function FactorBar({ label, pct, color }) {
     )
 }
 
+class RouteErrorBoundary extends Component {
+    constructor(props) {
+        super(props)
+        this.state = { hasError: false, error: null }
+    }
+
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error }
+    }
+
+    componentDidCatch(error, errorInfo) {
+        console.error("[RouteErrorBoundary] Caught error:", error, errorInfo)
+    }
+
+    componentDidUpdate(prevProps) {
+        if (this.state.hasError && (prevProps.travelMode !== this.props.travelMode || prevProps.selectedBarangay !== this.props.selectedBarangay)) {
+            this.setState({ hasError: false, error: null })
+        }
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div style={{
+                    ...styles.evacCard,
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    color: "#991b1b",
+                    padding: "12px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 12,
+                }}>
+                    <AlertTriangle size={15} style={{ color: "#dc2626", flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600 }}>Route details unavailable</span>
+                </div>
+            )
+        }
+        return this.props.children
+    }
+}
+
 function EvacRoutes({
     evacuationCenter,
     severity,
     selectedBarangay,
     routedCenter,
+    originalCenter,
     routeDistance,
     routeMinutes,
     hasLiveGps,
@@ -502,12 +567,12 @@ function EvacRoutes({
     // When no live location (GPS denied or unavailable), keep using assess() center, but change label to "{N} km from barangay center" (e.g. 0.1 km from barangay center)
     let distanceText = null
     if (isLiveActive) {
-        const roadDist = routeDistance ?? (displayCenter.distance_km !== undefined ? displayCenter.distance_km : (displayCenter.distance !== undefined ? parseFloat(displayCenter.distance).toFixed(1) : null))
+        const roadDist = routeDistance ?? (displayCenter.distance_km !== undefined ? displayCenter.distance_km : (displayCenter.distance !== undefined ? fmtKm(displayCenter.distance, 1) : null))
         if (roadDist !== null && roadDist !== undefined) {
-            distanceText = `${roadDist} km away`
+            distanceText = `${typeof roadDist === "number" ? fmtKm(roadDist, 1) : roadDist} km away`
         }
     } else if (displayCenter.distance !== undefined && displayCenter.distance !== null) {
-        distanceText = `${parseFloat(displayCenter.distance).toFixed(1)} km from barangay center`
+        distanceText = `${fmtKm(displayCenter.distance, 1)} km from barangay center`
     }
 
     // ETA display logic for selected mode:
@@ -641,7 +706,7 @@ function EvacRoutes({
                 </div>
                 <div style={styles.routeInfo}>
                     <div style={{ ...styles.routeName, color: needsEvac ? "#501313" : "#333" }}>
-                        Capacity: {displayCenter.capacity?.toLocaleString()} persons
+                        Capacity: {displayCenter.capacity != null ? fmtMeters(displayCenter.capacity) : "--"} persons
                     </div>
                     <div style={{ ...styles.routeDesc, color: needsEvac ? "#793333" : "#888" }}>
                         {needsEvac ? "Mandatory evacuation recommended" : "Standby - monitor conditions"}
@@ -681,10 +746,10 @@ function EvacRoutes({
                                 )}
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
-                                {routeSafetyInfo.safest.distanceKm.toFixed(1)} km · ~{routeSafetyInfo.safest.durationMins} min
+                                {fmtKm(routeSafetyInfo.safest?.distanceKm)} km · ~{fmtMins(routeSafetyInfo.safest?.durationMins)} min
                             </div>
                             <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
-                                {formatExposureSummary(routeSafetyInfo.safest.meters_by_class)}
+                                {formatExposureSummary(routeSafetyInfo.safest?.meters_by_class)}
                             </div>
                         </button>
 
@@ -713,10 +778,10 @@ function EvacRoutes({
                                 )}
                             </div>
                             <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
-                                {routeSafetyInfo.fastest.distanceKm.toFixed(1)} km · ~{routeSafetyInfo.fastest.durationMins} min
+                                {fmtKm(routeSafetyInfo.fastest?.distanceKm)} km · ~{fmtMins(routeSafetyInfo.fastest?.durationMins)} min
                             </div>
                             <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
-                                {formatExposureSummary(routeSafetyInfo.fastest.meters_by_class)}
+                                {formatExposureSummary(routeSafetyInfo.fastest?.meters_by_class)}
                             </div>
                         </button>
                     </div>
@@ -773,7 +838,7 @@ function EvacRoutes({
                         gap: 6
                     }}>
                         <AlertTriangle size={14} style={{ color: "#e11d48", flexShrink: 0 }} />
-                        <span>This route still crosses {highHazard.toLocaleString()} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
+                        <span>This route still crosses {fmtMeters(highHazard)} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
                     </div>
                 )
             })()}
@@ -793,7 +858,7 @@ function EvacRoutes({
                 }}>
                     <span style={{ fontWeight: 600 }}>Route hazard:</span>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#2563eb", display: "inline-block" }} /> Safe / Low
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#2563eb", display: "inline-block" }} /> Low / None
                     </span>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
                         <span style={{ width: 8, height: 8, borderRadius: 2, background: "#f59e0b", display: "inline-block" }} /> Moderate
@@ -811,6 +876,7 @@ function EvacRoutes({
             {isLiveActive && (
                 <HazardCenterPanel
                     center={displayCenter}
+                    originalCenter={originalCenter}
                     lowerHazardSuggestion={lowerHazardSuggestion}
                     isOverrideActive={Boolean(isOverrideActive)}
                     onRouteHere={onRouteHere}
@@ -907,6 +973,7 @@ export default function Dashboard() {
     // Hazard suggestion + preferred-center override state
     const [preferredCenterId, setPreferredCenterId] = useState(null)
     const [lowerHazardSuggestion, setLowerHazardSuggestion] = useState(null)
+    const [baseTarget, setBaseTarget] = useState(null)
     // Ref that MapView fills with { setPreferredCenter, clearPreferredCenter }
     const nearestOverrideRef = useRef(null)
 
@@ -921,6 +988,10 @@ export default function Dashboard() {
 
     const handleTravelModeChange = useCallback((newMode) => {
         setTravelMode(newMode)
+        setPreferredCenterId(null)
+        setLowerHazardSuggestion(null)
+        // Reset stale route safety info on mode change so walk data is never rendered with vehicle UI
+        setRouteSafetyInfo(null)
         try {
             localStorage.setItem("bakwit_travel_mode", newMode)
         } catch (_e) {
@@ -1644,25 +1715,27 @@ export default function Dashboard() {
                         {/* Mobile-only: live evacuation route directly after barangay selector (before weather cards) */}
                         {isMobileScreen && selectedBarangay && (
                             <div className="bakwit-mobile-evac-early" id="evacuation-map-section-mobile">
-                                <EvacRoutes
-                                    evacuationCenter={result?.evacuation_center}
-                                    severity={activeSeverity}
-                                    selectedBarangay={selectedBarangay}
-                                    routedCenter={hasLiveGps ? routedCenter : null}
-                                    routeDistance={hasLiveGps ? routeDistance : null}
-                                    routeMinutes={hasLiveGps ? routeMinutes : null}
-                                    hasLiveGps={hasLiveGps}
-                                    barangays={barangays}
-                                    travelMode={travelMode}
-                                    onTravelModeChange={handleTravelModeChange}
-                                    lowerHazardSuggestion={lowerHazardSuggestion}
-                                    isOverrideActive={preferredCenterId != null}
-                                    onRouteHere={(id) => setPreferredCenterId(id)}
-                                    onBackToNearest={() => setPreferredCenterId(null)}
-                                    routeSafetyInfo={routeSafetyInfo}
-                                    routePref={routePref}
-                                    onRoutePrefChange={handleRoutePrefChange}
-                                />
+                                <RouteErrorBoundary travelMode={travelMode} selectedBarangay={selectedBarangay}>
+                                    <EvacRoutes
+                                        evacuationCenter={result?.evacuation_center}
+                                        severity={activeSeverity}
+                                        selectedBarangay={selectedBarangay}
+                                        routedCenter={hasLiveGps ? routedCenter : null}
+                                        routeDistance={hasLiveGps ? routeDistance : null}
+                                        routeMinutes={hasLiveGps ? routeMinutes : null}
+                                        hasLiveGps={hasLiveGps}
+                                        barangays={barangays}
+                                        travelMode={travelMode}
+                                        onTravelModeChange={handleTravelModeChange}
+                                        lowerHazardSuggestion={lowerHazardSuggestion}
+                                        isOverrideActive={preferredCenterId != null}
+                                        onRouteHere={(id) => setPreferredCenterId(id)}
+                                        onBackToNearest={() => setPreferredCenterId(null)}
+                                        routeSafetyInfo={routeSafetyInfo}
+                                        routePref={routePref}
+                                        onRoutePrefChange={handleRoutePrefChange}
+                                    />
+                                </RouteErrorBoundary>
                                 <MapView
                                     evacuationCenter={result?.evacuation_center}
                                     barangay={selectedBarangay}
@@ -2002,25 +2075,28 @@ export default function Dashboard() {
                         <div className="bakwit-row3" style={styles.row3}>
                             {!isMobileScreen && (
                                 <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                                    <EvacRoutes
-                                        evacuationCenter={result?.evacuation_center}
-                                        severity={activeSeverity}
-                                        selectedBarangay={selectedBarangay}
-                                        routedCenter={hasLiveGps ? routedCenter : null}
-                                        routeDistance={hasLiveGps ? routeDistance : null}
-                                        routeMinutes={hasLiveGps ? routeMinutes : null}
-                                        hasLiveGps={hasLiveGps}
-                                        barangays={barangays}
-                                        travelMode={travelMode}
-                                        onTravelModeChange={handleTravelModeChange}
-                                        lowerHazardSuggestion={lowerHazardSuggestion}
-                                        isOverrideActive={preferredCenterId != null}
-                                        onRouteHere={(id) => setPreferredCenterId(id)}
-                                        onBackToNearest={() => setPreferredCenterId(null)}
-                                        routeSafetyInfo={routeSafetyInfo}
-                                        routePref={routePref}
-                                        onRoutePrefChange={handleRoutePrefChange}
-                                    />
+                                    <RouteErrorBoundary travelMode={travelMode} selectedBarangay={selectedBarangay}>
+                                        <EvacRoutes
+                                            evacuationCenter={result?.evacuation_center}
+                                            severity={activeSeverity}
+                                            selectedBarangay={selectedBarangay}
+                                            routedCenter={hasLiveGps ? routedCenter : null}
+                                            originalCenter={baseTarget || result?.evacuation_center}
+                                            routeDistance={hasLiveGps ? routeDistance : null}
+                                            routeMinutes={hasLiveGps ? routeMinutes : null}
+                                            hasLiveGps={hasLiveGps}
+                                            barangays={barangays}
+                                            travelMode={travelMode}
+                                            onTravelModeChange={handleTravelModeChange}
+                                            lowerHazardSuggestion={lowerHazardSuggestion}
+                                            isOverrideActive={preferredCenterId != null}
+                                            onRouteHere={(id) => setPreferredCenterId(id)}
+                                            onBackToNearest={() => setPreferredCenterId(null)}
+                                            routeSafetyInfo={routeSafetyInfo}
+                                            routePref={routePref}
+                                            onRoutePrefChange={handleRoutePrefChange}
+                                        />
+                                    </RouteErrorBoundary>
                                     {selectedBarangay && (
                                     <MapView
                                         evacuationCenter={result?.evacuation_center}
@@ -2035,6 +2111,8 @@ export default function Dashboard() {
                                         preferredCenterId={preferredCenterId}
                                         onHazardSuggestionChange={setLowerHazardSuggestion}
                                         onNearestCenterOverrideRef={nearestOverrideRef}
+                                        onBaseTargetChange={setBaseTarget}
+                                        onClearOverride={() => setPreferredCenterId(null)}
                                         onRouteSafetyChange={setRouteSafetyInfo}
                                         routePref={routePref}
                                         onRoutePrefChange={handleRoutePrefChange}

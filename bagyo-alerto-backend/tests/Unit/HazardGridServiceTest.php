@@ -179,4 +179,131 @@ class HazardGridServiceTest extends TestCase
         $this->assertEquals(0.0, $single['length_m']);
         $this->assertEquals(0.0, $single['exposure_index']);
     }
+
+    private function setDetourFixtureGrid(): void
+    {
+        $meta = [
+            'bbox' => ['min_lat' => 9.70, 'max_lat' => 9.73, 'min_lng' => 125.40, 'max_lng' => 125.43],
+            'width' => 3,
+            'height' => 3,
+            'cell_size_m' => 25.0,
+            'generated_at' => '2026-10-27T00:00:00Z',
+            'source' => 'Synthetic Test Fixture',
+        ];
+        // Col 0: all safe 0
+        // Col 1: row 0 = 0, row 1 = 2 (moderate), row 2 = 3 (high)
+        // Col 2: all safe 0
+        $flood = pack('C*',
+            0, 0, 0,
+            0, 2, 0,
+            0, 3, 0
+        );
+        $landslide = pack('C*',
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0
+        );
+        $this->service->setFixtureGrid($meta, $flood, $landslide);
+    }
+
+    public function test_detour_points_returns_empty_for_safe_route(): void
+    {
+        $this->setDetourFixtureGrid();
+        // Route in safe column (col 0)
+        $coords = [
+            [9.728, 125.405],
+            [9.712, 125.405],
+        ];
+
+        $points = $this->service->detourPoints($coords, 'foot');
+        $this->assertEmpty($points);
+    }
+
+    public function test_detour_points_stretch_detection(): void
+    {
+        $this->setDetourFixtureGrid();
+        // Route down middle column:
+        // row 0: safe (lat ~9.725)
+        // row 1: moderate (lat ~9.715)
+        // row 2: high (lat ~9.705)
+        // The worst stretch is in row 2 (high). Detour points should be generated around lat 9.705.
+        $coords = [
+            [9.725, 125.415],
+            [9.715, 125.415],
+            [9.705, 125.415],
+        ];
+
+        $points = $this->service->detourPoints($coords, 'foot');
+
+        $this->assertNotEmpty($points);
+        $this->assertLessThanOrEqual(3, count($points));
+
+        // The worst stretch is row 2 (lat ~9.70-9.715)
+        foreach ($points as $pt) {
+            $this->assertGreaterThanOrEqual(9.70, $pt[0]);
+            $this->assertLessThanOrEqual(9.72, $pt[0]);
+        }
+    }
+
+    public function test_detour_points_offset_sampling(): void
+    {
+        $this->setDetourFixtureGrid();
+        $coords = [
+            [9.710, 125.415],
+            [9.702, 125.415],
+        ];
+
+        $points = $this->service->detourPoints($coords, 'foot');
+        $this->assertNotEmpty($points);
+
+        $midLat = 9.706;
+        $midLng = 125.415;
+
+        foreach ($points as $pt) {
+            $dist = $this->service->haversineDistance($midLat, $midLng, $pt[0], $pt[1]);
+            // Sample offsets are between 250m and 800m
+            $this->assertGreaterThanOrEqual(200.0, $dist);
+            $this->assertLessThanOrEqual(850.0, $dist);
+        }
+    }
+
+    public function test_detour_points_hazard_filtering(): void
+    {
+        $this->setDetourFixtureGrid();
+        $coords = [
+            [9.710, 125.415],
+            [9.702, 125.415],
+        ];
+
+        $points = $this->service->detourPoints($coords, 'foot');
+        $this->assertNotEmpty($points);
+
+        foreach ($points as $pt) {
+            $sample = $this->service->lookup($pt[0], $pt[1]);
+            $pClass = max($sample[0], $sample[1]);
+            // Must be strictly lower than stretch class (3) and never high/very_high (never 3 or 4)
+            $this->assertLessThan(3, $pClass, "Candidate point must never be high (3) or very_high (4)");
+            $this->assertContains($pClass, [0, 1, 2]);
+        }
+    }
+
+    public function test_detour_points_spacing(): void
+    {
+        $this->setDetourFixtureGrid();
+        $coords = [
+            [9.725, 125.415],
+            [9.715, 125.415],
+            [9.705, 125.415],
+        ];
+
+        $points = $this->service->detourPoints($coords, 'car');
+
+        $this->assertGreaterThanOrEqual(2, count($points), "Should generate at least 2 detour candidates");
+        for ($i = 0; $i < count($points); $i++) {
+            for ($j = $i + 1; $j < count($points); $j++) {
+                $dist = $this->service->haversineDistance($points[$i][0], $points[$i][1], $points[$j][0], $points[$j][1]);
+                $this->assertGreaterThanOrEqual(190.0, $dist, "Detour points must be at least ~200 m apart");
+            }
+        }
+    }
 }

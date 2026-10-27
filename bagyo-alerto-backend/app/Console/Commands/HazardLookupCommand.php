@@ -15,7 +15,7 @@ class HazardLookupCommand extends Command
                             {--force : Re-query rows whose susceptibility columns are already filled}
                             {--dry-run : Print what would be written without saving anything}';
 
-    protected $description = 'Fill flood_susceptibility and landslide_susceptibility from the GeoRisk MGB WMS';
+    protected $description = 'Fill flood and landslide susceptibility with 50m worst-case buffer and 100m proximity from GeoRisk MGB WMS';
 
     /** @var array<string, array{status:string,class:string|null,raw:string|null}> */
     private array $cache = [];
@@ -30,14 +30,12 @@ class HazardLookupCommand extends Command
             $this->warn('[DRY RUN] No data will be saved.');
         }
 
-        $services  = array_keys((array) config('hazard.services', []));
         $tableRows = [];
 
         if ($only !== 'centers') {
             $this->processCollection(
                 Barangay::whereNotNull('latitude')->whereNotNull('longitude')->get(),
                 'barangay',
-                $services,
                 $svc,
                 $force,
                 $dryRun,
@@ -49,7 +47,6 @@ class HazardLookupCommand extends Command
             $this->processCollection(
                 EvacuationCenter::whereNotNull('latitude')->whereNotNull('longitude')->get(),
                 'center',
-                $services,
                 $svc,
                 $force,
                 $dryRun,
@@ -58,7 +55,7 @@ class HazardLookupCommand extends Command
         }
 
         $this->table(
-            ['Type', 'Name', 'Lat', 'Lng', 'Flood', 'Landslide', 'Status'],
+            ['Type', 'Name', 'Flood Before', 'Flood After', 'Landslide Before', 'Landslide After', 'Point (F/L)', 'Nearby (F/L)', 'Status'],
             $tableRows
         );
 
@@ -67,13 +64,11 @@ class HazardLookupCommand extends Command
 
     /**
      * @param  \Illuminate\Support\Collection<int, Barangay|EvacuationCenter> $rows
-     * @param  array<int, string>  $services
      * @param  array<int, array>   $tableRows  (by reference)
      */
     private function processCollection(
         \Illuminate\Support\Collection $rows,
         string $type,
-        array $services,
         HazardLookupService $svc,
         bool $force,
         bool $dryRun,
@@ -83,58 +78,118 @@ class HazardLookupCommand extends Command
             $lat = (float) $row->latitude;
             $lng = (float) $row->longitude;
 
-            $colResults = [];    // service => result array
-            $statusParts = [];
-            $anyChange   = false;
+            $floodBefore     = $row->flood_susceptibility     ?? '—';
+            $landslideBefore = $row->landslide_susceptibility ?? '—';
+            $pointBefore     = ($row->flood_point_class ?? '—') . ' / ' . ($row->landslide_point_class ?? '—');
+            $nearbyBefore    = $this->formatNearby($row->flood_mapped_nearby, $row->landslide_mapped_nearby);
 
-            foreach ($services as $service) {
-                $col = "{$service}_susceptibility";
-
-                // Skip if already filled and --force not set
-                if (! $force && ! empty($row->{$col})) {
-                    $colResults[$service] = ['status' => 'skipped', 'class' => $row->{$col}, 'raw' => null];
-                    continue;
-                }
-
-                // Cache key: service + rounded coords (6 decimal places ≈ 0.1 m)
-                $cacheKey = "{$service}:" . round($lat, 6) . ':' . round($lng, 6);
-
-                if (! isset($this->cache[$cacheKey])) {
-                    usleep(300000); // 300 ms between real network calls
-                    $this->cache[$cacheKey] = $svc->lookup($lat, $lng, $service);
-                }
-
-                $result = $this->cache[$cacheKey];
-                $colResults[$service] = $result;
-
-                if ($result['status'] === 'ok') {
-                    if (! $dryRun) {
-                        $row->{$col} = $result['class'];
-                        $anyChange   = true;
-                    }
-                    $statusParts[] = "{$service}=ok";
-                } elseif ($result['status'] === 'no_data') {
-                    $statusParts[] = "{$service}=no_data";
-                } else {
-                    $statusParts[] = "{$service}=error";
-                }
+            // 5. Never overwrite rows whose hazard source is "manual (admin)"
+            if ($row->hazard_source === 'manual (admin)') {
+                $tableRows[] = [
+                    'type'             => $type,
+                    'name'             => $row->name ?? '(no name)',
+                    'flood_before'     => $floodBefore,
+                    'flood_after'      => $floodBefore,
+                    'landslide_before' => $landslideBefore,
+                    'landslide_after'  => $landslideBefore,
+                    'point'            => $pointBefore,
+                    'nearby'           => $nearbyBefore,
+                    'status'           => 'skipped (manual admin)',
+                ];
+                continue;
             }
 
-            if ($anyChange && ! $dryRun) {
-                $row->hazard_source     = 'MGB via GeoRisk WMS';
-                $row->hazard_checked_at = Carbon::now();
+            // Skip if already filled and --force not set
+            if (! $force && ! empty($row->flood_susceptibility) && ! empty($row->landslide_susceptibility)) {
+                $tableRows[] = [
+                    'type'             => $type,
+                    'name'             => $row->name ?? '(no name)',
+                    'flood_before'     => $floodBefore,
+                    'flood_after'      => $floodBefore,
+                    'landslide_before' => $landslideBefore,
+                    'landslide_after'  => $landslideBefore,
+                    'point'            => $pointBefore,
+                    'nearby'           => $nearbyBefore,
+                    'status'           => 'skipped',
+                ];
+                continue;
+            }
+
+            // Query radius samples for flood & landslide
+            $floodRes     = $svc->lookupWithRadius($lat, $lng, 'flood', $this->cache);
+            $landslideRes = $svc->lookupWithRadius($lat, $lng, 'landslide', $this->cache);
+
+            // 4. A failed or timed-out request must never be stored as no_data. Skip that row and report it.
+            if ($floodRes['status'] === 'error' || $landslideRes['status'] === 'error') {
+                $failedLayers = [];
+                if ($floodRes['status'] === 'error') {
+                    $failedLayers[] = 'flood';
+                }
+                if ($landslideRes['status'] === 'error') {
+                    $failedLayers[] = 'landslide';
+                }
+                $failedDesc = implode(' & ', $failedLayers);
+
+                $this->warn("Failed request for {$type} '{$row->name}' ({$failedDesc}) - skipped row.");
+
+                $tableRows[] = [
+                    'type'             => $type,
+                    'name'             => $row->name ?? '(no name)',
+                    'flood_before'     => $floodBefore,
+                    'flood_after'      => '(request failed)',
+                    'landslide_before' => $landslideBefore,
+                    'landslide_after'  => '(request failed)',
+                    'point'            => '— / —',
+                    'nearby'           => '— / —',
+                    'status'           => "skipped ({$failedDesc} error)",
+                ];
+                continue;
+            }
+
+            // Extract results
+            $floodWorst     = $floodRes['worst_class'];
+            $floodPoint     = $floodRes['point_class'];
+            $floodNearby    = $floodRes['mapped_nearby'];
+
+            $landslideWorst  = $landslideRes['worst_class'];
+            $landslidePoint  = $landslideRes['point_class'];
+            $landslideNearby = $landslideRes['mapped_nearby'];
+
+            $floodAfter     = $floodWorst     ?? 'no_data';
+            $landslideAfter = $landslideWorst ?? 'no_data';
+
+            if (! $dryRun) {
+                $row->flood_susceptibility     = $floodWorst;
+                $row->flood_point_class        = $floodPoint;
+                $row->flood_mapped_nearby      = $floodNearby;
+
+                $row->landslide_susceptibility = $landslideWorst;
+                $row->landslide_point_class    = $landslidePoint;
+                $row->landslide_mapped_nearby  = $landslideNearby;
+
+                $row->hazard_source            = 'MGB via GeoRisk WMS';
+                $row->hazard_checked_at        = Carbon::now();
                 $row->save();
             }
 
             $tableRows[] = [
-                'type'      => $type,
-                'name'      => $row->name ?? '(no name)',
-                'lat'       => round($lat, 6),
-                'lng'       => round($lng, 6),
-                'flood'     => $colResults['flood']['class']     ?? ($colResults['flood']['status']     ?? '—'),
-                'landslide' => $colResults['landslide']['class'] ?? ($colResults['landslide']['status'] ?? '—'),
-                'status'    => implode(', ', $statusParts) ?: 'skipped',
+                'type'             => $type,
+                'name'             => $row->name ?? '(no name)',
+                'flood_before'     => $floodBefore,
+                'flood_after'      => $floodAfter,
+                'landslide_before' => $landslideBefore,
+                'landslide_after'  => $landslideAfter,
+                'point'            => ($floodPoint ?? '—') . ' / ' . ($landslidePoint ?? '—'),
+                'nearby'           => $this->formatNearby($floodNearby, $landslideNearby),
+                'status'           => $dryRun ? 'dry-run' : 'updated',
             ];
         }
+    }
+
+    private function formatNearby(?bool $f, ?bool $l): string
+    {
+        $fStr = $f === true ? 'yes' : ($f === false ? 'no' : '—');
+        $lStr = $l === true ? 'yes' : ($l === false ? 'no' : '—');
+        return "{$fStr} / {$lStr}";
     }
 }

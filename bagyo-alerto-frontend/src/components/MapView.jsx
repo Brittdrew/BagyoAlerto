@@ -13,6 +13,8 @@ import {
     formatExposureSummary,
     getHighHazardMeters,
     evaluateRouteCandidates,
+    isDuplicateRoute,
+    isDoublingBack,
 } from "../utils/routeSafety"
 
 const HAZARD_LS_KEY = "bakwit_hazard_layers"
@@ -196,6 +198,43 @@ async function fetchOsrmRoute(startLng, startLat, endLng, endLat, mode = "foot",
     throw new Error("OSRM route service unavailable")
 }
 
+async function fetchOsrmViaRoute(startLng, startLat, viaLng, viaLat, endLng, endLat, mode = "foot", { signal, timeoutMs = 12000 } = {}) {
+    const isCar = mode === "car"
+    const coords = `${startLng},${startLat};${viaLng},${viaLat};${endLng},${endLat}`
+
+    const primaryUrl = isCar ? OSRM_URL_CAR : OSRM_URL_FOOT
+    const primaryProfile = isCar ? OSRM_PROFILE_CAR : OSRM_PROFILE_FOOT
+
+    const primaryEndpoint = `${primaryUrl}/route/v1/${primaryProfile}/${coords}?overview=full&geometries=geojson&alternatives=false`
+    const backupEndpoint = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false`
+
+    const endpoints = [
+        { url: primaryEndpoint, isBackup: false },
+        { url: backupEndpoint, isBackup: true },
+    ]
+
+    for (const ep of endpoints) {
+        const controller = new AbortController()
+        const onAbort = () => controller.abort()
+        signal?.addEventListener("abort", onAbort)
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+            const res = await fetch(ep.url, { signal: controller.signal })
+            if (!res.ok) continue
+            const data = await res.json()
+            if (data.code === "Ok" && Array.isArray(data.routes) && data.routes.length > 0) {
+                return { route: data.routes[0], isBackup: ep.isBackup }
+            }
+        } catch (_err) {
+            // try next endpoint
+        } finally {
+            clearTimeout(timer)
+            signal?.removeEventListener("abort", onAbort)
+        }
+    }
+    return null
+}
+
 export function formatDuration(minutes) {
     if (minutes == null || !Number.isFinite(minutes)) return "—"
     const m = Math.round(minutes)
@@ -223,6 +262,8 @@ export default function MapView({
     preferredCenterId,
     onHazardSuggestionChange,
     onNearestCenterOverrideRef,   // receives { setPreferredCenter, clearPreferredCenter }
+    onBaseTargetChange,
+    onClearOverride,
     routePref: propRoutePref,
     onRoutePrefChange: propOnRoutePrefChange,
     onRouteSafetyChange,
@@ -249,6 +290,8 @@ export default function MapView({
     })
     const travelMode = propTravelMode || internalTravelMode
     const handleTravelModeChange = useCallback((newMode) => {
+        setRouteSafetyResult(null)
+        onRouteSafetyChange?.(null)
         if (propOnTravelModeChange) {
             propOnTravelModeChange(newMode)
         } else {
@@ -257,7 +300,7 @@ export default function MapView({
         try {
             localStorage.setItem("bakwit_travel_mode", newMode)
         } catch (_e) {}
-    }, [propOnTravelModeChange])
+    }, [propOnTravelModeChange, onRouteSafetyChange])
 
     const [mapType, setMapType] = useState("street")
     const [mapReady, setMapReady] = useState(false)
@@ -311,9 +354,10 @@ export default function MapView({
     const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
     const hasLiveGps = Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
 
-    // Call useNearestCenter with live GPS position and travel mode
+    // Call useNearestCenter with live GPS position and travel mode (enabled for both nearest and barangay modes)
     const {
         nearestCenter,
+        allCentersWithMetrics,
         isFull: nearestIsFull,
         isFallback: nearestIsFallback,
         fallbackNotice: nearestFallbackNotice,
@@ -322,8 +366,9 @@ export default function MapView({
         setPreferredCenter,
         clearPreferredCenter,
     } = useNearestCenter(position, {
-        enabled: routeMode === "nearest" && Boolean(barangayId),
+        enabled: Boolean(barangayId),
         mode: travelMode,
+        targetCenter: routeMode === "barangay" ? barangayTarget : null,
     })
 
     // Forward preferred center ID into hook when parent supplies it
@@ -346,8 +391,8 @@ export default function MapView({
         }
     }, [setPreferredCenter, clearPreferredCenter, onNearestCenterOverrideRef])
 
-    // Effective target based on routeMode and fallback
-    const target = useMemo(() => {
+    // Base target (before any user override)
+    const baseTarget = useMemo(() => {
         if (routeMode === "barangay") {
             return barangayTarget
         }
@@ -356,6 +401,19 @@ export default function MapView({
         }
         return barangayTarget
     }, [routeMode, nearestIsFallback, nearestCenter, barangayTarget])
+
+    useEffect(() => {
+        onBaseTargetChange?.(baseTarget)
+    }, [baseTarget, onBaseTargetChange])
+
+    // Effective target (with preferredCenter override if active)
+    const target = useMemo(() => {
+        if (preferredCenterId != null && allCentersWithMetrics?.length > 0) {
+            const preferred = allCentersWithMetrics.find((c) => c.id === preferredCenterId)
+            if (preferred) return preferred
+        }
+        return baseTarget
+    }, [preferredCenterId, allCentersWithMetrics, baseTarget])
 
     const isFull = useMemo(() => {
         if (routeMode === "nearest" && !nearestIsFallback && nearestCenter) {
@@ -405,9 +463,9 @@ export default function MapView({
             })
             if (reqId !== routeReqIdRef.current) return
 
-            const candidateList = (routes && routes.length > 0 ? routes : [route]).map((r, idx) => {
+            let candidateList = (routes && routes.length > 0 ? routes : [route]).map((r, idx) => {
                 const coords = r.geometry.coordinates.map((c) => [c[1], c[0]])
-                const distKm = (r.distance / 1000).toFixed(2)
+                const distKm = Number((r.distance / 1000).toFixed(2))
                 let mins
                 if (mode === "car") {
                     mins = Math.max(1, Math.round(r.duration / 60))
@@ -418,13 +476,17 @@ export default function MapView({
                 }
                 return {
                     id: String(idx),
+                    source: "osrm-alt",
                     route: r,
                     coords,
                     distanceKm: distKm,
                     durationMins: mins,
-                    durationSec: r.duration,
+                    durationSec: Number(r.duration),
                 }
             })
+
+            const allAttemptedCandidates = [...candidateList]
+            let viaPointsCount = 0
 
             // Call-rate guard: re-score only when:
             // - destination changed (target.id)
@@ -439,6 +501,80 @@ export default function MapView({
             }
             const timeSinceLastScore = now - lastScoredTimeRef.current
             const shouldScore = targetChanged || modeChanged || !lastScoredPosRef.current || (movedM > 150 && timeSinceLastScore >= 30000)
+
+            // When re-scoring is needed, fetch detour candidates (max 3 extra OSRM calls per refresh)
+            if (shouldScore && candidateList[0]?.coords) {
+                try {
+                    const viaController = new AbortController()
+                    const viaTimer = setTimeout(() => viaController.abort(), 6000)
+                    const viaRes = await fetch(`${API_BASE}/route-via-candidates`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            coordinates: candidateList[0].coords,
+                            mode,
+                        }),
+                        signal: viaController.signal,
+                    }).finally(() => clearTimeout(viaTimer))
+
+                    if (viaRes.ok) {
+                        const viaData = await viaRes.json()
+                        const viaPoints = (viaData.via_points || viaData.points || []).slice(0, 3)
+                        viaPointsCount = viaPoints.length
+                        if (import.meta.env.DEV) {
+                            console.log(`[Route Detour] Backend returned ${viaPointsCount} via points`)
+                        }
+                        for (let vIdx = 0; vIdx < viaPoints.length; vIdx++) {
+                            if (reqId !== routeReqIdRef.current) return
+                            const vp = viaPoints[vIdx]
+                            const vLat = vp[0] ?? vp.lat
+                            const vLng = vp[1] ?? vp.lng
+                            try {
+                                const viaRouteRes = await fetchOsrmViaRoute(startLng, startLat, vLng, vLat, destLng, destLat, mode, {
+                                    signal: controller.signal,
+                                })
+                                if (viaRouteRes?.route) {
+                                    const r = viaRouteRes.route
+                                    const rCoords = r.geometry.coordinates.map((c) => [c[1], c[0]])
+                                    const isDup = candidateList.some((existing) => isDuplicateRoute(existing.coords, rCoords, 0.90))
+                                    const doublesBack = isDoublingBack(rCoords)
+                                    const rDistKm = Number((r.distance / 1000).toFixed(2))
+                                    const rMins = mode === "car"
+                                        ? Math.max(1, Math.round(r.duration / 60))
+                                        : (viaRouteRes.isBackup
+                                            ? Math.max(1, Math.round((r.distance / 1000 / 4.5) * 60))
+                                            : Math.max(1, Math.round(r.duration / 60)))
+                                    const viaCand = {
+                                        id: `via_${vIdx}`,
+                                        source: "via-detour",
+                                        route: r,
+                                        coords: rCoords,
+                                        distanceKm: rDistKm,
+                                        durationMins: rMins,
+                                        durationSec: Number(r.duration),
+                                    }
+
+                                    if (isDup) {
+                                        allAttemptedCandidates.push({ ...viaCand, dropReason: "duplicate" })
+                                    } else if (doublesBack) {
+                                        allAttemptedCandidates.push({ ...viaCand, dropReason: "doubling back" })
+                                    } else {
+                                        candidateList.push(viaCand)
+                                        allAttemptedCandidates.push(viaCand)
+                                    }
+                                }
+                            } catch (_viaErr) {
+                                // ignore individual via routing failure
+                            }
+                        }
+                    }
+                } catch (_viaApiErr) {
+                    // ignore detour api failure
+                }
+            }
+
+            // Cap to 5 total candidates
+            candidateList = candidateList.slice(0, 5)
 
             let scoredMap = null
             let hazardCheckFailed = false
@@ -499,7 +635,10 @@ export default function MapView({
             if (reqId !== routeReqIdRef.current) return
 
             // Evaluate candidates according to selection rule
-            const evaluation = evaluateRouteCandidates(candidateList, scoredMap)
+            const evaluation = evaluateRouteCandidates(candidateList, scoredMap, {
+                allAttempted: allAttemptedCandidates,
+                viaPointsCount,
+            })
             if (hazardCheckFailed) {
                 evaluation.isHazardUnavailable = true
             }
@@ -557,7 +696,7 @@ export default function MapView({
 
             const fallbackCoords = [[startLat, startLng], [destLat, destLng]]
             setRouteCoords(fallbackCoords)
-            const d = (getDistanceInMeters(startLat, startLng, destLat, destLng) / 1000).toFixed(2)
+            const d = Number((getDistanceInMeters(startLat, startLng, destLat, destLng) / 1000).toFixed(2))
             setRouteDistance(d)
             const fallbackSpeed = mode === "car" ? 30 : 4.5
             const fallbackMins = Math.max(1, Math.round((d / fallbackSpeed) * 60))
@@ -566,9 +705,9 @@ export default function MapView({
 
             const fallbackEval = {
                 hasSafestOption: false,
-                fastest: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, segments: [] },
+                fastest: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, durationSec: fallbackMins * 60, segments: [] },
                 safest: null,
-                singleRoute: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, segments: [] },
+                singleRoute: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, durationSec: fallbackMins * 60, segments: [] },
                 singleRouteLabel: "Direct route (offline)",
                 isHazardUnavailable: true,
             }
@@ -647,11 +786,13 @@ export default function MapView({
         routeAbortRef.current?.abort()
         routeReqIdRef.current++
         setRouteCoords([])
+        setRouteSafetyResult(null)
+        onRouteSafetyChange?.(null)
         setIsOfflineRoute(false)
         activeTargetIdRef.current = null
         lastFetchedPosRef.current = null
         lastFetchedTimeRef.current = 0
-    }, [barangayId, routeMode, travelMode])
+    }, [barangayId, routeMode, travelMode, onRouteSafetyChange])
 
     // Fetch barangay's designated target from GET /api/barangays/{barangayId}/evacuation-target
     useEffect(() => {
@@ -967,7 +1108,13 @@ export default function MapView({
                     <button
                         type="button"
                         id="route-mode-nearest"
-                        onClick={() => setRouteMode("nearest")}
+                        onClick={() => {
+                            if (routeMode !== "nearest") {
+                                setRouteMode("nearest")
+                                clearPreferredCenter()
+                                onClearOverride?.()
+                            }
+                        }}
                         style={{
                             flex: 1,
                             padding: "7px 10px",
@@ -986,7 +1133,13 @@ export default function MapView({
                     <button
                         type="button"
                         id="route-mode-barangay"
-                        onClick={() => setRouteMode("barangay")}
+                        onClick={() => {
+                            if (routeMode !== "barangay") {
+                                setRouteMode("barangay")
+                                clearPreferredCenter()
+                                onClearOverride?.()
+                            }
+                        }}
                         style={{
                             flex: 1,
                             padding: "7px 10px",
@@ -1176,7 +1329,7 @@ export default function MapView({
                                     }}
                                 >
                                     <Shield size={13} style={{ color: routePref === "safest" ? "#60a5fa" : "#059669" }} />
-                                    <span>Safest ({routeSafetyResult.safest.distanceKm} km · {formatWalkTime(routeSafetyResult.safest.durationMins)})</span>
+                                    <span>Safest ({routeSafetyResult.diffSummary || `${routeSafetyResult.safest.distanceKm} km · ${formatWalkTime(routeSafetyResult.safest.durationMins)}`})</span>
                                 </button>
                                 <button
                                     type="button"
@@ -1216,7 +1369,7 @@ export default function MapView({
                                 lineHeight: 1.35,
                             }}>
                                 <Shield size={13} style={{ color: "#059669", flexShrink: 0 }} />
-                                <span>{formatExposureSummary(selectedRoute?.meters_by_class)}</span>
+                                <span>{routeSafetyResult.diffSummary ? `${routeSafetyResult.diffSummary} · ` : ""}{formatExposureSummary(selectedRoute?.meters_by_class)}</span>
                             </div>
                         </div>
                     ) : (
@@ -1233,9 +1386,10 @@ export default function MapView({
                                     borderRadius: 6,
                                     fontSize: 12,
                                     fontWeight: 700,
+                                    letterSpacing: "-0.2px",
                                 }}>
                                     <Shield size={13} style={{ color: "#16a34a" }} />
-                                    <span>{routeSafetyResult.singleRouteLabel || "Fastest and safest available"}</span>
+                                    <span>{routeSafetyResult.singleRouteLabel || "No safer route found nearby"}</span>
                                 </div>
                                 {routeSafetyResult.isHazardUnavailable && (
                                     <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
@@ -1267,7 +1421,7 @@ export default function MapView({
                             lineHeight: 1.4,
                         }}>
                             <AlertTriangle size={15} style={{ color: "#d97706", flexShrink: 0 }} />
-                            <span>This route still crosses {getHighHazardMeters(selectedRoute.meters_by_class)} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
+                            <span>This route still crosses {getHighHazardMeters(selectedRoute.meters_by_class).toLocaleString()} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
                         </div>
                     )}
 

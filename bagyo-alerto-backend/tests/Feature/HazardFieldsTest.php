@@ -31,6 +31,10 @@ class HazardFieldsTest extends TestCase
                 $t->string('risk_level', 20)->nullable();
                 $t->string('flood_susceptibility')->nullable();
                 $t->string('landslide_susceptibility')->nullable();
+                $t->string('flood_point_class')->nullable();
+                $t->string('landslide_point_class')->nullable();
+                $t->boolean('flood_mapped_nearby')->nullable();
+                $t->boolean('landslide_mapped_nearby')->nullable();
                 $t->string('hazard_source')->nullable();
                 $t->timestamp('hazard_checked_at')->nullable();
             });
@@ -49,6 +53,10 @@ class HazardFieldsTest extends TestCase
                 $t->boolean('is_active')->default(1);
                 $t->string('flood_susceptibility')->nullable();
                 $t->string('landslide_susceptibility')->nullable();
+                $t->string('flood_point_class')->nullable();
+                $t->string('landslide_point_class')->nullable();
+                $t->boolean('flood_mapped_nearby')->nullable();
+                $t->boolean('landslide_mapped_nearby')->nullable();
                 $t->string('hazard_source')->nullable();
                 $t->timestamp('hazard_checked_at')->nullable();
                 $t->timestamp('created_at')->nullable();

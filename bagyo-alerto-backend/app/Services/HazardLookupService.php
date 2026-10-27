@@ -7,6 +7,151 @@ use Illuminate\Support\Facades\Log;
 
 class HazardLookupService
 {
+    /** Susceptibility rank order (ascending severity) */
+    public const SEVERITY_RANK = [
+        'low'       => 1,
+        'moderate'  => 2,
+        'high'      => 3,
+        'very_high' => 4,
+    ];
+
+    /**
+     * Compute destination point coordinate given start point, distance in meters, and bearing in degrees.
+     *
+     * @return array{0: float, 1: float} [lat, lng]
+     */
+    public function destinationPoint(float $lat, float $lng, float $distanceM, float $bearingDeg): array
+    {
+        $earthRadius = 6371000.0;
+        $delta = $distanceM / $earthRadius;
+        $theta = deg2rad($bearingDeg);
+
+        $phi1 = deg2rad($lat);
+        $lambda1 = deg2rad($lng);
+
+        $phi2 = asin(sin($phi1) * cos($delta) + cos($phi1) * sin($delta) * cos($theta));
+        $lambda2 = $lambda1 + atan2(
+            sin($theta) * sin($delta) * cos($phi1),
+            cos($delta) - sin($phi1) * sin($phi2)
+        );
+
+        return [
+            rad2deg($phi2),
+            fmod(rad2deg($lambda2) + 540.0, 360.0) - 180.0,
+        ];
+    }
+
+    /**
+     * Look up susceptibility sampling the exact point plus 25m, 50m (9 points within 50m),
+     * and 100m (4 points at 100m ring).
+     *
+     * @param  float   $lat
+     * @param  float   $lng
+     * @param  string  $service Config key: 'flood' or 'landslide'
+     * @param  array<string, array{status:string,class:string|null,raw:string|null}>  $cache
+     * @return array{
+     *     status: string,
+     *     point_class: string|null,
+     *     worst_class: string|null,
+     *     mapped_nearby: bool|null,
+     *     raw_point: string|null
+     * }
+     */
+    public function lookupWithRadius(float $lat, float $lng, string $service, array &$cache = []): array
+    {
+        $directions = [
+            'N' => 0.0,
+            'S' => 180.0,
+            'E' => 90.0,
+            'W' => 270.0,
+        ];
+
+        // 1. Center / exact point (index 0)
+        $sampleCoords = [
+            ['dist' => 0, 'lat' => $lat, 'lng' => $lng],
+        ];
+
+        // 2. 25m and 50m (within 50m ring: indices 1..8)
+        foreach ([25, 50] as $dist) {
+            foreach ($directions as $bearing) {
+                [$pLat, $pLng] = $this->destinationPoint($lat, $lng, (float) $dist, $bearing);
+                $sampleCoords[] = ['dist' => $dist, 'lat' => $pLat, 'lng' => $pLng];
+            }
+        }
+
+        // 3. 100m (probe ring: indices 9..12)
+        foreach ($directions as $bearing) {
+            [$pLat, $pLng] = $this->destinationPoint($lat, $lng, 100.0, $bearing);
+            $sampleCoords[] = ['dist' => 100, 'lat' => $pLat, 'lng' => $pLng];
+        }
+
+        $results = [];
+
+        foreach ($sampleCoords as $sample) {
+            $pLat = $sample['lat'];
+            $pLng = $sample['lng'];
+            $cacheKey = "{$service}:" . round($pLat, 6) . ':' . round($pLng, 6);
+
+            if (! isset($cache[$cacheKey])) {
+                if (! app()->runningUnitTests()) {
+                    usleep(150000); // 150 ms between network calls
+                }
+                $cache[$cacheKey] = $this->lookup($pLat, $pLng, $service);
+            }
+
+            $res = $cache[$cacheKey];
+
+            // If ANY request failed / timed out, never treat as no_data
+            if ($res['status'] === 'error') {
+                return [
+                    'status'        => 'error',
+                    'point_class'   => null,
+                    'worst_class'   => null,
+                    'mapped_nearby' => null,
+                    'raw_point'     => null,
+                ];
+            }
+
+            $results[] = $res;
+        }
+
+        // Exact point class
+        $exactRes = $results[0];
+        $pointClass = ($exactRes['status'] === 'ok') ? $exactRes['class'] : null;
+
+        // Worst class within 50m (indices 0..8)
+        $worstClass = null;
+        $maxRank = 0;
+
+        for ($i = 0; $i <= 8; $i++) {
+            $r = $results[$i];
+            if ($r['status'] === 'ok' && ! empty($r['class'])) {
+                $rank = self::SEVERITY_RANK[$r['class']] ?? 0;
+                if ($rank > $maxRank) {
+                    $maxRank = $rank;
+                    $worstClass = $r['class'];
+                }
+            }
+        }
+
+        // Mapped nearby within 100m (all 13 points)
+        $hasAnyMapped = false;
+        foreach ($results as $r) {
+            if ($r['status'] === 'ok' && ! empty($r['class'])) {
+                $hasAnyMapped = true;
+                break;
+            }
+        }
+
+        return [
+            'status'        => 'ok',
+            'point_class'   => $pointClass,
+            'worst_class'   => $worstClass,
+            'mapped_nearby' => $hasAnyMapped,
+            'raw_point'     => $exactRes['raw'] ?? null,
+        ];
+    }
+
     /**
      * Look up the susceptibility class for a given coordinate and service key.
      *

@@ -29,6 +29,7 @@ Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show
 
 Route::get('/route', [\App\Http\Controllers\RouteController::class, 'show']);
 Route::middleware('throttle:30,1')->post('/route-hazard-score', [\App\Http\Controllers\RouteHazardScoreController::class, 'score']);
+Route::middleware('throttle:30,1')->post('/route-via-candidates', [\App\Http\Controllers\RouteViaCandidatesController::class, 'candidates']);
 
 Route::middleware('throttle:20,1')->post('/typhoon/assess', [TyphoonController::class, 'assess']);
 

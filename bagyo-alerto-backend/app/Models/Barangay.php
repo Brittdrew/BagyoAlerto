@@ -18,8 +18,17 @@ class Barangay extends Model
         'risk_level',
         'flood_susceptibility',
         'landslide_susceptibility',
+        'flood_point_class',
+        'landslide_point_class',
+        'flood_mapped_nearby',
+        'landslide_mapped_nearby',
         'hazard_source',
         'hazard_checked_at',
+    ];
+
+    protected $casts = [
+        'flood_mapped_nearby'     => 'boolean',
+        'landslide_mapped_nearby' => 'boolean',
     ];
 
     protected $appends = ['hazard_level'];

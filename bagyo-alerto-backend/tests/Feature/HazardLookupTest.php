@@ -64,6 +64,10 @@ class HazardLookupTest extends TestCase
                 $t->string('risk_level', 20)->nullable();
                 $t->string('flood_susceptibility')->nullable();
                 $t->string('landslide_susceptibility')->nullable();
+                $t->string('flood_point_class')->nullable();
+                $t->string('landslide_point_class')->nullable();
+                $t->boolean('flood_mapped_nearby')->nullable();
+                $t->boolean('landslide_mapped_nearby')->nullable();
                 $t->string('hazard_source')->nullable();
                 $t->timestamp('hazard_checked_at')->nullable();
             });
@@ -82,6 +86,10 @@ class HazardLookupTest extends TestCase
                 $t->boolean('is_active')->default(1);
                 $t->string('flood_susceptibility')->nullable();
                 $t->string('landslide_susceptibility')->nullable();
+                $t->string('flood_point_class')->nullable();
+                $t->string('landslide_point_class')->nullable();
+                $t->boolean('flood_mapped_nearby')->nullable();
+                $t->boolean('landslide_mapped_nearby')->nullable();
                 $t->string('hazard_source')->nullable();
                 $t->timestamp('hazard_checked_at')->nullable();
                 $t->timestamp('created_at')->nullable();
@@ -250,7 +258,161 @@ class HazardLookupTest extends TestCase
         $this->artisan('hazard:lookup', ['--only' => 'barangays', '--force' => true])
              ->assertExitCode(0);
 
-        // 2 services × 1 unique coordinate = 2 real HTTP calls (not 4)
-        $this->assertSame(2, $callCount, 'Duplicate coordinates should reuse cached results.');
+        // 2 services × 13 sample coordinates = 26 real HTTP calls (not 52)
+        $this->assertSame(26, $callCount, 'Duplicate coordinates should reuse cached results.');
+    }
+
+    public function test_worst_class_selection(): void
+    {
+        $callCount = 0;
+        Http::fake(function ($request) use (&$callCount) {
+            $callCount++;
+            $url = $request->url();
+            if (str_contains($url, 'RainInducedLandslide')) {
+                return Http::response($this->emptyResponse(), 200);
+            }
+
+            // Center is low, offset 25m has moderate, offset 50m has very_high
+            // Point 0 = center, Points 1..4 = 25m, Points 5..8 = 50m
+            if ($callCount === 1) {
+                return Http::response($this->floodResponse('Low Susceptibility'), 200);
+            } elseif ($callCount === 2) {
+                return Http::response($this->floodResponse('Moderate Susceptibility'), 200);
+            } elseif ($callCount === 6) {
+                return Http::response($this->floodResponse('Very High Susceptibility'), 200);
+            }
+
+            return Http::response($this->floodResponse('Low Susceptibility'), 200);
+        });
+
+        $center = EvacuationCenter::create([
+            'name'      => 'Worst Class Center',
+            'latitude'  => 9.785,
+            'longitude' => 125.49,
+        ]);
+
+        $this->artisan('hazard:lookup', ['--only' => 'centers', '--force' => true])
+            ->assertExitCode(0);
+
+        $center->refresh();
+
+        $this->assertSame('very_high', $center->flood_susceptibility, 'Worst class within 50m should be selected');
+        $this->assertSame('low', $center->flood_point_class, 'Exact point class should remain recorded');
+        $this->assertTrue($center->flood_mapped_nearby, 'Mapped nearby should be true');
+    }
+
+    public function test_point_vs_radius(): void
+    {
+        $callCount = 0;
+        Http::fake(function ($request) use (&$callCount) {
+            $callCount++;
+            $url = $request->url();
+            if (str_contains($url, 'RainInducedLandslide')) {
+                return Http::response($this->emptyResponse(), 200);
+            }
+
+            // Exact point (1) has no data, but 25m (2) has High
+            if ($callCount === 2) {
+                return Http::response($this->floodResponse('High Susceptibility'), 200);
+            }
+
+            return Http::response($this->emptyResponse(), 200);
+        });
+
+        $center = EvacuationCenter::create([
+            'name'      => 'Edge Center',
+            'latitude'  => 9.7818,
+            'longitude' => 125.4932,
+        ]);
+
+        $this->artisan('hazard:lookup', ['--only' => 'centers', '--force' => true])
+            ->assertExitCode(0);
+
+        $center->refresh();
+
+        $this->assertNull($center->flood_point_class, 'Exact point class should be null for unmapped center');
+        $this->assertSame('high', $center->flood_susceptibility, '50m buffer should pick up nearby high flood');
+        $this->assertTrue($center->flood_mapped_nearby, 'Should be flagged as mapped nearby');
+    }
+
+    public function test_point_vs_radius_100m_proximity(): void
+    {
+        $callCount = 0;
+        Http::fake(function ($request) use (&$callCount) {
+            $callCount++;
+            $url = $request->url();
+            if (str_contains($url, 'RainInducedLandslide')) {
+                return Http::response($this->emptyResponse(), 200);
+            }
+
+            // Only 100m ring (call 10 = point 9 at 100m) has high
+            if ($callCount === 10) {
+                return Http::response($this->floodResponse('High Susceptibility'), 200);
+            }
+
+            return Http::response($this->emptyResponse(), 200);
+        });
+
+        $center = EvacuationCenter::create([
+            'name'      => '100m Proximity Center',
+            'latitude'  => 9.7800,
+            'longitude' => 125.4900,
+        ]);
+
+        $this->artisan('hazard:lookup', ['--only' => 'centers', '--force' => true])
+            ->assertExitCode(0);
+
+        $center->refresh();
+
+        $this->assertNull($center->flood_point_class, 'Point class should be null');
+        $this->assertNull($center->flood_susceptibility, '50m susceptibility should be null since hazard is at 100m');
+        $this->assertTrue($center->flood_mapped_nearby, 'Mapped nearby at 100m should be true');
+    }
+
+    public function test_request_failure_never_stored_as_no_data(): void
+    {
+        Http::fake([
+            '*' => Http::response([], 500),
+        ]);
+
+        $center = EvacuationCenter::create([
+            'name'                 => 'Existing Center',
+            'latitude'             => 9.785,
+            'longitude'            => 125.49,
+            'flood_susceptibility' => 'moderate',
+            'hazard_source'        => 'MGB via GeoRisk WMS',
+        ]);
+
+        $this->artisan('hazard:lookup', ['--only' => 'centers', '--force' => true])
+            ->assertExitCode(0);
+
+        $center->refresh();
+
+        // Must NOT be overwritten to null / no_data
+        $this->assertSame('moderate', $center->flood_susceptibility, 'Failed requests must never overwrite to no_data');
+    }
+
+    public function test_manual_row_protection(): void
+    {
+        Http::fake([
+            '*' => Http::response($this->floodResponse('Low Susceptibility'), 200),
+        ]);
+
+        $center = EvacuationCenter::create([
+            'name'                 => 'Manual Admin Center',
+            'latitude'             => 9.785,
+            'longitude'            => 125.49,
+            'flood_susceptibility' => 'very_high',
+            'hazard_source'        => 'manual (admin)',
+        ]);
+
+        // Run with --force: manual row must still NOT be overwritten
+        $this->artisan('hazard:lookup', ['--only' => 'centers', '--force' => true])
+            ->assertExitCode(0);
+
+        $center->refresh();
+
+        $this->assertSame('very_high', $center->flood_susceptibility, 'Manual admin row must never be overwritten');
+        $this->assertSame('manual (admin)', $center->hazard_source);
     }
 }

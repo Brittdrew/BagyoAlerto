@@ -56,6 +56,7 @@ function deltaMinutes(suggestion) {
 
 export default function HazardCenterPanel({
     center,
+    originalCenter,
     lowerHazardSuggestion,
     isOverrideActive,
     onRouteHere,
@@ -76,10 +77,15 @@ export default function HazardCenterPanel({
         }, "high"))
         : null
 
-    // Suggestion extra minutes — both center and suggestion have .duration (seconds)
-    const suggestionExtraMin = lowerHazardSuggestion && Number.isFinite(lowerHazardSuggestion.duration) && Number.isFinite(center.duration)
-        ? Math.round((lowerHazardSuggestion.duration - center.duration) / 60)
-        : null
+    const formatClass = (cls) => {
+        if (!cls) return "unknown"
+        return cls === "very_high" ? "very high" : cls
+    }
+
+    const extraMinVal = lowerHazardSuggestion ? Math.round(lowerHazardSuggestion.extraMin ?? 0) : null
+    const extraKmVal = lowerHazardSuggestion && lowerHazardSuggestion.extraKm != null ? Number(lowerHazardSuggestion.extraKm.toFixed(1)) : null
+    const minText = extraMinVal !== null ? (extraMinVal >= 0 ? `+${extraMinVal} min` : `${extraMinVal} min`) : ""
+    const kmText = extraKmVal !== null ? (extraKmVal >= 0 ? `+${extraKmVal} km` : `${extraKmVal} km`) : ""
 
     return (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -130,7 +136,7 @@ export default function HazardCenterPanel({
                 </div>
             )}
 
-            {/* Lower-hazard suggestion */}
+            {/* Safer center suggestion card */}
             {hasWarning && lowerHazardSuggestion && !isOverrideActive && (
                 <div style={{
                     background: "#f0fdf4",
@@ -142,23 +148,14 @@ export default function HazardCenterPanel({
                     gap: 6,
                 }}>
                     <div style={{ fontSize: 11, color: "#14532d", lineHeight: 1.4 }}>
-                        <strong>Lower-hazard option:</strong>{" "}
+                        <strong>Safer center nearby:</strong>{" "}
                         {lowerHazardSuggestion.name}{" "}
-                        <span style={{
-                            display: "inline-block",
-                            background: "#dcfce7",
-                            border: "1px solid #86efac",
-                            borderRadius: 10,
-                            padding: "1px 6px",
-                            fontSize: 10,
-                            fontWeight: 600,
-                            color: "#166534",
-                        }}>
-                            {suggestLevelWord(lowerHazardSuggestion.hazard_level)} hazard
+                        <span style={{ fontWeight: 600 }}>
+                            ({formatClass(lowerHazardSuggestion.floodStatus)}/{formatClass(lowerHazardSuggestion.landslideStatus)})
                         </span>
-                        {suggestionExtraMin != null && suggestionExtraMin > 0 && (
+                        {minText && kmText && (
                             <span style={{ color: "#15803d", fontWeight: 600 }}>
-                                {" "}about +{suggestionExtraMin} min
+                                {", "}{minText}{", "}{kmText}
                             </span>
                         )}
                     </div>
@@ -182,12 +179,12 @@ export default function HazardCenterPanel({
                         }}
                     >
                         <Navigation size={11} />
-                        Route here instead
+                        Go to this center
                     </button>
                 </div>
             )}
 
-            {/* Back to nearest center button (shown when override is active) */}
+            {/* Back to <original> link/button (shown when override is active) */}
             {isOverrideActive && (
                 <button
                     type="button"
@@ -209,9 +206,10 @@ export default function HazardCenterPanel({
                     }}
                 >
                     <ArrowLeft size={11} />
-                    Back to nearest center
+                    Back to {originalCenter?.name || "original center"}
                 </button>
             )}
         </div>
     )
 }
+
