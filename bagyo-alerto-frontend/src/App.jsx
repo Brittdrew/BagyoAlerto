@@ -15,6 +15,7 @@ import AdminSettings from './pages/admin/AdminSettings'
 import AdminWeather from './pages/admin/AdminWeather'
 import AdminWeatherMap from './pages/admin/AdminWeatherMap'
 import AdminChat from './pages/admin/AdminChat'
+import AdminHazardMap from './pages/admin/AdminHazardMap'
 import './App.css'
 
 function App() {
@@ -54,6 +55,9 @@ function App() {
             } />
             <Route path="/admin/settings" element={
               <AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>
+            } />
+            <Route path="/admin/hazard-map" element={
+              <AdminProtectedRoute><AdminHazardMap /></AdminProtectedRoute>
             } />
             <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
           </Routes>

@@ -60,6 +60,7 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::put('/password', [AdminController::class, 'changePassword']);
     Route::get('/stats', [AdminController::class, 'stats']);
     Route::get('/recommendations', [AdminController::class, 'recommendations']);
+    Route::get('/hazard-map', [AdminController::class, 'hazardMap']);
 
     Route::post('/pagasa-signal', [PagasaSignalController::class, 'store']);
 

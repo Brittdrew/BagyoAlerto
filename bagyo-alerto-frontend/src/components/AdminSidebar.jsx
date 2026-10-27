@@ -22,6 +22,7 @@ const navItems = [
     { id: "dashboard", label: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
     { id: "weather", label: "Weather Monitor", path: "/admin/weather", icon: Cloud },
     { id: "weather-map", label: "Weather Map", path: "/admin/weather-map", icon: Map },
+    { id: "hazard-map", label: "Hazard Map", path: "/admin/hazard-map", icon: Map },
     { id: "barangays", label: "Barangays", path: "/admin/barangays", icon: MapPin },
     { id: "evacuation-centers", label: "Evacuation Centers", path: "/admin/evacuation-centers", icon: School },
     { id: "evacuation-monitoring", label: "Evacuation Monitoring", path: "/admin/evacuation-monitoring", icon: Users },

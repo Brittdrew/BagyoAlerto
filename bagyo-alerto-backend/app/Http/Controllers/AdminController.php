@@ -437,4 +437,61 @@ class AdminController extends Controller
 
         return response()->json(['message' => 'Evacuation center photo deleted successfully.']);
     }
+
+    // ── Hazard Map data ────────────────────────────────────────────────────
+
+    /**
+     * GET /api/admin/hazard-map
+     *
+     * Returns two arrays:
+     *   barangays: id, name, lat, lng, risk_level, flood_class, landslide_class
+     *   centers:   id, name, barangay_id, lat, lng, capacity, current_occupancy,
+     *              flood_class, landslide_class, hazard_source
+     *
+     * Only active centers (is_active = 1) are included.
+     * current_occupancy is computed from evacuation_logs (same as monitoring page).
+     */
+    public function hazardMap(): \Illuminate\Http\JsonResponse
+    {
+        // ── Barangays ─────────────────────────────────────────────────────
+        $barangays = Barangay::orderBy('name')->get()->map(fn ($b) => [
+            'id'               => (int) $b->id,
+            'name'             => $b->name,
+            'lat'              => $b->latitude  !== null ? (float) $b->latitude  : null,
+            'lng'              => $b->longitude !== null ? (float) $b->longitude : null,
+            'risk_level'       => $b->risk_level,
+            'flood_class'      => $b->flood_susceptibility,
+            'landslide_class'  => $b->landslide_susceptibility,
+        ])->values();
+
+        // ── Active centers ────────────────────────────────────────────────
+        $centers = EvacuationCenter::where('is_active', 1)
+            ->with('barangay:id,name')
+            ->orderBy('name')
+            ->get();
+
+        $centerIds = $centers->pluck('id');
+
+        // Reuse the static helper from EvacuationLogController — avoids duplicating the query.
+        $occupancies = \App\Http\Controllers\EvacuationLogController::getOccupancyCounts($centerIds);
+
+        $centersData = $centers->map(fn ($c) => [
+            'id'               => (int) $c->id,
+            'name'             => $c->name,
+            'barangay_id'      => (int) $c->barangay_id,
+            'barangay_name'    => $c->barangay?->name ?? null,
+            'lat'              => $c->latitude  !== null ? (float) $c->latitude  : null,
+            'lng'              => $c->longitude !== null ? (float) $c->longitude : null,
+            'capacity'         => (int) $c->capacity,
+            'current_occupancy'=> (int) ($occupancies->get($c->id) ?? 0),
+            'flood_class'      => $c->flood_susceptibility,
+            'landslide_class'  => $c->landslide_susceptibility,
+            'hazard_source'    => $c->hazard_source,
+        ])->values();
+
+        return response()->json([
+            'barangays' => $barangays,
+            'centers'   => $centersData,
+        ]);
+    }
 }
