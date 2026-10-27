@@ -13,8 +13,9 @@ import { useSavedBarangay } from "../hooks/useSavedBarangay"
 import {
     Tornado, BarChart2, Clock, AlertTriangle, Info, Wind,
     CloudRain, Gauge, Edit3, Search, Route, Satellite,
-    Loader, MapPin, Thermometer, Droplets, X
+    Loader, MapPin, Thermometer, Droplets, X, Shield
 } from "lucide-react"
+import { getSavedRoutePref, saveRoutePref, formatExposureSummary, getHighHazardMeters } from "../utils/routeSafety"
 
 // --- Constants ---------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_BASE
@@ -447,6 +448,9 @@ function EvacRoutes({
     isOverrideActive,
     onRouteHere,
     onBackToNearest,
+    routeSafetyInfo,
+    routePref = "safest",
+    onRoutePrefChange,
 }) {
     const needsEvac = ["high", "critical", "catastrophic"].includes(severity)
     const isActive = ["moderate", "high", "critical", "catastrophic"].includes(severity)
@@ -645,6 +649,164 @@ function EvacRoutes({
                 </div>
             </div>
 
+            {/* Route safety options (Fastest vs Safest) */}
+            {isLiveActive && routeSafetyInfo?.hasSafestOption && (
+                <div style={{ marginTop: 10, marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
+                        <Shield size={13} style={{ color: "#2563eb" }} /> Choose route:
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <button
+                            type="button"
+                            id="evac-route-safest"
+                            onClick={() => onRoutePrefChange?.("safest")}
+                            style={{
+                                padding: "8px 10px",
+                                borderRadius: 6,
+                                border: routePref === "safest" ? "2px solid #16a34a" : "1px solid #cbd5e1",
+                                background: routePref === "safest" ? "#f0fdf4" : "#ffffff",
+                                cursor: "pointer",
+                                textAlign: "left",
+                                transition: "all 0.15s ease",
+                            }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: routePref === "safest" ? "#166534" : "#334155" }}>
+                                    🛡️ Safest
+                                </span>
+                                {routePref === "safest" && (
+                                    <span style={{ fontSize: 9, background: "#16a34a", color: "#fff", padding: "1px 5px", borderRadius: 10, fontWeight: 700 }}>
+                                        ACTIVE
+                                    </span>
+                                )}
+                            </div>
+                            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
+                                {routeSafetyInfo.safest.distanceKm.toFixed(1)} km · ~{routeSafetyInfo.safest.durationMins} min
+                            </div>
+                            <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
+                                {formatExposureSummary(routeSafetyInfo.safest.meters_by_class)}
+                            </div>
+                        </button>
+
+                        <button
+                            type="button"
+                            id="evac-route-fastest"
+                            onClick={() => onRoutePrefChange?.("fastest")}
+                            style={{
+                                padding: "8px 10px",
+                                borderRadius: 6,
+                                border: routePref === "fastest" ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                                background: routePref === "fastest" ? "#eff6ff" : "#ffffff",
+                                cursor: "pointer",
+                                textAlign: "left",
+                                transition: "all 0.15s ease",
+                            }}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: routePref === "fastest" ? "#1e40af" : "#334155" }}>
+                                    ⚡ Fastest
+                                </span>
+                                {routePref === "fastest" && (
+                                    <span style={{ fontSize: 9, background: "#2563eb", color: "#fff", padding: "1px 5px", borderRadius: 10, fontWeight: 700 }}>
+                                        ACTIVE
+                                    </span>
+                                )}
+                            </div>
+                            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
+                                {routeSafetyInfo.fastest.distanceKm.toFixed(1)} km · ~{routeSafetyInfo.fastest.durationMins} min
+                            </div>
+                            <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
+                                {formatExposureSummary(routeSafetyInfo.fastest.meters_by_class)}
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Single route badge or unavailable note */}
+            {isLiveActive && routeSafetyInfo && !routeSafetyInfo.hasSafestOption && (
+                <div style={{ marginTop: 8, marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: routeSafetyInfo.isHazardUnavailable ? "#fef3c7" : "#ecfdf5",
+                        color: routeSafetyInfo.isHazardUnavailable ? "#92400e" : "#047857",
+                        border: `1px solid ${routeSafetyInfo.isHazardUnavailable ? "#fcd34d" : "#a7f3d0"}`,
+                        padding: "3px 8px",
+                        borderRadius: 6,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4
+                    }}>
+                        <Shield size={12} /> {routeSafetyInfo.singleRouteLabel}
+                    </span>
+                    {routeSafetyInfo.singleRoute?.meters_by_class && (
+                        <span style={{ fontSize: 11, color: "#64748b" }}>
+                            ({formatExposureSummary(routeSafetyInfo.singleRoute.meters_by_class)})
+                        </span>
+                    )}
+                    {routeSafetyInfo.isHazardUnavailable && (
+                        <span style={{ fontSize: 11, color: "#b45309" }}>Hazard check unavailable</span>
+                    )}
+                </div>
+            )}
+
+            {/* Remaining high hazard warning */}
+            {isLiveActive && (() => {
+                const activeCand = routeSafetyInfo?.hasSafestOption
+                    ? (routePref === "fastest" ? routeSafetyInfo.fastest : routeSafetyInfo.safest)
+                    : (routeSafetyInfo?.singleRoute || null)
+                const highHazard = activeCand ? getHighHazardMeters(activeCand.meters_by_class) : 0
+                if (highHazard <= 0) return null
+                return (
+                    <div style={{
+                        background: "#fff1f2",
+                        border: "1px solid #fecdd3",
+                        borderRadius: 6,
+                        padding: "7px 10px",
+                        marginTop: 6,
+                        marginBottom: 6,
+                        fontSize: 11,
+                        color: "#9f1239",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6
+                    }}>
+                        <AlertTriangle size={14} style={{ color: "#e11d48", flexShrink: 0 }} />
+                        <span>This route still crosses {highHazard.toLocaleString()} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
+                    </div>
+                )
+            })()}
+
+            {/* Tiny route hazard color legend line */}
+            {isLiveActive && (
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 10,
+                    color: "#64748b",
+                    marginTop: 6,
+                    paddingTop: 6,
+                    borderTop: "1px dashed #e2e8f0",
+                    flexWrap: "wrap",
+                }}>
+                    <span style={{ fontWeight: 600 }}>Route hazard:</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#2563eb", display: "inline-block" }} /> Safe / Low
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#f59e0b", display: "inline-block" }} /> Moderate
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#ea580c", display: "inline-block" }} /> High
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#991b1b", display: "inline-block" }} /> Very high
+                    </span>
+                </div>
+            )}
+
             {/* Hazard badges + warning + lower-hazard suggestion (only when live GPS routed) */}
             {isLiveActive && (
                 <HazardCenterPanel
@@ -747,6 +909,15 @@ export default function Dashboard() {
     const [lowerHazardSuggestion, setLowerHazardSuggestion] = useState(null)
     // Ref that MapView fills with { setPreferredCenter, clearPreferredCenter }
     const nearestOverrideRef = useRef(null)
+
+    // Hazard-aware routing state
+    const [routeSafetyInfo, setRouteSafetyInfo] = useState(null)
+    const [routePref, setRoutePref] = useState(() => getSavedRoutePref())
+
+    const handleRoutePrefChange = useCallback((newPref) => {
+        setRoutePref(newPref)
+        saveRoutePref(newPref)
+    }, [])
 
     const handleTravelModeChange = useCallback((newMode) => {
         setTravelMode(newMode)
@@ -1390,6 +1561,9 @@ export default function Dashboard() {
                             evacuationCenter={result?.evacuation_center}
                             hasLiveGps={hasLiveGps}
                             travelMode={travelMode}
+                            routeSafetyInfo={routeSafetyInfo}
+                            routePref={routePref}
+                            onRoutePrefChange={handleRoutePrefChange}
                         />
 
                         {/* Self-arrival GPS controller — runs independently of severity */}
@@ -1485,6 +1659,9 @@ export default function Dashboard() {
                                     isOverrideActive={preferredCenterId != null}
                                     onRouteHere={(id) => setPreferredCenterId(id)}
                                     onBackToNearest={() => setPreferredCenterId(null)}
+                                    routeSafetyInfo={routeSafetyInfo}
+                                    routePref={routePref}
+                                    onRoutePrefChange={handleRoutePrefChange}
                                 />
                                 <MapView
                                     evacuationCenter={result?.evacuation_center}
@@ -1499,6 +1676,9 @@ export default function Dashboard() {
                                     preferredCenterId={preferredCenterId}
                                     onHazardSuggestionChange={setLowerHazardSuggestion}
                                     onNearestCenterOverrideRef={nearestOverrideRef}
+                                    onRouteSafetyChange={setRouteSafetyInfo}
+                                    routePref={routePref}
+                                    onRoutePrefChange={handleRoutePrefChange}
                                 />
                             </div>
                         )}
@@ -1837,6 +2017,9 @@ export default function Dashboard() {
                                         isOverrideActive={preferredCenterId != null}
                                         onRouteHere={(id) => setPreferredCenterId(id)}
                                         onBackToNearest={() => setPreferredCenterId(null)}
+                                        routeSafetyInfo={routeSafetyInfo}
+                                        routePref={routePref}
+                                        onRoutePrefChange={handleRoutePrefChange}
                                     />
                                     {selectedBarangay && (
                                     <MapView
@@ -1852,6 +2035,9 @@ export default function Dashboard() {
                                         preferredCenterId={preferredCenterId}
                                         onHazardSuggestionChange={setLowerHazardSuggestion}
                                         onNearestCenterOverrideRef={nearestOverrideRef}
+                                        onRouteSafetyChange={setRouteSafetyInfo}
+                                        routePref={routePref}
+                                        onRoutePrefChange={handleRoutePrefChange}
                                     />
                                     )}
                                 </div>

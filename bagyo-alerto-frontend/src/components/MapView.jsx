@@ -2,10 +2,18 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
-import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints, Camera, Info } from "lucide-react"
+import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Footprints, Camera, Info, Shield } from "lucide-react"
 import { useLiveLocation } from "../hooks/useLiveLocation"
 import { useNearestCenter } from "../hooks/useNearestCenter"
 import { HazardControl, HazardOverlayRenderer } from "./HazardOverlay"
+import {
+    getSegmentColor,
+    getSavedRoutePref,
+    saveRoutePref,
+    formatExposureSummary,
+    getHighHazardMeters,
+    evaluateRouteCandidates,
+} from "../utils/routeSafety"
 
 const HAZARD_LS_KEY = "bakwit_hazard_layers"
 const HAZARD_DEFAULT_OPACITY = 0.55
@@ -132,8 +140,8 @@ async function fetchOsrmRoute(startLng, startLat, endLng, endLat, mode = "foot",
     const primaryUrl = isCar ? OSRM_URL_CAR : OSRM_URL_FOOT
     const primaryProfile = isCar ? OSRM_PROFILE_CAR : OSRM_PROFILE_FOOT
 
-    const primaryEndpoint = `${primaryUrl}/route/v1/${primaryProfile}/${coords}?overview=full&geometries=geojson`
-    const backupEndpoint = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+    const primaryEndpoint = `${primaryUrl}/route/v1/${primaryProfile}/${coords}?overview=full&geometries=geojson&alternatives=true`
+    const backupEndpoint = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=true`
 
     const endpoints = [
         { url: primaryEndpoint, isBackup: false },
@@ -150,8 +158,9 @@ async function fetchOsrmRoute(startLng, startLat, endLng, endLat, mode = "foot",
             const res = await fetch(ep.url, { signal: controller.signal })
             if (!res.ok) continue
             const data = await res.json()
-            if (data.code === "Ok" && Array.isArray(data.routes) && data.routes[0]) {
-                return { route: data.routes[0], isBackup: ep.isBackup }
+            if (data.code === "Ok" && Array.isArray(data.routes) && data.routes.length > 0) {
+                const routes = data.routes.slice(0, 3)
+                return { routes, route: routes[0], isBackup: ep.isBackup }
             }
         } catch (_err) {
             // try next endpoint
@@ -174,7 +183,7 @@ async function fetchOsrmRoute(startLng, startLat, endLng, endLat, mode = "foot",
             const res = await fetch(`${API_BASE}/route?${qs}`, { signal: controller.signal })
             if (res.ok) {
                 const data = await res.json()
-                if (data.route) return data
+                if (data.route) return { routes: [data.route], route: data.route, isBackup: false }
             }
         } catch (_err) {
             // ignore
@@ -214,7 +223,23 @@ export default function MapView({
     preferredCenterId,
     onHazardSuggestionChange,
     onNearestCenterOverrideRef,   // receives { setPreferredCenter, clearPreferredCenter }
+    routePref: propRoutePref,
+    onRoutePrefChange: propOnRoutePrefChange,
+    onRouteSafetyChange,
 }) {
+    const [internalRoutePref, setInternalRoutePref] = useState(() => getSavedRoutePref())
+    const routePref = propRoutePref || internalRoutePref
+    const handleRoutePrefChange = useCallback((newPref) => {
+        saveRoutePref(newPref)
+        if (propOnRoutePrefChange) {
+            propOnRoutePrefChange(newPref)
+        } else {
+            setInternalRoutePref(newPref)
+        }
+    }, [propOnRoutePrefChange])
+
+    const [routeSafetyResult, setRouteSafetyResult] = useState(null)
+
     const [internalTravelMode, setInternalTravelMode] = useState(() => {
         try {
             const s = localStorage.getItem("bakwit_travel_mode")
@@ -282,6 +307,12 @@ export default function MapView({
 
     const barangayId = barangay?.value || barangay?.id
 
+    // Call-rate guard refs:
+    const lastScoredPosRef = useRef(null)
+    const lastScoredTimeRef = useRef(0)
+    const lastScoredTargetIdRef = useRef(null)
+    const lastScoredModeRef = useRef(null)
+
     // Throttle tracking refs: re-fetch only after moving > 30 m AND at least 15 s have passed
     const lastFetchedPosRef = useRef(null)
     const lastFetchedTimeRef = useRef(0)
@@ -298,31 +329,134 @@ export default function MapView({
         setRouteLoading(true)
 
         try {
-            const { route, isBackup } = await fetchOsrmRoute(startLng, startLat, destLng, destLat, mode, {
+            const { routes, route, isBackup } = await fetchOsrmRoute(startLng, startLat, destLng, destLat, mode, {
                 signal: controller.signal,
             })
             if (reqId !== routeReqIdRef.current) return
 
-            const coords = route.geometry.coordinates.map((c) => [c[1], c[0]])
-            const distKm = (route.distance / 1000).toFixed(2)
-            let mins
-            if (mode === "car") {
-                mins = Math.max(1, Math.round(route.duration / 60))
-            } else {
-                mins = isBackup
-                    ? Math.max(1, Math.round((route.distance / 1000 / 4.5) * 60))
-                    : Math.max(1, Math.round(route.duration / 60))
+            const candidateList = (routes && routes.length > 0 ? routes : [route]).map((r, idx) => {
+                const coords = r.geometry.coordinates.map((c) => [c[1], c[0]])
+                const distKm = (r.distance / 1000).toFixed(2)
+                let mins
+                if (mode === "car") {
+                    mins = Math.max(1, Math.round(r.duration / 60))
+                } else {
+                    mins = isBackup
+                        ? Math.max(1, Math.round((r.distance / 1000 / 4.5) * 60))
+                        : Math.max(1, Math.round(r.duration / 60))
+                }
+                return {
+                    id: String(idx),
+                    route: r,
+                    coords,
+                    distanceKm: distKm,
+                    durationMins: mins,
+                    durationSec: r.duration,
+                }
+            })
+
+            // Call-rate guard: re-score only when:
+            // - destination changed (target.id)
+            // - travel mode changed
+            // - user moved > 150m from last scored origin AND >= 30s have passed
+            const now = Date.now()
+            const targetChanged = lastScoredTargetIdRef.current !== target?.id
+            const modeChanged = lastScoredModeRef.current !== mode
+            let movedM = 0
+            if (lastScoredPosRef.current) {
+                movedM = getDistanceInMeters(startLat, startLng, lastScoredPosRef.current.lat, lastScoredPosRef.current.lng)
+            }
+            const timeSinceLastScore = now - lastScoredTimeRef.current
+            const shouldScore = targetChanged || modeChanged || !lastScoredPosRef.current || (movedM > 150 && timeSinceLastScore >= 30000)
+
+            let scoredMap = null
+            let hazardCheckFailed = false
+            const scoreCacheKey = `bakwit_hazard_scored_${barangayId}_${target?.id}_${mode}`
+
+            if (!shouldScore) {
+                try {
+                    const cachedScored = localStorage.getItem(scoreCacheKey)
+                    if (cachedScored) {
+                        scoredMap = JSON.parse(cachedScored)
+                    }
+                } catch (_e) {}
             }
 
-            setRouteCoords(coords)
-            setRouteDistance(distKm)
-            setRouteMinutes(mins)
+            if (!scoredMap) {
+                // Call /api/route-hazard-score with 8 s timeout
+                const scoreController = new AbortController()
+                const scoreTimer = setTimeout(() => scoreController.abort(), 8000)
+
+                try {
+                    const candidatePayload = candidateList.map((c) => ({
+                        id: c.id,
+                        coordinates: c.coords,
+                    }))
+
+                    const scoreRes = await fetch(`${API_BASE}/route-hazard-score`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ routes: candidatePayload }),
+                        signal: scoreController.signal,
+                    })
+
+                    if (scoreRes.ok) {
+                        const scoreData = await scoreRes.json()
+                        if (Array.isArray(scoreData.routes)) {
+                            scoredMap = {}
+                            scoreData.routes.forEach((sr) => {
+                                scoredMap[sr.id] = sr
+                            })
+                            try {
+                                localStorage.setItem(scoreCacheKey, JSON.stringify(scoredMap))
+                            } catch (_e) {}
+                            lastScoredPosRef.current = { lat: startLat, lng: startLng }
+                            lastScoredTimeRef.current = now
+                            lastScoredModeRef.current = mode
+                            lastScoredTargetIdRef.current = target?.id
+                        }
+                    } else {
+                        hazardCheckFailed = true
+                    }
+                } catch (_err) {
+                    hazardCheckFailed = true
+                } finally {
+                    clearTimeout(scoreTimer)
+                }
+            }
+
+            if (reqId !== routeReqIdRef.current) return
+
+            // Evaluate candidates according to selection rule
+            const evaluation = evaluateRouteCandidates(candidateList, scoredMap)
+            if (hazardCheckFailed) {
+                evaluation.isHazardUnavailable = true
+            }
+
+            setRouteSafetyResult(evaluation)
+            onRouteSafetyChange?.(evaluation)
+
+            // Active choice based on routePref
+            const activeChoice = (evaluation.hasSafestOption && routePref === "fastest")
+                ? evaluation.fastest
+                : (evaluation.hasSafestOption ? evaluation.safest : (evaluation.singleRoute || evaluation.fastest))
+
+            if (activeChoice) {
+                setRouteCoords(activeChoice.coords)
+                setRouteDistance(activeChoice.distanceKm)
+                setRouteMinutes(activeChoice.durationMins)
+            }
             setIsOfflineRoute(false)
 
             if (cacheKey) {
                 try {
-                    localStorage.setItem(cacheKey, JSON.stringify({ coords, distance: distKm, duration: mins }))
-                } catch (_e) { /* ignore */ }
+                    localStorage.setItem(cacheKey, JSON.stringify({
+                        coords: activeChoice.coords,
+                        distance: activeChoice.distanceKm,
+                        duration: activeChoice.durationMins,
+                        evaluation,
+                    }))
+                } catch (_e) {}
             }
         } catch (err) {
             // Cancelled or superseded: not a real failure, do not show fallback
@@ -340,22 +474,62 @@ export default function MapView({
                         setRouteCoords(parsed.coords)
                         setRouteDistance(parsed.distance)
                         setRouteMinutes(parsed.duration)
+                        if (parsed.evaluation) {
+                            setRouteSafetyResult(parsed.evaluation)
+                            onRouteSafetyChange?.(parsed.evaluation)
+                        }
                         setIsOfflineRoute(true)
                         return
                     }
                 }
-            } catch (_e) { /* ignore */ }
+            } catch (_e) {}
 
-            setRouteCoords([[startLat, startLng], [destLat, destLng]])
+            const fallbackCoords = [[startLat, startLng], [destLat, destLng]]
+            setRouteCoords(fallbackCoords)
             const d = (getDistanceInMeters(startLat, startLng, destLat, destLng) / 1000).toFixed(2)
             setRouteDistance(d)
             const fallbackSpeed = mode === "car" ? 30 : 4.5
-            setRouteMinutes(Math.max(1, Math.round((d / fallbackSpeed) * 60)))
+            const fallbackMins = Math.max(1, Math.round((d / fallbackSpeed) * 60))
+            setRouteMinutes(fallbackMins)
             setIsOfflineRoute(true)
+
+            const fallbackEval = {
+                hasSafestOption: false,
+                fastest: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, segments: [] },
+                safest: null,
+                singleRoute: { coords: fallbackCoords, distanceKm: d, durationMins: fallbackMins, segments: [] },
+                singleRouteLabel: "Direct route (offline)",
+                isHazardUnavailable: true,
+            }
+            setRouteSafetyResult(fallbackEval)
+            onRouteSafetyChange?.(fallbackEval)
         } finally {
             if (reqId === routeReqIdRef.current) setRouteLoading(false)
         }
-    }, [travelMode])
+    }, [travelMode, barangayId, target, routePref, onRouteSafetyChange])
+
+    const selectedRoute = useMemo(() => {
+        if (!routeSafetyResult) return null
+        if (routeSafetyResult.hasSafestOption) {
+            return routePref === "fastest" ? routeSafetyResult.fastest : routeSafetyResult.safest
+        }
+        return routeSafetyResult.singleRoute || routeSafetyResult.fastest || null
+    }, [routeSafetyResult, routePref])
+
+    useEffect(() => {
+        if (!selectedRoute) return
+        if (selectedRoute.coords && selectedRoute.coords.length > 0) {
+            setRouteCoords(selectedRoute.coords)
+            setRouteDistance(selectedRoute.distanceKm)
+            setRouteMinutes(selectedRoute.durationMins)
+            onRouteDistanceChange?.(selectedRoute.distanceKm)
+            onRouteMinutesChange?.(selectedRoute.durationMins)
+        }
+    }, [selectedRoute, onRouteDistanceChange, onRouteMinutesChange])
+
+    const activeSegments = useMemo(() => {
+        return selectedRoute?.segments || []
+    }, [selectedRoute])
 
     useEffect(() => () => routeAbortRef.current?.abort(), [])
 
@@ -967,6 +1141,155 @@ export default function MapView({
                 <p style={styles.centerAddress}>{target?.address || "Address unavailable"}</p>
             </div>
 
+            {/* Hazard-aware Route Selection (Fastest vs Safest) */}
+            {routeSafetyResult && (
+                <div style={{ marginBottom: 12 }}>
+                    {routeSafetyResult.hasSafestOption ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                            <div style={{
+                                display: "flex",
+                                gap: 6,
+                                background: "#f1f5f9",
+                                padding: 3,
+                                borderRadius: 8,
+                                border: "1px solid #e2e8f0",
+                            }}>
+                                <button
+                                    type="button"
+                                    id="route-pref-safest"
+                                    onClick={() => handleRoutePrefChange("safest")}
+                                    style={{
+                                        flex: 1,
+                                        padding: "8px 10px",
+                                        borderRadius: 6,
+                                        border: "none",
+                                        background: routePref === "safest" ? "#1a237e" : "transparent",
+                                        color: routePref === "safest" ? "#ffffff" : "#475569",
+                                        fontWeight: routePref === "safest" ? 700 : 500,
+                                        fontSize: 12,
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 5,
+                                        transition: "all 0.15s ease",
+                                    }}
+                                >
+                                    <Shield size={13} style={{ color: routePref === "safest" ? "#60a5fa" : "#059669" }} />
+                                    <span>Safest ({routeSafetyResult.safest.distanceKm} km · {formatWalkTime(routeSafetyResult.safest.durationMins)})</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    id="route-pref-fastest"
+                                    onClick={() => handleRoutePrefChange("fastest")}
+                                    style={{
+                                        flex: 1,
+                                        padding: "8px 10px",
+                                        borderRadius: 6,
+                                        border: "none",
+                                        background: routePref === "fastest" ? "#1a237e" : "transparent",
+                                        color: routePref === "fastest" ? "#ffffff" : "#475569",
+                                        fontWeight: routePref === "fastest" ? 700 : 500,
+                                        fontSize: 12,
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 5,
+                                        transition: "all 0.15s ease",
+                                    }}
+                                >
+                                    <span>Fastest ({routeSafetyResult.fastest.distanceKm} km · {formatWalkTime(routeSafetyResult.fastest.durationMins)})</span>
+                                </button>
+                            </div>
+
+                            <div style={{
+                                fontSize: 12,
+                                color: "#334155",
+                                background: "#f8fafc",
+                                padding: "8px 12px",
+                                borderRadius: 8,
+                                border: "1px solid #e2e8f0",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                lineHeight: 1.35,
+                            }}>
+                                <Shield size={13} style={{ color: "#059669", flexShrink: 0 }} />
+                                <span>{formatExposureSummary(selectedRoute?.meters_by_class)}</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <div style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    background: "#f0fdf4",
+                                    border: "1px solid #bbf7d0",
+                                    color: "#166534",
+                                    padding: "4px 10px",
+                                    borderRadius: 6,
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                }}>
+                                    <Shield size={13} style={{ color: "#16a34a" }} />
+                                    <span>{routeSafetyResult.singleRouteLabel || "Fastest and safest available"}</span>
+                                </div>
+                                {routeSafetyResult.isHazardUnavailable && (
+                                    <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+                                        Hazard check unavailable
+                                    </span>
+                                )}
+                            </div>
+                            {selectedRoute?.meters_by_class && (
+                                <div style={{ fontSize: 12, color: "#475569" }}>
+                                    {formatExposureSummary(selectedRoute.meters_by_class)}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Remaining high hazard alert */}
+                    {getHighHazardMeters(selectedRoute?.meters_by_class) > 0 && (
+                        <div style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            background: "#fffbeb",
+                            border: "1px solid #fde68a",
+                            borderRadius: 8,
+                            padding: "8px 12px",
+                            marginTop: 8,
+                            fontSize: 12,
+                            color: "#92400e",
+                            lineHeight: 1.4,
+                        }}>
+                            <AlertTriangle size={15} style={{ color: "#d97706", flexShrink: 0 }} />
+                            <span>This route still crosses {getHighHazardMeters(selectedRoute.meters_by_class)} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
+                        </div>
+                    )}
+
+                    {/* Tiny legend line */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#64748b", marginTop: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600 }}>Route hazard:</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 9, height: 9, borderRadius: 2, background: "#2563eb" }} /> Low / None
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 9, height: 9, borderRadius: 2, background: "#f59e0b" }} /> Moderate
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 9, height: 9, borderRadius: 2, background: "#ea580c" }} /> High
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 9, height: 9, borderRadius: 2, background: "#991b1b" }} /> Very high
+                        </span>
+                    </div>
+                </div>
+            )}
+
             {/* 1. Distance & Travel time as two large figures (tabular-nums) */}
             <div style={styles.figuresRow}>
                 <div style={styles.figureCard}>
@@ -1157,15 +1480,34 @@ export default function MapView({
                                     opacity: 1,
                                 }}
                             />
-                            <Polyline
-                                positions={routeCoords}
-                                pathOptions={{
-                                    color: isOfflineRoute ? "#dc2626" : "#2563eb",
-                                    weight: 6,
-                                    opacity: 1,
-                                    dashArray: isOfflineRoute ? "6, 8" : undefined,
-                                }}
-                            />
+                            {activeSegments && activeSegments.length > 0 ? (
+                                activeSegments.map(([startIdx, endIdx, worstClass], sIdx) => {
+                                    const segCoords = routeCoords.slice(startIdx, endIdx + 1)
+                                    if (segCoords.length < 2) return null
+                                    return (
+                                        <Polyline
+                                            key={`seg-${sIdx}-${startIdx}-${endIdx}-${worstClass}`}
+                                            positions={segCoords}
+                                            pathOptions={{
+                                                color: isOfflineRoute ? "#dc2626" : getSegmentColor(worstClass),
+                                                weight: 6,
+                                                opacity: 1,
+                                                dashArray: isOfflineRoute ? "6, 8" : undefined,
+                                            }}
+                                        />
+                                    )
+                                })
+                            ) : (
+                                <Polyline
+                                    positions={routeCoords}
+                                    pathOptions={{
+                                        color: isOfflineRoute ? "#dc2626" : "#2563eb",
+                                        weight: 6,
+                                        opacity: 1,
+                                        dashArray: isOfflineRoute ? "6, 8" : undefined,
+                                    }}
+                                />
+                            )}
                         </>
                     )}
                 </MapContainer>
