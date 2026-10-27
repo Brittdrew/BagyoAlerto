@@ -22,3 +22,5 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+/storage/app/hazard-grid
+/storage/app/hazard-debug
