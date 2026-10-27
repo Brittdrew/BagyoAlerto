@@ -8,6 +8,7 @@ import { AlertTriangle, ChevronRight, ExternalLink, RefreshCw, Shield, Map } fro
 import AdminLayout from "../../components/AdminLayout"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { HazardControl, HazardOverlayRenderer } from "../../components/HazardOverlay"
+import HazardLegendDetailed from "../../components/HazardLegendDetailed"
 
 const API_BASE = import.meta.env.VITE_API_BASE
 const SURIGAO_CENTER = [9.7843, 125.4887]
@@ -318,6 +319,7 @@ export default function AdminHazardMap() {
                         )}
                     </aside>
                 </div>
+                <HazardLegendDetailed />
             </div>
             <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
         </AdminLayout>
