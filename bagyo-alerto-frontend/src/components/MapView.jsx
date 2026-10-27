@@ -307,6 +307,77 @@ export default function MapView({
 
     const barangayId = barangay?.value || barangay?.id
 
+    // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
+    const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
+    const hasLiveGps = Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
+
+    // Call useNearestCenter with live GPS position and travel mode
+    const {
+        nearestCenter,
+        isFull: nearestIsFull,
+        isFallback: nearestIsFallback,
+        fallbackNotice: nearestFallbackNotice,
+        loading: nearestLoading,
+        lowerHazardSuggestion,
+        setPreferredCenter,
+        clearPreferredCenter,
+    } = useNearestCenter(position, {
+        enabled: routeMode === "nearest" && Boolean(barangayId),
+        mode: travelMode,
+    })
+
+    // Forward preferred center ID into hook when parent supplies it
+    useEffect(() => {
+        if (preferredCenterId != null) {
+            setPreferredCenter(preferredCenterId)
+        } else {
+            clearPreferredCenter()
+        }
+    }, [preferredCenterId, setPreferredCenter, clearPreferredCenter])
+
+    // Surface hazard suggestion and override controls to parent
+    useEffect(() => {
+        onHazardSuggestionChange?.(lowerHazardSuggestion)
+    }, [lowerHazardSuggestion, onHazardSuggestionChange])
+
+    useEffect(() => {
+        if (onNearestCenterOverrideRef) {
+            onNearestCenterOverrideRef.current = { setPreferredCenter, clearPreferredCenter }
+        }
+    }, [setPreferredCenter, clearPreferredCenter, onNearestCenterOverrideRef])
+
+    // Effective target based on routeMode and fallback
+    const target = useMemo(() => {
+        if (routeMode === "barangay") {
+            return barangayTarget
+        }
+        if (!nearestIsFallback && nearestCenter) {
+            return nearestCenter
+        }
+        return barangayTarget
+    }, [routeMode, nearestIsFallback, nearestCenter, barangayTarget])
+
+    const isFull = useMemo(() => {
+        if (routeMode === "nearest" && !nearestIsFallback && nearestCenter) {
+            return Boolean(nearestIsFull || nearestCenter.is_full || (nearestCenter.free_space !== undefined && nearestCenter.free_space <= 0))
+        }
+        if (barangayTarget) {
+            return Boolean(barangayTarget.current_occupancy >= barangayTarget.capacity)
+        }
+        return false
+    }, [routeMode, nearestIsFallback, nearestCenter, nearestIsFull, barangayTarget])
+
+    const fallbackNotice = useMemo(() => {
+        if (routeMode !== "nearest") return null
+        if (nearestIsFallback) {
+            return nearestFallbackNotice || "Using your barangay's designated evacuation center."
+        }
+        return null
+    }, [routeMode, nearestIsFallback, nearestFallbackNotice])
+
+    const targetLoading = (routeMode === "nearest" && nearestLoading && !barangayTarget) || (barangayTargetLoading && !target)
+    const targetError = routeMode === "barangay" ? barangayTargetError : (target ? null : (barangayTargetError || "No evacuation center available"))
+
     // Call-rate guard refs:
     const lastScoredPosRef = useRef(null)
     const lastScoredTimeRef = useRef(0)
@@ -532,77 +603,6 @@ export default function MapView({
     }, [selectedRoute])
 
     useEffect(() => () => routeAbortRef.current?.abort(), [])
-
-    // Requirement 2: Call useLiveLocation with enabled = true once a barangay is selected
-    const { position, accuracy, status: gpsStatus } = useLiveLocation(Boolean(barangayId))
-    const hasLiveGps = Boolean(position && Number.isFinite(position.lat) && Number.isFinite(position.lng))
-
-    // Call useNearestCenter with live GPS position and travel mode
-    const {
-        nearestCenter,
-        isFull: nearestIsFull,
-        isFallback: nearestIsFallback,
-        fallbackNotice: nearestFallbackNotice,
-        loading: nearestLoading,
-        lowerHazardSuggestion,
-        setPreferredCenter,
-        clearPreferredCenter,
-    } = useNearestCenter(position, {
-        enabled: routeMode === "nearest" && Boolean(barangayId),
-        mode: travelMode,
-    })
-
-    // Forward preferred center ID into hook when parent supplies it
-    useEffect(() => {
-        if (preferredCenterId != null) {
-            setPreferredCenter(preferredCenterId)
-        } else {
-            clearPreferredCenter()
-        }
-    }, [preferredCenterId, setPreferredCenter, clearPreferredCenter])
-
-    // Surface hazard suggestion and override controls to parent
-    useEffect(() => {
-        onHazardSuggestionChange?.(lowerHazardSuggestion)
-    }, [lowerHazardSuggestion, onHazardSuggestionChange])
-
-    useEffect(() => {
-        if (onNearestCenterOverrideRef) {
-            onNearestCenterOverrideRef.current = { setPreferredCenter, clearPreferredCenter }
-        }
-    }, [setPreferredCenter, clearPreferredCenter, onNearestCenterOverrideRef])
-
-    // Effective target based on routeMode and fallback
-    const target = useMemo(() => {
-        if (routeMode === "barangay") {
-            return barangayTarget
-        }
-        if (!nearestIsFallback && nearestCenter) {
-            return nearestCenter
-        }
-        return barangayTarget
-    }, [routeMode, nearestIsFallback, nearestCenter, barangayTarget])
-
-    const isFull = useMemo(() => {
-        if (routeMode === "nearest" && !nearestIsFallback && nearestCenter) {
-            return Boolean(nearestIsFull || nearestCenter.is_full || (nearestCenter.free_space !== undefined && nearestCenter.free_space <= 0))
-        }
-        if (barangayTarget) {
-            return Boolean(barangayTarget.current_occupancy >= barangayTarget.capacity)
-        }
-        return false
-    }, [routeMode, nearestIsFallback, nearestCenter, nearestIsFull, barangayTarget])
-
-    const fallbackNotice = useMemo(() => {
-        if (routeMode !== "nearest") return null
-        if (nearestIsFallback) {
-            return nearestFallbackNotice || "Using your barangay's designated evacuation center."
-        }
-        return null
-    }, [routeMode, nearestIsFallback, nearestFallbackNotice])
-
-    const targetLoading = (routeMode === "nearest" && nearestLoading && !barangayTarget) || (barangayTargetLoading && !target)
-    const targetError = routeMode === "barangay" ? barangayTargetError : (target ? null : (barangayTargetError || "No evacuation center available"))
 
     // Notify parent whenever actual routed target center changes
     useEffect(() => {
