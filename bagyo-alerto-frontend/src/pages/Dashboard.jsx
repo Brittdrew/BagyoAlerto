@@ -7,7 +7,6 @@ import MapView, { formatWalkTime } from "../components/MapView"
 import Sidebar from "../components/Sidebar"
 import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
 import SelfArrivalController from "../components/SelfArrivalController"
-import HazardCenterPanel from "../components/HazardCenterPanel"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
@@ -603,80 +602,12 @@ function EvacRoutes({
                 <Route size={15} style={{ color: needsEvac ? "#501313" : "#333" }} />
                 <span style={{ ...styles.evacTitle, color: needsEvac ? "#501313" : "#333" }}>Evacuation routes</span>
 
-                {onTravelModeChange && (
-                    <div style={{
-                        display: "inline-flex",
-                        background: "#e2e8f0",
-                        borderRadius: 6,
-                        padding: 2,
-                        marginLeft: "auto",
-                        marginRight: isActive ? 8 : 0,
-                        gap: 2,
-                    }}>
-                        <button
-                            type="button"
-                            id="evac-mode-walk"
-                            onClick={() => onTravelModeChange("foot")}
-                            style={{
-                                padding: "3px 8px",
-                                fontSize: 11,
-                                fontWeight: travelMode === "foot" ? 700 : 500,
-                                borderRadius: 4,
-                                border: "none",
-                                background: travelMode === "foot" ? "#1a237e" : "transparent",
-                                color: travelMode === "foot" ? "#ffffff" : "#475569",
-                                cursor: "pointer",
-                            }}
-                        >
-                            Walk
-                        </button>
-                        <button
-                            type="button"
-                            id="evac-mode-vehicle"
-                            onClick={() => onTravelModeChange("car")}
-                            style={{
-                                padding: "3px 8px",
-                                fontSize: 11,
-                                fontWeight: travelMode === "car" ? 700 : 500,
-                                borderRadius: 4,
-                                border: "none",
-                                background: travelMode === "car" ? "#1a237e" : "transparent",
-                                color: travelMode === "car" ? "#ffffff" : "#475569",
-                                cursor: "pointer",
-                            }}
-                        >
-                            Vehicle
-                        </button>
-                    </div>
-                )}
-
                 {isActive && (
-                    <span style={{ fontSize: 10, background: "#E24B4A", color: "#fff", padding: "2px 8px", borderRadius: 20 }}>
+                    <span style={{ fontSize: 10, background: "#E24B4A", color: "#fff", padding: "2px 8px", borderRadius: 20, marginLeft: "auto" }}>
                         ACTIVE
                     </span>
                 )}
             </div>
-
-            {/* Small note when Vehicle is selected (Requirement 6) */}
-            {travelMode === "car" && (
-                <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    background: "#fffbeb",
-                    border: "1px solid #fde68a",
-                    borderRadius: 6,
-                    padding: "6px 10px",
-                    marginTop: 8,
-                    marginBottom: 4,
-                    fontSize: 11,
-                    color: "#92400e",
-                    lineHeight: 1.35,
-                }}>
-                    <AlertTriangle size={13} style={{ color: "#d97706", flexShrink: 0 }} />
-                    <span>Roads may be flooded or blocked. Follow barangay officials' instructions.</span>
-                </div>
-            )}
 
             <div style={{ ...styles.routeItem, borderBottom: `0.5px solid ${needsEvac ? "#F7C1C1" : "#eee"}` }}>
                 <div style={{ ...styles.routeNum, background: needsEvac ? "#E24B4A" : "#888" }}>1</div>
@@ -713,177 +644,6 @@ function EvacRoutes({
                     </div>
                 </div>
             </div>
-
-            {/* Route safety options (Fastest vs Safest) */}
-            {isLiveActive && routeSafetyInfo?.hasSafestOption && (
-                <div style={{ marginTop: 10, marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", display: "flex", alignItems: "center", gap: 5 }}>
-                        <Shield size={13} style={{ color: "#2563eb" }} /> Choose route:
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                        <button
-                            type="button"
-                            id="evac-route-safest"
-                            onClick={() => onRoutePrefChange?.("safest")}
-                            style={{
-                                padding: "8px 10px",
-                                borderRadius: 6,
-                                border: routePref === "safest" ? "2px solid #16a34a" : "1px solid #cbd5e1",
-                                background: routePref === "safest" ? "#f0fdf4" : "#ffffff",
-                                cursor: "pointer",
-                                textAlign: "left",
-                                transition: "all 0.15s ease",
-                            }}
-                        >
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: routePref === "safest" ? "#166534" : "#334155" }}>
-                                    🛡️ Safest
-                                </span>
-                                {routePref === "safest" && (
-                                    <span style={{ fontSize: 9, background: "#16a34a", color: "#fff", padding: "1px 5px", borderRadius: 10, fontWeight: 700 }}>
-                                        ACTIVE
-                                    </span>
-                                )}
-                            </div>
-                            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
-                                {fmtKm(routeSafetyInfo.safest?.distanceKm)} km · ~{fmtMins(routeSafetyInfo.safest?.durationMins)} min
-                            </div>
-                            <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
-                                {formatExposureSummary(routeSafetyInfo.safest?.meters_by_class)}
-                            </div>
-                        </button>
-
-                        <button
-                            type="button"
-                            id="evac-route-fastest"
-                            onClick={() => onRoutePrefChange?.("fastest")}
-                            style={{
-                                padding: "8px 10px",
-                                borderRadius: 6,
-                                border: routePref === "fastest" ? "2px solid #2563eb" : "1px solid #cbd5e1",
-                                background: routePref === "fastest" ? "#eff6ff" : "#ffffff",
-                                cursor: "pointer",
-                                textAlign: "left",
-                                transition: "all 0.15s ease",
-                            }}
-                        >
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontSize: 12, fontWeight: 700, color: routePref === "fastest" ? "#1e40af" : "#334155" }}>
-                                    ⚡ Fastest
-                                </span>
-                                {routePref === "fastest" && (
-                                    <span style={{ fontSize: 9, background: "#2563eb", color: "#fff", padding: "1px 5px", borderRadius: 10, fontWeight: 700 }}>
-                                        ACTIVE
-                                    </span>
-                                )}
-                            </div>
-                            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, fontWeight: 600 }}>
-                                {fmtKm(routeSafetyInfo.fastest?.distanceKm)} km · ~{fmtMins(routeSafetyInfo.fastest?.durationMins)} min
-                            </div>
-                            <div style={{ fontSize: 10, color: "#475569", marginTop: 4, lineHeight: 1.3 }}>
-                                {formatExposureSummary(routeSafetyInfo.fastest?.meters_by_class)}
-                            </div>
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Single route badge or unavailable note */}
-            {isLiveActive && routeSafetyInfo && !routeSafetyInfo.hasSafestOption && (
-                <div style={{ marginTop: 8, marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        background: routeSafetyInfo.isHazardUnavailable ? "#fef3c7" : "#ecfdf5",
-                        color: routeSafetyInfo.isHazardUnavailable ? "#92400e" : "#047857",
-                        border: `1px solid ${routeSafetyInfo.isHazardUnavailable ? "#fcd34d" : "#a7f3d0"}`,
-                        padding: "3px 8px",
-                        borderRadius: 6,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 4
-                    }}>
-                        <Shield size={12} /> {routeSafetyInfo.singleRouteLabel}
-                    </span>
-                    {routeSafetyInfo.singleRoute?.meters_by_class && (
-                        <span style={{ fontSize: 11, color: "#64748b" }}>
-                            ({formatExposureSummary(routeSafetyInfo.singleRoute.meters_by_class)})
-                        </span>
-                    )}
-                    {routeSafetyInfo.isHazardUnavailable && (
-                        <span style={{ fontSize: 11, color: "#b45309" }}>Hazard check unavailable</span>
-                    )}
-                </div>
-            )}
-
-            {/* Remaining high hazard warning */}
-            {isLiveActive && (() => {
-                const activeCand = routeSafetyInfo?.hasSafestOption
-                    ? (routePref === "fastest" ? routeSafetyInfo.fastest : routeSafetyInfo.safest)
-                    : (routeSafetyInfo?.singleRoute || null)
-                const highHazard = activeCand ? getHighHazardMeters(activeCand.meters_by_class) : 0
-                if (highHazard <= 0) return null
-                return (
-                    <div style={{
-                        background: "#fff1f2",
-                        border: "1px solid #fecdd3",
-                        borderRadius: 6,
-                        padding: "7px 10px",
-                        marginTop: 6,
-                        marginBottom: 6,
-                        fontSize: 11,
-                        color: "#9f1239",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6
-                    }}>
-                        <AlertTriangle size={14} style={{ color: "#e11d48", flexShrink: 0 }} />
-                        <span>This route still crosses {fmtMeters(highHazard)} m of high-hazard area. Stay alert; roads may be flooded or blocked.</span>
-                    </div>
-                )
-            })()}
-
-            {/* Tiny route hazard color legend line */}
-            {isLiveActive && (
-                <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 10,
-                    color: "#64748b",
-                    marginTop: 6,
-                    paddingTop: 6,
-                    borderTop: "1px dashed #e2e8f0",
-                    flexWrap: "wrap",
-                }}>
-                    <span style={{ fontWeight: 600 }}>Route hazard:</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#2563eb", display: "inline-block" }} /> Low / None
-                    </span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#f59e0b", display: "inline-block" }} /> Moderate
-                    </span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#ea580c", display: "inline-block" }} /> High
-                    </span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: "#991b1b", display: "inline-block" }} /> Very high
-                    </span>
-                </div>
-            )}
-
-            {/* Hazard badges + warning + lower-hazard suggestion (only when live GPS routed) */}
-            {isLiveActive && (
-                <HazardCenterPanel
-                    center={displayCenter}
-                    originalCenter={originalCenter}
-                    lowerHazardSuggestion={lowerHazardSuggestion}
-                    isOverrideActive={Boolean(isOverrideActive)}
-                    onRouteHere={onRouteHere}
-                    onBackToNearest={onBackToNearest}
-                    travelMode={travelMode}
-                />
-            )}
         </div>
     )
 }
@@ -1747,8 +1507,11 @@ export default function Dashboard() {
                                     onRouteMinutesChange={setRouteMinutes}
                                     onLiveGpsChange={setHasLiveGps}
                                     preferredCenterId={preferredCenterId}
+                                    onPreferredCenterChange={setPreferredCenterId}
                                     onHazardSuggestionChange={setLowerHazardSuggestion}
                                     onNearestCenterOverrideRef={nearestOverrideRef}
+                                    onBaseTargetChange={setBaseTarget}
+                                    onClearOverride={() => setPreferredCenterId(null)}
                                     onRouteSafetyChange={setRouteSafetyInfo}
                                     routePref={routePref}
                                     onRoutePrefChange={handleRoutePrefChange}
@@ -2109,6 +1872,7 @@ export default function Dashboard() {
                                         onRouteMinutesChange={setRouteMinutes}
                                         onLiveGpsChange={setHasLiveGps}
                                         preferredCenterId={preferredCenterId}
+                                        onPreferredCenterChange={setPreferredCenterId}
                                         onHazardSuggestionChange={setLowerHazardSuggestion}
                                         onNearestCenterOverrideRef={nearestOverrideRef}
                                         onBaseTargetChange={setBaseTarget}

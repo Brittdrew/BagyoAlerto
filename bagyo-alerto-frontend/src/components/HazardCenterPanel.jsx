@@ -102,7 +102,7 @@ export default function HazardCenterPanel({
                 fontStyle: "italic",
                 lineHeight: 1.4,
             }}>
-                Based on MGB susceptibility maps, not live flooding.
+                Based on MGB hazard maps, not live flooding.
             </div>
 
             {/* Warning notice for high / very_high */}
@@ -128,8 +128,7 @@ export default function HazardCenterPanel({
                     />
                     <span>
                         <strong>
-                            This center is in a mapped {levelWord(worstLevel)}{" "}
-                            {hazardLabel(highs)} susceptibility area.
+                            This center is in a {hazardLabel(highs)}-prone area.
                         </strong>{" "}
                         Follow barangay and DRRMO instructions and avoid flooded or blocked roads.
                     </span>

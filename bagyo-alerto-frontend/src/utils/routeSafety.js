@@ -6,6 +6,11 @@ export const SAFE_MAX_RATIO = 1.5
 export const SAFE_MAX_EXTRA_SECONDS = 900 // 15 minutes in seconds
 export const MIN_IMPROVEMENT = 0.10 // 10% lower exposure required to offer "Safest"
 
+export const ROUTE_SAFETY_THRESHOLDS = {
+    CLEAR: 0,
+    CAUTION: 0.25, // < 25% of total route length in high/very_high exposure
+}
+
 export const HAZARD_SEGMENT_COLORS = {
     0: "#2563eb", // blue (safe / none)
     1: "#2563eb", // blue (low)
@@ -22,33 +27,107 @@ export function getSavedRoutePref() {
     try {
         const pref = localStorage.getItem("bakwit_route_pref")
         if (pref === "fastest" || pref === "safest") return pref
-    } catch (_e) {}
+    } catch (_e) {
+        /* ignore */
+    }
     return "safest"
 }
 
 export function saveRoutePref(pref) {
     try {
         localStorage.setItem("bakwit_route_pref", pref)
-    } catch (_e) {}
+    } catch (_e) {
+        /* ignore */
+    }
 }
 
 /**
- * Format meters_by_class into a readable summary string:
- * e.g. "320 m through high/very high flood-prone area, 0 m landslide-prone"
+ * Format meters_by_class into a readable plain-language summary string:
+ * e.g. "320 m flood-prone, 0 m landslide-prone"
  */
 export function formatExposureSummary(meters_by_class) {
     if (!meters_by_class) return ""
     const floodHigh = Math.round((meters_by_class.flood?.high || 0) + (meters_by_class.flood?.very_high || 0))
     const landslideHigh = Math.round((meters_by_class.landslide?.high || 0) + (meters_by_class.landslide?.very_high || 0))
-    return `${floodHigh.toLocaleString()} m through high/very high flood-prone area, ${landslideHigh.toLocaleString()} m landslide-prone`
+    return `${floodHigh.toLocaleString()} m flood-prone, ${landslideHigh.toLocaleString()} m landslide-prone`
+}
+
+/**
+ * Format safer center time difference delta:
+ * - Faster: " (6 min faster)"
+ * - Slower: " (+4 min)"
+ * - Under 1 min difference: " (about the same time)"
+ * - Never returns "+-"
+ */
+export function formatSaferCenterDelta(extraMin) {
+    if (extraMin == null || !Number.isFinite(extraMin)) return ""
+    const rounded = Math.round(extraMin)
+    if (rounded === 0) {
+        return " (about the same time)"
+    }
+    if (rounded < 0) {
+        return ` (${Math.abs(rounded)} min faster)`
+    }
+    return ` (+${rounded} min)`
 }
 
 /**
  * Return total meters of high/very-high hazard on this route
  */
 export function getHighHazardMeters(meters_by_class) {
-    if (!meters_by_class?.worst) return 0
+    if (!meters_by_class?.worst) {
+        if (!meters_by_class) return 0
+        const floodHigh = Number(meters_by_class.flood?.high || 0) + Number(meters_by_class.flood?.very_high || 0)
+        const landslideHigh = Number(meters_by_class.landslide?.high || 0) + Number(meters_by_class.landslide?.very_high || 0)
+        return Math.max(0, Math.round(Math.max(floodHigh, landslideHigh)))
+    }
     return Math.round((meters_by_class.worst.high || 0) + (meters_by_class.worst.very_high || 0))
+}
+
+/**
+ * Compute the single route safety banner data based on high/very_high hazard exposure share.
+ *
+ * @param {object|null} route - Selected route candidate object
+ * @param {boolean} [isHazardUnavailable=false] - Whether hazard scoring failed or is unavailable
+ * @param {"foot"|"car"} [travelMode="foot"] - Current travel mode
+ * @returns {object} { level: "clear"|"caution"|"high_risk"|"unavailable", text: string, share: number|null }
+ */
+export function getRouteSafetyBanner(route, isHazardUnavailable = false, travelMode = "foot") {
+    if (isHazardUnavailable || !route || !route.meters_by_class) {
+        return {
+            level: "unavailable",
+            text: "Route hazard check unavailable. Follow barangay officials' instructions.",
+            share: null,
+        }
+    }
+
+    const highMeters = getHighHazardMeters(route.meters_by_class)
+    const totalMeters = Number(route.length_m ?? (route.distanceKm != null ? route.distanceKm * 1000 : 0))
+
+    const share = totalMeters > 0 ? (highMeters / totalMeters) : (highMeters > 0 ? 1 : 0)
+    const vehicleNote = travelMode === "car" ? " Roads may be flooded or blocked." : ""
+
+    if (share === ROUTE_SAFETY_THRESHOLDS.CLEAR || highMeters === 0) {
+        return {
+            level: "clear",
+            text: "Route looks clear.",
+            share: 0,
+        }
+    }
+
+    if (share < ROUTE_SAFETY_THRESHOLDS.CAUTION) {
+        return {
+            level: "caution",
+            text: `Part of this route is flood or landslide-prone. Go carefully.${vehicleNote}`,
+            share,
+        }
+    }
+
+    return {
+        level: "high_risk",
+        text: `Much of this route is high-risk. Follow barangay officials' instructions.${vehicleNote}`,
+        share,
+    }
 }
 
 /**
@@ -100,7 +179,7 @@ export function getHighHazardTotalMeters(meters_by_class) {
     return Math.max(0, Math.round(floodHigh + landslideHigh))
 }
 
-const isDev = Boolean(import.meta.env?.DEV ?? (typeof process !== "undefined" && process.env?.NODE_ENV !== "production"))
+const isDev = Boolean(import.meta.env?.DEV ?? (typeof globalThis !== "undefined" && globalThis.process?.env?.NODE_ENV !== "production"))
 
 function logDebugTable(candidates, scoredMap, fastest, safestCandidate, offersSafest, isHazardUnavailable, debugOptions = {}) {
     if (debugOptions.viaPointsCount !== undefined) {
@@ -120,7 +199,7 @@ function logDebugTable(candidates, scoredMap, fastest, safestCandidate, offersSa
         const rawExp = Number(s?.exposure_index ?? c.exposure_index ?? 0)
         const expIndex = Number.isFinite(rawExp) ? rawExp : null
 
-        let verdict = "accepted"
+        let verdict
         if (c.dropReason) {
             verdict = c.dropReason
         } else if (isHazardUnavailable) {
@@ -222,6 +301,7 @@ export function evaluateRouteCandidates(candidates, scoredMap, debugOptions = {}
             exposure_index: exposureIndex,
             meters_by_class: s?.meters_by_class ?? c.meters_by_class ?? null,
             segments: s?.segments ?? c.segments ?? [[0, (c.coords?.length || 1) - 1, 0]],
+            length_m: s?.length_m ?? (distKm * 1000),
         }
     })
 
@@ -235,9 +315,7 @@ export function evaluateRouteCandidates(candidates, scoredMap, debugOptions = {}
             fastest,
             safest: fastest,
             singleRoute: fastest,
-            singleRouteLabel: isHazardUnavailable
-                ? "Fastest route"
-                : "No safer route found nearby",
+            singleRouteLabel: null,
             isHazardUnavailable,
             candidatesCount: candidates.length,
             extraMins: 0,
@@ -311,7 +389,7 @@ export function evaluateRouteCandidates(candidates, scoredMap, debugOptions = {}
         fastest,
         safest: fastest,
         singleRoute: fastest,
-        singleRouteLabel: "No safer route found nearby",
+        singleRouteLabel: null,
         isHazardUnavailable: false,
         candidatesCount: candidates.length,
         extraMins: 0,
