@@ -28,6 +28,30 @@ import { useAdminPolling } from "../../hooks/useAdminPolling"
 const API_BASE = import.meta.env.VITE_API_BASE
 const OVERVIEW_TIMEOUT_MS = 10_000
 
+/**
+ * Formats a timestamp in Asia/Manila timezone consistently across the overview table
+ * and the activity audit trail.
+ * Accepts ISO 8601 strings (with Z/offset) or raw DB datetime strings (assumed UTC).
+ */
+export function formatManilaDateTime(dateInput, fallback = "-") {
+    if (!dateInput) return fallback
+    let str = typeof dateInput === "string" ? dateInput.trim() : dateInput
+    // If raw datetime string without timezone info (e.g. "YYYY-MM-DD HH:mm:ss"), treat as UTC
+    if (typeof str === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(str)) {
+        str = str.replace(" ", "T") + "Z"
+    }
+    const d = new Date(str)
+    if (isNaN(d.getTime())) return fallback
+    return d.toLocaleString("en-US", {
+        timeZone: "Asia/Manila",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    })
+}
+
 export default function AdminEvacuationMonitoring() {
     const { authHeaders, logout } = useAdminAuth()
     const navigate = useNavigate()
@@ -494,7 +518,7 @@ export default function AdminEvacuationMonitoring() {
                     </div>
                     {lastUpdated && (
                         <span style={styles.lastUpdatedText}>
-                            Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                            Updated {lastUpdated.toLocaleTimeString("en-US", { timeZone: "Asia/Manila", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}
                         </span>
                     )}
                     <button
@@ -566,9 +590,7 @@ export default function AdminEvacuationMonitoring() {
                                     const pct = capacity > 0 ? Math.min(100, Math.round((current / capacity) * 100)) : (current > 0 ? 100 : 0)
                                     const si = getOverviewStatusInfo(occ)
                                     const isSelected = String(item.center.id) === String(selectedCenterId)
-                                    const latestLogFormatted = item.latestLogTime
-                                        ? new Date(item.latestLogTime).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-                                        : "No logs yet"
+                                    const latestLogFormatted = formatManilaDateTime(item.latestLogTime, "No logs yet")
 
                                     return (
                                         <tr
@@ -888,14 +910,7 @@ export default function AdminEvacuationMonitoring() {
                                             log.origin_barangay_id &&
                                             String(log.origin_barangay_id) !== String(currentCenter?.barangay_id)
 
-                                        const formattedTime = log.created_at
-                                            ? new Date(log.created_at).toLocaleString([], {
-                                                  month: "short",
-                                                  day: "numeric",
-                                                  hour: "2-digit",
-                                                  minute: "2-digit",
-                                              })
-                                            : "Just now"
+                                        const formattedTime = formatManilaDateTime(log.created_at, "Just now")
 
                                         return (
                                             <div

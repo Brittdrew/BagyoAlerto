@@ -266,6 +266,11 @@ class EvacuationLogTest extends TestCase
         $this->assertEquals($log3->id, $data[0]['id']); // newest first
         $this->assertEquals($log2->id, $data[1]['id']);
         $this->assertEquals($log1->id, $data[2]['id']);
+        $this->assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/',
+            $data[0]['created_at'],
+            'created_at in logs index must be an ISO 8601 string with explicit timezone Z or offset'
+        );
 
         // Filter by type=departure
         $filterType = $this->getJson("/api/evacuation-centers/{$this->center->id}/logs?type=departure");
@@ -463,11 +468,11 @@ class EvacuationLogTest extends TestCase
         Sanctum::actingAs($this->admin);
 
         $center200 = EvacuationCenter::create([
-            'name' => 'Washington Barangay Hall',
+            'name' => 'C.V. Diez Elementary School',
             'barangay_id' => $this->barangayA->id,
             'address' => 'Washington, Surigao City',
-            'latitude' => 9.78549300,
-            'longitude' => 125.48793500,
+            'latitude' => 9.786074,
+            'longitude' => 125.489348,
             'capacity' => 200,
             'current_occupancy' => 0,
             'is_active' => true,

@@ -12,6 +12,8 @@ class HazardLookupCommand extends Command
 {
     protected $signature = 'hazard:lookup
                             {--only= : Limit to "barangays" or "centers"}
+                            {--id= : Only process the row with this id (applies within --only scope)}
+                            {--name= : Only process the row whose name contains this string (applies within --only scope)}
                             {--force : Re-query rows whose susceptibility columns are already filled}
                             {--dry-run : Print what would be written without saving anything}';
 
@@ -25,33 +27,38 @@ class HazardLookupCommand extends Command
         $only   = $this->option('only');
         $force  = (bool) $this->option('force');
         $dryRun = (bool) $this->option('dry-run');
+        $filterId   = $this->option('id');
+        $filterName = $this->option('name');
 
         if ($dryRun) {
             $this->warn('[DRY RUN] No data will be saved.');
         }
 
+        if ($filterId !== null || $filterName !== null) {
+            $desc = $filterId !== null ? "id={$filterId}" : "name like '%{$filterName}%'";
+            $this->info("Filtering: {$desc}");
+        }
+
         $tableRows = [];
 
         if ($only !== 'centers') {
-            $this->processCollection(
-                Barangay::whereNotNull('latitude')->whereNotNull('longitude')->get(),
-                'barangay',
-                $svc,
-                $force,
-                $dryRun,
-                $tableRows
-            );
+            $query = Barangay::whereNotNull('latitude')->whereNotNull('longitude');
+            if ($filterId !== null) {
+                $query->where('id', (int) $filterId);
+            } elseif ($filterName !== null) {
+                $query->where('name', 'like', "%{$filterName}%");
+            }
+            $this->processCollection($query->get(), 'barangay', $svc, $force, $dryRun, $tableRows);
         }
 
         if ($only !== 'barangays') {
-            $this->processCollection(
-                EvacuationCenter::whereNotNull('latitude')->whereNotNull('longitude')->get(),
-                'center',
-                $svc,
-                $force,
-                $dryRun,
-                $tableRows
-            );
+            $query = EvacuationCenter::whereNotNull('latitude')->whereNotNull('longitude');
+            if ($filterId !== null) {
+                $query->where('id', (int) $filterId);
+            } elseif ($filterName !== null) {
+                $query->where('name', 'like', "%{$filterName}%");
+            }
+            $this->processCollection($query->get(), 'center', $svc, $force, $dryRun, $tableRows);
         }
 
         $this->table(

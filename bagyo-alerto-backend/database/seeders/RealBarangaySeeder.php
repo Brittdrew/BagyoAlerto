@@ -19,7 +19,7 @@ class RealBarangaySeeder extends Seeder
         \App\Models\Barangay::truncate();
         \DB::statement('SET FOREIGN_KEY_CHECKS=1;');
 
-        // 10 Real Barangays in Surigao City, Surigao del Norte
+        // 11 Real Barangays in Surigao City, Surigao del Norte
         $barangays = [
             ['name' => 'Washington',  'city' => 'Surigao City', 'latitude' => 9.7843, 'longitude' => 125.4887, 'risk_level' => 'high'],
             ['name' => 'Lipata',      'city' => 'Surigao City', 'latitude' => 9.8128, 'longitude' => 125.4553, 'risk_level' => 'moderate'],
@@ -32,6 +32,8 @@ class RealBarangaySeeder extends Seeder
             ['name' => 'Cagniog',     'city' => 'Surigao City', 'latitude' => 9.7619, 'longitude' => 125.5045, 'risk_level' => 'low'],
             ['name' => 'Togbongon',   'city' => 'Surigao City', 'latitude' => 9.7960, 'longitude' => 125.4820, 'risk_level' => 'high'],
             ['name' => 'Ipil',        'city' => 'Surigao City', 'latitude' => 9.7922, 'longitude' => 125.4396, 'risk_level' => 'moderate'],
+            // San Juan added 2026-10-28; risk_level='moderate' (conservative baseline, no codebase mapping exists)
+            ['name' => 'San Juan',    'city' => 'Surigao City', 'latitude' => 9.7904, 'longitude' => 125.4839, 'risk_level' => 'moderate'],
         ];
 
         // Real / Known Evacuation Centers in Surigao City
@@ -39,7 +41,7 @@ class RealBarangaySeeder extends Seeder
         $evacuationCenters = [
             // Washington
             ['name' => 'Surigao City National High School',           'barangay' => 'Washington', 'address' => 'Washington St., Surigao City',            'latitude' => 9.785493, 'longitude' => 125.487935, 'capacity' => 800,  'is_active' => true],
-            ['name' => 'Washington Barangay Hall',                    'barangay' => 'Washington', 'address' => 'Washington, Surigao City',                 'latitude' => 9.785493, 'longitude' => 125.487935, 'capacity' => 200,  'is_active' => true],
+            ['name' => 'C.V. Diez Elementary School',                 'barangay' => 'Washington', 'address' => 'Washington, Surigao City',                 'latitude' => 9.786074, 'longitude' => 125.489348, 'capacity' => 200,  'is_active' => true],
 
             // Lipata
             ['name' => 'Lipata Elementary School',                    'barangay' => 'Lipata',     'address' => 'Lipata, Surigao City',                    'latitude' => 9.812738, 'longitude' => 125.454576, 'capacity' => 400,  'is_active' => true],
@@ -72,6 +74,9 @@ class RealBarangaySeeder extends Seeder
 
             // Ipil
             ['name' => 'Ipil Elementary School',                      'barangay' => 'Ipil',       'address' => 'Ipil, Surigao City',                     'latitude' => 9.792006, 'longitude' => 125.439942, 'capacity' => 300,  'is_active' => true],
+
+            // San Juan (added 2026-10-28)
+            ['name' => 'San Juan Evacuation Center (Surigao City National High School)', 'barangay' => 'San Juan', 'address' => 'San Juan, Surigao City', 'latitude' => 9.789919, 'longitude' => 125.484667, 'capacity' => 600, 'is_active' => true],
         ];
 
         // Insert barangays and map name -> id

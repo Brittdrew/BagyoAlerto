@@ -262,6 +262,41 @@ class EvacuationOverviewTest extends TestCase
     }
 
     /**
+     * Overview returns ISO 8601 string with explicit Z/offset for latest_log_at when logs exist.
+     */
+    public function test_overview_returns_iso8601_latest_log_at(): void
+    {
+        $this->authHeaders();
+        $res = $this->getJson('/api/evacuation-centers/overview');
+        $res->assertStatus(200);
+
+        $rowA = $this->overviewRow($res->json(), $this->centerA);
+        $this->assertNotNull($rowA);
+        $this->assertNotNull($rowA['latest_log_at']);
+        $this->assertMatchesRegularExpression(
+            '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/',
+            $rowA['latest_log_at'],
+            'latest_log_at must be an ISO 8601 string with explicit timezone Z or offset'
+        );
+
+        // Center with no logs returns null
+        $emptyCenter = EvacuationCenter::create([
+            'name'        => 'Empty Center No Logs',
+            'barangay_id' => $this->barangay->id,
+            'address'     => 'Empty St',
+            'latitude'    => 9.784,
+            'longitude'   => 125.484,
+            'capacity'    => 50,
+            'is_active'   => true,
+        ]);
+
+        $res2 = $this->getJson('/api/evacuation-centers/overview');
+        $rowEmpty = $this->overviewRow($res2->json(), $emptyCenter);
+        $this->assertNotNull($rowEmpty);
+        $this->assertNull($rowEmpty['latest_log_at']);
+    }
+
+    /**
      * The public evacuation-centers list cache is cleared after an admin PUT
      * (update) — the next request returns fresh data.
      */

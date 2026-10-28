@@ -297,6 +297,9 @@ class EvacuationLogController extends Controller
             $overCapacity = $capacity > 0 && $current > $capacity;
             $overBy       = $overCapacity ? ($current - $capacity) : 0;
 
+            $rawLatest = $latestLogs->get($center->id);
+            $latestLogAt = $rawLatest ? Carbon::parse($rawLatest)->toISOString() : null;
+
             return [
                 'id'             => (int) $center->id,
                 'name'           => $center->name,
@@ -308,7 +311,7 @@ class EvacuationLogController extends Controller
                 'status'         => $status,
                 'over_capacity'  => $overCapacity,
                 'over_by'        => $overBy,
-                'latest_log_at'  => $latestLogs->get($center->id),
+                'latest_log_at'  => $latestLogAt,
             ];
         })->values();
 
