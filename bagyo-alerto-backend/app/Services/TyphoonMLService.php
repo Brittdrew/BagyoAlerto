@@ -4,7 +4,6 @@ namespace App\Services;
 
 use Phpml\Classification\Ensemble\RandomForest;
 use Phpml\Classification\DecisionTree;
-use Phpml\ModelManager;
 
 /**
  * TyphoonMLService
@@ -23,6 +22,7 @@ class TyphoonMLService
 {
     private $classifier;
     private $modelPath;
+    private ModelStorage $modelStorage;
     /** @var bool Tracks whether the classifier has been deserialised from disk this request. */
     private bool $classifierLoaded = false;
 
@@ -49,9 +49,10 @@ class TyphoonMLService
         'Signal 5' => 7,
     ];
 
-    public function __construct()
+    public function __construct(?ModelStorage $modelStorage = null)
     {
         $this->modelPath = storage_path('app/typhoon_model.phpml');
+        $this->modelStorage = $modelStorage ?? new ModelStorage();
 
         // Random Forest: 100 decision trees, considers sqrt(features) per split
         // This is a REAL trained model — it learns decision boundaries from data
@@ -290,8 +291,7 @@ class TyphoonMLService
             chmod(dirname($this->modelPath), 0775);
         }
 
-        $modelManager = new ModelManager();
-        $modelManager->saveToFile($this->classifier, $this->modelPath);
+        $this->modelStorage->saveToFile($this->classifier, $this->modelPath);
 
         return true;
     }
@@ -314,8 +314,7 @@ class TyphoonMLService
         if (!($this->classifier instanceof \Phpml\Classification\Ensemble\RandomForest
               && method_exists($this->classifier, 'predict')
               && $this->classifierLoaded)) {
-            $modelManager = new ModelManager();
-            $this->classifier = $modelManager->restoreFromFile($this->modelPath);
+            $this->classifier = $this->modelStorage->restoreFromFile($this->modelPath);
             $this->classifierLoaded = true;
         }
 
