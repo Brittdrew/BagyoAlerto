@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\TyphoonLog;
-use App\Models\EvacuationCenter;
-use App\Models\Recommendation;
 use App\Models\Barangay;
+use App\Models\EvacuationCenter;
 use App\Models\PagasaSignal;
+use App\Models\Recommendation;
+use App\Models\TyphoonLog;
 use App\Services\TyphoonMLService;
 use Illuminate\Http\Request;
 
@@ -15,23 +15,23 @@ class TyphoonController extends Controller
     public function assess(Request $request)
     {
         $request->validate([
-            'wind_speed'   => 'required|numeric|min:0|max:400',
-            'rainfall'     => 'required|numeric|min:0|max:300',
-            'pressure'     => 'required|numeric|min:850|max:1100',
-            'temperature'  => 'nullable|numeric|min:-10|max:50',
-            'humidity'     => 'nullable|numeric|min:0|max:100',
-            'barangay_id'  => 'required|integer|exists:barangays,id',
+            'wind_speed' => 'required|numeric|min:0|max:400',
+            'rainfall' => 'required|numeric|min:0|max:300',
+            'pressure' => 'required|numeric|min:850|max:1100',
+            'temperature' => 'nullable|numeric|min:-10|max:50',
+            'humidity' => 'nullable|numeric|min:0|max:100',
+            'barangay_id' => 'required|integer|exists:barangays,id',
         ], [
-            'wind_speed.min'    => 'Wind speed must be at least 0 km/h.',
-            'wind_speed.max'    => 'Wind speed cannot exceed 400 km/h.',
-            'rainfall.min'      => 'Rainfall must be at least 0 mm/hr.',
-            'rainfall.max'      => 'Rainfall cannot exceed 300 mm/hr.',
-            'pressure.min'      => 'Pressure must be at least 850 hPa.',
-            'pressure.max'      => 'Pressure cannot exceed 1100 hPa.',
-            'temperature.min'   => 'Temperature must be at least -10 °C.',
-            'temperature.max'   => 'Temperature cannot exceed 50 °C.',
-            'humidity.min'      => 'Humidity must be at least 0%.',
-            'humidity.max'      => 'Humidity cannot exceed 100%.',
+            'wind_speed.min' => 'Wind speed must be at least 0 km/h.',
+            'wind_speed.max' => 'Wind speed cannot exceed 400 km/h.',
+            'rainfall.min' => 'Rainfall must be at least 0 mm/hr.',
+            'rainfall.max' => 'Rainfall cannot exceed 300 mm/hr.',
+            'pressure.min' => 'Pressure must be at least 850 hPa.',
+            'pressure.max' => 'Pressure cannot exceed 1100 hPa.',
+            'temperature.min' => 'Temperature must be at least -10 °C.',
+            'temperature.max' => 'Temperature cannot exceed 50 °C.',
+            'humidity.min' => 'Humidity must be at least 0%.',
+            'humidity.max' => 'Humidity cannot exceed 100%.',
             'barangay_id.exists' => 'The selected barangay does not exist.',
         ]);
 
@@ -39,19 +39,19 @@ class TyphoonController extends Controller
         // Accept "auto" or "manual" only. Anything else (including absent) → "manual".
         // Never return a validation error for this field.
         $rawSource = $request->input('source', 'manual');
-        $source    = in_array($rawSource, ['auto', 'manual'], true) ? $rawSource : 'manual';
-        $isAuto    = $source === 'auto';
+        $source = in_array($rawSource, ['auto', 'manual'], true) ? $rawSource : 'manual';
+        $isAuto = $source === 'auto';
 
         $isManual = (bool) $request->input('manual_override', false);
 
-        $windSpeed   = $request->wind_speed;
-        $rainfall    = $request->rainfall;
-        $pressure    = $request->pressure;
+        $windSpeed = $request->wind_speed;
+        $rainfall = $request->rainfall;
+        $pressure = $request->pressure;
         $temperature = $request->temperature ?? 30;
-        $humidity    = $request->humidity ?? 85;
+        $humidity = $request->humidity ?? 85;
 
         // Rule-Based Severity Scoring
-        list($severity, $score, $rank, $factors) = $this->calculateSeverity(
+        [$severity, $score, $rank, $factors] = $this->calculateSeverity(
             $windSpeed, $rainfall, $pressure, $temperature, $humidity
         );
 
@@ -68,7 +68,7 @@ class TyphoonController extends Controller
 
         if ($floorSeverity !== 'none' && isset($severityOrder[$floorSeverity])) {
             $computedRank = $severityOrder[$computedSeverity] ?? -1;
-            $floorRank    = $severityOrder[$floorSeverity] ?? -1;
+            $floorRank = $severityOrder[$floorSeverity] ?? -1;
 
             if ($floorRank > $computedRank) {
                 $severity = $floorSeverity;
@@ -80,23 +80,31 @@ class TyphoonController extends Controller
         $classification = $this->getClassificationLabel($rank);
 
         $weatherData = [
-            'wind'     => $windSpeed,
-            'rain'     => $rainfall,
+            'wind' => $windSpeed,
+            'rain' => $rainfall,
             'pressure' => $pressure,
-            'temp'     => $temperature,
+            'temp' => $temperature,
             'humidity' => $humidity,
         ];
 
         // ML Prediction
-        $ml = new TyphoonMLService();
-        $mlPrediction  = $ml->predict(
+        $ml = new TyphoonMLService;
+        $mlResult = $ml->predictWithDetails(
             $weatherData['wind'],
             $weatherData['rain'],
             $weatherData['pressure'],
             $weatherData['temp'],
             $weatherData['humidity']
         );
+        $mlPrediction = $mlResult['raw_prediction'];
         $mlExplanation = $ml->getConfidence($mlPrediction);
+        $mlApplicability = $ml->getApplicability(
+            $weatherData['wind'],
+            $weatherData['rain'],
+            $weatherData['pressure'],
+            $weatherData['temp'],
+            $weatherData['humidity']
+        );
 
         // Check if rule-based and ML agree
         $agreement = $this->checkAgreement($classification, $mlPrediction);
@@ -121,40 +129,40 @@ class TyphoonController extends Controller
             } else {
                 // Severity changed (or no previous row) — create a new row
                 $log = TyphoonLog::create([
-                    'wind_speed'     => $windSpeed,
-                    'rainfall'       => $rainfall,
-                    'pressure'       => $pressure,
-                    'temperature'    => $temperature,
-                    'humidity'       => $humidity,
+                    'wind_speed' => $windSpeed,
+                    'rainfall' => $rainfall,
+                    'pressure' => $pressure,
+                    'temperature' => $temperature,
+                    'humidity' => $humidity,
                     'severity_level' => $severity,
-                    'score'          => $score,
+                    'score' => $score,
                     'classification' => $classification,
-                    'ml_prediction'  => $mlPrediction,
-                    'barangay_id'    => $barangayId,
-                    'is_manual'      => $isManual,
+                    'ml_prediction' => $mlPrediction,
+                    'barangay_id' => $barangayId,
+                    'is_manual' => $isManual,
                 ]);
                 $logWasCreated = true;
             }
         } else {
             // source="manual" — always log (original behaviour)
             $log = TyphoonLog::create([
-                'wind_speed'     => $windSpeed,
-                'rainfall'       => $rainfall,
-                'pressure'       => $pressure,
-                'temperature'    => $temperature,
-                'humidity'       => $humidity,
+                'wind_speed' => $windSpeed,
+                'rainfall' => $rainfall,
+                'pressure' => $pressure,
+                'temperature' => $temperature,
+                'humidity' => $humidity,
                 'severity_level' => $severity,
-                'score'          => $score,
+                'score' => $score,
                 'classification' => $classification,
-                'ml_prediction'  => $mlPrediction,
-                'barangay_id'    => $barangayId,
-                'is_manual'      => $isManual,
+                'ml_prediction' => $mlPrediction,
+                'barangay_id' => $barangayId,
+                'is_manual' => $isManual,
             ]);
             $logWasCreated = true;
         }
 
         $barangay = Barangay::find($barangayId);
-        $center   = null;
+        $center = null;
 
         // Pick the nearest active evacuation center to the selected barangay.
         // Use a single LEFT JOIN to count recommendations instead of withCount()
@@ -176,22 +184,23 @@ class TyphoonController extends Controller
                         $barangay->longitude
                     );
                     $evacuationCenter->distance = $distance;
+
                     return $evacuationCenter;
                 })
-                ->sortBy(fn($ec) => $ec->distance)
+                ->sortBy(fn ($ec) => $ec->distance)
                 ->first();
         }
 
         // Save recommendation only for real (non-manual) assessments,
         // and only when a new log row was actually created.
-        if ($center && !$isManual && $logWasCreated) {
+        if ($center && ! $isManual && $logWasCreated) {
             Recommendation::create([
-                'barangay_id'          => $barangayId,
+                'barangay_id' => $barangayId,
                 'evacuation_center_id' => $center->id,
-                'typhoon_log_id'       => $log->id
+                'typhoon_log_id' => $log->id,
             ]);
 
-            if ($barangay && !isset($center->distance)) {
+            if ($barangay && ! isset($center->distance)) {
                 $center->distance = $center->getDistanceTo(
                     $barangay->latitude,
                     $barangay->longitude
@@ -202,22 +211,25 @@ class TyphoonController extends Controller
         $effectiveRank = $floorApplied ? max($rank, $pagasaSignal + 2) : $rank;
 
         return response()->json([
-            'severity'          => $severity,
-            'score'             => $score,
-            'weather'           => $weatherData,
-            'factors'           => $factors,
-            'classification'    => $classification,   // Rule-based signal label
-            'ml_prediction'     => $mlPrediction,     // ML signal label
-            'ml_explanation'    => $mlExplanation,
-            'agreement'         => $agreement,         // Do both systems agree?
-            'message'           => $this->getSeverityMessage($effectiveRank),
+            'severity' => $severity,
+            'score' => $score,
+            'weather' => $weatherData,
+            'factors' => $factors,
+            'classification' => $classification,   // Rule-based signal label
+            'ml_prediction' => $mlPrediction,     // ML signal label
+            'ml_explanation' => $mlExplanation,
+            'ml_safety_prediction' => $mlResult['safety_prediction'],
+            'ml_safety_override_applied' => $mlResult['safety_override_applied'],
+            'ml_safety_explanation' => $mlResult['safety_explanation'],
+            'ml_applicability' => $mlApplicability,
+            'agreement' => $agreement,         // Do both systems agree?
+            'message' => $this->getSeverityMessage($effectiveRank),
             'evacuation_center' => $center,
-            'pagasa_signal'     => $pagasaSignal,
-            'floor_applied'     => $floorApplied,
+            'pagasa_signal' => $pagasaSignal,
+            'floor_applied' => $floorApplied,
             'computed_severity' => $computedSeverity,
         ]);
     }
-
 
     /**
      * Rule-Based Severity Scoring
@@ -257,11 +269,11 @@ class TyphoonController extends Controller
         // Wind is the primary PAGASA factor (35%)
         // Pressure is secondary (30%)
         // Rainfall tertiary (20%)
-        $score = ($windScore     * 0.35)
+        $score = ($windScore * 0.35)
                + ($pressureScore * 0.30)
-               + ($rainScore     * 0.20)
+               + ($rainScore * 0.20)
                + ($humidityScore * 0.10)
-               + ($tempScore     * 0.05);
+               + ($tempScore * 0.05);
 
         $score = (int) round($score);
 
@@ -331,11 +343,11 @@ class TyphoonController extends Controller
         }
 
         $factors = [
-            'wind'     => (int) round($windScore),
+            'wind' => (int) round($windScore),
             'pressure' => (int) round($pressureScore),
-            'rain'     => (int) round($rainScore),
+            'rain' => (int) round($rainScore),
             'humidity' => (int) round($humidityScore),
-            'temp'     => (int) round($tempScore),
+            'temp' => (int) round($tempScore),
         ];
 
         return [$severity, $score, $rank, $factors];
@@ -368,8 +380,8 @@ class TyphoonController extends Controller
     private function checkAgreement(string $ruleLabel, string $mlLabel): array
     {
         $ranks = [
-            'Normal'   => 0,
-            'Watch'    => 1,
+            'Normal' => 0,
+            'Watch' => 1,
             'Elevated' => 2,
             'Signal 1' => 3,
             'Signal 2' => 4,
@@ -379,27 +391,32 @@ class TyphoonController extends Controller
         ];
 
         $ruleRank = $ranks[$ruleLabel] ?? 0;
-        $mlRank   = $ranks[$mlLabel]   ?? 0;
-        $diff     = abs($ruleRank - $mlRank);
+        $mlRank = $ranks[$mlLabel] ?? 0;
+        $diff = abs($ruleRank - $mlRank);
 
         return [
-            'match'      => $diff === 0,
+            'match' => $diff === 0,
             'difference' => $diff,
-            'status'     => $diff === 0
+            'status' => $diff === 0
                                 ? 'Both systems agree'
                                 : ($diff === 1
                                     ? 'Minor difference (1 level)'
-                                    : 'Warning: Systems disagree by ' . $diff . ' levels'),
+                                    : 'Warning: Systems disagree by '.$diff.' levels'),
         ];
     }
 
     private function getSeverityMessage($rank): string
     {
-        return match(true) {
-            $rank === 0 => 'No Tropical Cyclone Signal — Conditions are normal. No significant threat at this time.',
-            $rank <= 2  => 'Low Pressure Area / Tropical Cyclone Watch — Monitor weather updates closely. Prepare early precautions.',
-            $rank <= 4  => 'Typhoon Signal Active — Destructive winds and heavy rainfall expected. Follow evacuation orders immediately.',
-            default     => 'Supertyphoon Warning — Catastrophic and life-threatening conditions. Evacuate now.',
+        return match ($rank) {
+            0 => 'Conditions are normal based on the available weather data. Continue monitoring official updates.',
+            1 => 'Watch conditions detected. Monitor official weather updates and prepare early precautions.',
+            2 => 'Elevated conditions detected. Stay alert and prepare for possible hazardous weather.',
+            3 => 'Rule-based Signal 1 equivalent. Secure loose items and monitor official PAGASA bulletins.',
+            4 => 'Rule-based Signal 2 equivalent. Prepare for damaging winds and follow instructions from local authorities.',
+            5 => 'Rule-based Signal 3 equivalent. Dangerous conditions are possible; follow evacuation instructions from local authorities.',
+            6 => 'Rule-based Signal 4 equivalent. Very dangerous conditions are possible; evacuate when directed by local authorities.',
+            7 => 'Rule-based Signal 5 equivalent. Catastrophic wind impacts are possible; follow official emergency and evacuation orders immediately.',
+            default => 'Unable to determine the rule-based weather classification.',
         };
     }
 }

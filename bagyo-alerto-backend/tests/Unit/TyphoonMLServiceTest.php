@@ -107,4 +107,32 @@ class TyphoonMLServiceTest extends TestCase
             "Expected at least Signal 3 for wind 92, rain 80, pressure 1013.1, got '{$result}'"
         );
     }
+
+    public function test_applicability_flags_inputs_outside_historical_range(): void
+    {
+        $applicability = $this->service->getApplicability(80.0, 50.0, 900.0, 31.2, 80.0);
+
+        $this->assertFalse($applicability['within_range']);
+        $this->assertSame(
+            ['wind speed', 'rainfall', 'pressure'],
+            $applicability['outside_features']
+        );
+        $this->assertStringContainsString('extra caution', $applicability['message']);
+    }
+
+    public function test_prediction_details_keep_raw_ml_separate_from_wind_safety_floor(): void
+    {
+        $details = $this->service->predictWithDetails(90.0, 50.0, 900.0, 31.2, 70.0);
+
+        $this->assertArrayHasKey($details['raw_prediction'], TyphoonMLService::SIGNAL_RANK);
+        $this->assertSame('Signal 3', $details['safety_prediction']);
+        $this->assertSame(
+            $details['raw_prediction'] !== $details['safety_prediction'],
+            $details['safety_override_applied']
+        );
+        $this->assertSame(
+            $details['safety_prediction'],
+            $this->service->predict(90.0, 50.0, 900.0, 31.2, 70.0)
+        );
+    }
 }

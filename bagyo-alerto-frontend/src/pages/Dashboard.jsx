@@ -86,23 +86,25 @@ export function calculateSeverityScore(wind, rain, pressure, temp, humidity) {
 
 export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
     const s = score !== null && score !== undefined ? score : 0;
-    let rank = 0;
-    if (s <= 24) rank = 0;
-    else if (s <= 39) rank = 1;
-    else if (s <= 54) rank = 2;
-    else if (s <= 70) rank = 3;
-    else if (s <= 85) rank = 4;
-    else rank = 5;
+    let rank;
+    if (s <= 10) rank = 0;
+    else if (s <= 22) rank = 1;
+    else if (s <= 35) rank = 2;
+    else if (s <= 50) rank = 3;
+    else if (s <= 65) rank = 4;
+    else if (s <= 78) rank = 5;
+    else if (s <= 90) rank = 6;
+    else rank = 7;
 
     // Hard overrides — only upgrade, never downgrade
     if (wind >= 185) {
-        rank = Math.max(rank, 5); // Signal 4–5
+        rank = Math.max(rank, 7); // Signal 5
     } else if (wind >= 118) {
-        rank = Math.max(rank, 5); // Signal 4–5
+        rank = Math.max(rank, 6); // Signal 4
     } else if (wind >= 89) {
-        rank = Math.max(rank, 4); // Signal 2–3
+        rank = Math.max(rank, 5); // Signal 3
     } else if (wind >= 62) {
-        rank = Math.max(rank, 4); // Signal 2–3
+        rank = Math.max(rank, 4); // Signal 2
     } else if (wind >= 39) {
         rank = Math.max(rank, 3); // Signal 1
     }
@@ -113,9 +115,13 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
         rank = Math.max(rank, 2);
     }
 
-    if (pressure <= 970) {
-        rank = Math.max(rank, 3);
+    if (pressure <= 960) {
+        rank = Math.max(rank, 5);
+    } else if (pressure <= 975) {
+        rank = Math.max(rank, 4);
     } else if (pressure <= 990) {
+        rank = Math.max(rank, 3);
+    } else if (pressure <= 1005) {
         rank = Math.max(rank, 1);
     }
 
@@ -160,7 +166,7 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
             text: "#633806"
         },
         {
-            label: "PAGASA Signal 1",
+            label: "Signal 1 equivalent",
             signal: "Signal 1",
             color: "#D85A30",
             gaugeColor: "#D85A30",
@@ -173,8 +179,8 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
             text: "#4A1B0C"
         },
         {
-            label: "PAGASA Signal 2–3",
-            signal: "Signal 2–3",
+            label: "Signal 2 equivalent",
+            signal: "Signal 2",
             color: "#A32D2D",
             gaugeColor: "#E24B4A",
             alertBg: "#FCEBEB",
@@ -186,8 +192,8 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
             text: "#501313"
         },
         {
-            label: "PAGASA Signal 4–5",
-            signal: "Signal 4–5",
+            label: "Signal 3 equivalent",
+            signal: "Signal 3",
             color: "#A32D2D",
             gaugeColor: "#E24B4A",
             alertBg: "#FCEBEB",
@@ -197,10 +203,36 @@ export function getSeverityConfig(score, wind = 0, rain = 0, pressure = 1013) {
             bg: "#FCEBEB",
             border: "#F09595",
             text: "#501313"
+        },
+        {
+            label: "Signal 4 equivalent",
+            signal: "Signal 4",
+            color: "#A32D2D",
+            gaugeColor: "#A32D2D",
+            alertBg: "#FCEBEB",
+            alertBorder: "#E24B4A",
+            alertText: "#501313",
+            dot: "#A32D2D",
+            bg: "#FCEBEB",
+            border: "#E24B4A",
+            text: "#501313"
+        },
+        {
+            label: "Signal 5 equivalent",
+            signal: "Signal 5",
+            color: "#7F1D1D",
+            gaugeColor: "#7F1D1D",
+            alertBg: "#FCEBEB",
+            alertBorder: "#A32D2D",
+            alertText: "#501313",
+            dot: "#7F1D1D",
+            bg: "#FCEBEB",
+            border: "#A32D2D",
+            text: "#501313"
         }
     ];
 
-    return configs[rank];
+    return { ...configs[rank], rank };
 }
 
 const RISK_COLORS = {
@@ -1122,53 +1154,24 @@ export default function Dashboard() {
     const hasHumidity = formData.humidity !== "" && !isNaN(parseFloat(formData.humidity))
     const hasTemp = formData.temperature !== "" && !isNaN(parseFloat(formData.temperature))
 
-    let maxRank = 0
-    if (hasWind) {
-        const windVal = parseFloat(formData.wind_speed)
-        let r = 0
-        if (windVal >= 185) r = 5
-        else if (windVal >= 118) r = 5
-        else if (windVal >= 89) r = 4
-        else if (windVal >= 62) r = 4
-        else if (windVal >= 39) r = 3
-        maxRank = Math.max(maxRank, r)
-    }
-    if (hasRain) {
-        const rainVal = parseFloat(formData.rainfall)
-        let r = 0
-        if (rainVal >= 30) r = 3
-        else if (rainVal >= 15) r = 2
-        else if (rainVal >= 7.5) r = 1
-        maxRank = Math.max(maxRank, r)
-    }
-    if (hasPressure) {
-        const pressureVal = parseFloat(formData.pressure)
-        let r = 0
-        if (pressureVal < 970) r = 5
-        else if (pressureVal <= 989) r = 3
-        else if (pressureVal <= 999) r = 1
-        maxRank = Math.max(maxRank, r)
-    }
-    if (hasHumidity) {
-        const humidityVal = parseFloat(formData.humidity)
-        let r = 0
-        if (humidityVal >= 95) r = 3
-        else if (humidityVal >= 85) r = 1
-        maxRank = Math.max(maxRank, r)
-    }
-    if (hasTemp) {
-        const tempVal = parseFloat(formData.temperature)
-        let r = 0
-        if (tempVal < 24) r = 1
-        maxRank = Math.max(maxRank, r)
-    }
+    const previewWind = hasWind ? wind : 0
+    const previewRain = hasRain ? rain : 0
+    const previewPressure = hasPressure ? pressure : 1013
+    const previewTemperature = hasTemp ? temperature : 30
+    const previewHumidity = hasHumidity ? humidity : 85
+    const previewScore = calculateSeverityScore(
+        previewWind,
+        previewRain,
+        previewPressure,
+        previewTemperature,
+        previewHumidity
+    )
+    const previewConfig = getSeverityConfig(previewScore, previewWind, previewRain, previewPressure)
+    const maxRank = previewConfig.rank
 
     const isBtnDisabled = assessing || !formData.barangay_id
 
-    let conditionLabel = ""
-    if (maxRank === 3) conditionLabel = "Signal 1"
-    else if (maxRank === 4) conditionLabel = "Signal 2–3"
-    else if (maxRank === 5) conditionLabel = "Signal 4–5"
+    const conditionLabel = maxRank >= 3 ? previewConfig.signal : previewConfig.label
 
     // Factor bar percentages from assess API response (empty / 0 before assessment runs)
     const windPct = result?.factors?.wind ?? 0
@@ -1198,6 +1201,10 @@ export default function Dashboard() {
     const ruleBasedLabel = result?.classification || sevCfg?.label
     const mlPrediction = result?.ml_prediction || "Unavailable"
     const mlExplanation = result?.ml_explanation || "Train the model to show an ML explanation."
+    const mlSafetyPrediction = result?.ml_safety_prediction
+    const mlSafetyOverrideApplied = Boolean(result?.ml_safety_override_applied)
+    const mlSafetyExplanation = result?.ml_safety_explanation
+    const mlApplicability = result?.ml_applicability
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
@@ -1217,28 +1224,15 @@ export default function Dashboard() {
         }
 
         const sevKey = (result.severity || "low").toLowerCase()
-        const floorStyle = SEVERITY_CARD_STYLES[sevKey] || SEVERITY_CARD_STYLES.critical
-
-        const cfg = isFloor ? {
+        const resultStyle = SEVERITY_CARD_STYLES[sevKey] || SEVERITY_CARD_STYLES.critical
+        const cfg = {
             ...sevCfg,
-            alertBg: floorStyle.alertBg,
-            alertBorder: floorStyle.alertBorder,
-            alertText: floorStyle.alertText,
-            color: floorStyle.color,
-        } : sevCfg
-
-        let bannerTitle = ""
-        if (isFloor) {
-            bannerTitle = `PAGASA Signal ${result.pagasa_signal} in effect`
-        } else {
-            const signalStr = cfg.signal.startsWith("Signal")
-                ? `Wind equivalent to ${cfg.signal}`
-                : cfg.signal
-            const mainLabel = cfg.label || ""
-            bannerTitle = (mainLabel.toLowerCase() === signalStr.toLowerCase() || mainLabel.toLowerCase().includes(cfg.signal.toLowerCase()))
-                ? signalStr
-                : `${signalStr} · ${mainLabel}`
+            ...resultStyle,
         }
+
+        const bannerTitle = isFloor
+            ? `PAGASA Signal ${result.pagasa_signal} in effect`
+            : `Rule-based assessment: ${ruleBasedLabel}`
 
         return (
             <div className="bakwit-alert-banner" style={{
@@ -1256,9 +1250,9 @@ export default function Dashboard() {
                     <div style={{ fontSize: 11, color: cfg.alertText, opacity: 0.85, marginTop: 2 }}>
                         {result.message}
                     </div>
-                    {!isFloor && cfg.signal.startsWith("Signal") && (
+                    {!isFloor && result.classification?.startsWith("Signal") && (
                         <div style={{ fontSize: 10, color: cfg.alertText, opacity: 0.65, marginTop: 3 }}>
-                            Official PAGASA bulletin: not yet integrated.
+                            Computed equivalent only — follow official PAGASA bulletins.
                         </div>
                     )}
                 </div>
@@ -1708,9 +1702,20 @@ export default function Dashboard() {
                                                 </div>
                                             </div>
                                             <div style={styles.mlCompareBox}>
-                                                <div style={styles.mlCompareLabel}>ML cross-check (advisory)</div>
+                                                <div style={styles.mlCompareLabel}>ML historical pattern (advisory)</div>
                                                 <div style={styles.mlCompareScore}>{mlPrediction}</div>
                                                 <div style={styles.mlExplanation}>{mlExplanation}</div>
+                                                {mlSafetyOverrideApplied && (
+                                                    <div style={{ fontSize: 10, color: "#7c2d12", marginTop: 5, lineHeight: 1.35 }}>
+                                                        <strong>Wind safety floor: {mlSafetyPrediction}</strong><br />
+                                                        {mlSafetyExplanation}
+                                                    </div>
+                                                )}
+                                                {mlApplicability && !mlApplicability.within_range && (
+                                                    <div style={{ fontSize: 10, color: "#92400e", marginTop: 5, lineHeight: 1.35 }}>
+                                                        {mlApplicability.message}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
@@ -1784,7 +1789,7 @@ export default function Dashboard() {
                                     </div>
                                 ))}
                                 <button
-                                    className={`bagyo-assess bakwit-override-btn ${(!isBtnDisabled && (maxRank === 4 || maxRank === 5)) ? "bagyo-pulse-btn" : ""}`}
+                                    className={`bagyo-assess bakwit-override-btn ${(!isBtnDisabled && maxRank >= 4) ? "bagyo-pulse-btn" : ""}`}
                                     onClick={handleAssessClick}
                                     disabled={isBtnDisabled}
                                     style={{
@@ -1796,7 +1801,7 @@ export default function Dashboard() {
                                                 ? "#EF9F27"
                                                 : maxRank === 3
                                                     ? "#E24B4A"
-                                                    : maxRank === 4 || maxRank === 5
+                                                    : maxRank >= 4
                                                         ? "#A32D2D"
                                                         : "linear-gradient(135deg, #1a237e, #1565c0)",
                                         cursor: isBtnDisabled ? "not-allowed" : "pointer",

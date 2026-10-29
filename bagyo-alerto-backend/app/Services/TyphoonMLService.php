@@ -147,6 +147,17 @@ class TyphoonMLService
 
     public function predict($wind, $rainfall, $pressure, $temp, $humidity): string
     {
+        return $this->predictWithDetails($wind, $rainfall, $pressure, $temp, $humidity)['safety_prediction'];
+    }
+
+    /**
+     * Keep the learned prediction separate from the deterministic wind floor
+     * so the UI does not attribute a safety-rule adjustment to the ML model.
+     *
+     * @return array{raw_prediction: string, safety_prediction: string, safety_override_applied: bool, safety_explanation: ?string}
+     */
+    public function predictWithDetails($wind, $rainfall, $pressure, $temp, $humidity): array
+    {
         if (! $this->modelIsCurrent()) {
             $this->train();
         }
@@ -161,9 +172,18 @@ class TyphoonMLService
         }
 
         $input = $this->featureVector($wind, $rainfall, $pressure, $temp, $humidity);
-        $prediction = $this->classifier->predict([$input])[0];
+        $rawPrediction = $this->classifier->predict([$input])[0];
+        $safetyPrediction = $this->windOverride($rawPrediction, (float) $wind, (float) $rainfall, (float) $pressure);
+        $overrideApplied = $rawPrediction !== $safetyPrediction;
 
-        return $this->windOverride($prediction, (float) $wind, (float) $rainfall, (float) $pressure);
+        return [
+            'raw_prediction' => $rawPrediction,
+            'safety_prediction' => $safetyPrediction,
+            'safety_override_applied' => $overrideApplied,
+            'safety_explanation' => $overrideApplied
+                ? "Wind safety floor raised the advisory from {$rawPrediction} to {$safetyPrediction} for {$wind} km/h wind."
+                : null,
+        ];
     }
 
     public function getConfidence($prediction): string
@@ -180,6 +200,65 @@ class TyphoonMLService
         ];
 
         return $confidence[$prediction] ?? 'Unable to determine risk level';
+    }
+
+    /**
+     * Explain whether a live input is represented by the historical dataset.
+     * Random forests do not extrapolate beyond their training data reliably,
+     * so callers should visibly qualify predictions for out-of-range inputs.
+     *
+     * @return array{within_range: bool, outside_features: array<int, string>, message: string}
+     */
+    public function getApplicability($wind, $rainfall, $pressure, $temp, $humidity): array
+    {
+        $inputs = [
+            'wind speed' => (float) $wind,
+            'rainfall' => (float) $rainfall,
+            'pressure' => (float) $pressure,
+            'temperature' => (float) $temp,
+            'humidity' => (float) $humidity,
+        ];
+        $columns = [
+            'wind speed' => 'wind_kmh',
+            'rainfall' => 'rainfall_mm',
+            'pressure' => 'pressure_hpa',
+            'temperature' => 'temperature_c',
+            'humidity' => 'humidity_pct',
+        ];
+        $ranges = [];
+
+        foreach ($this->trainingRecords() as $record) {
+            foreach ($columns as $name => $column) {
+                $value = (float) $record[$column];
+                $ranges[$name]['min'] = isset($ranges[$name]['min'])
+                    ? min($ranges[$name]['min'], $value)
+                    : $value;
+                $ranges[$name]['max'] = isset($ranges[$name]['max'])
+                    ? max($ranges[$name]['max'], $value)
+                    : $value;
+            }
+        }
+
+        $outsideFeatures = [];
+        foreach ($inputs as $name => $value) {
+            if (! isset($ranges[$name]) || $value < $ranges[$name]['min'] || $value > $ranges[$name]['max']) {
+                $outsideFeatures[] = $name;
+            }
+        }
+
+        if ($outsideFeatures === []) {
+            return [
+                'within_range' => true,
+                'outside_features' => [],
+                'message' => 'Inputs are within the historical training range.',
+            ];
+        }
+
+        return [
+            'within_range' => false,
+            'outside_features' => $outsideFeatures,
+            'message' => 'Outside historical training range: '.implode(', ', $outsideFeatures).'. Treat the ML cross-check with extra caution.',
+        ];
     }
 
     private function modelIsCurrent(): bool
