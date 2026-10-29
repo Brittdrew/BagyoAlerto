@@ -3,18 +3,19 @@
 namespace Tests\Unit;
 
 use App\Services\TyphoonMLService;
-use Tests\TestCase;
 use ReflectionClass;
+use Tests\TestCase;
 
 class TyphoonMLServiceTest extends TestCase
 {
     private TyphoonMLService $service;
+
     private array $trainingData;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new TyphoonMLService();
+        $this->service = new TyphoonMLService;
 
         $ref = new ReflectionClass(TyphoonMLService::class);
         $method = $ref->getMethod('trainingData');
@@ -30,7 +31,7 @@ class TyphoonMLServiceTest extends TestCase
         foreach ($this->trainingData as $row) {
             $this->assertCount(6, $row, 'Each training row must have 5 features + 1 label');
             $features[] = array_slice($row, 0, 5);
-            $labels[]   = $row[5];
+            $labels[] = $row[5];
         }
 
         $this->assertSame(count($features), count($labels));
@@ -51,36 +52,35 @@ class TyphoonMLServiceTest extends TestCase
         }
     }
 
-    public function test_every_non_elevated_row_matches_its_wind_bracket(): void
+    public function test_training_labels_are_historical_warnings_not_generated_from_current_wind(): void
     {
         $thresholds = TyphoonMLService::SIGNAL_THRESHOLDS;
+        $forecastWarningsBelowCurrentWindBracket = [];
+        $labels = [];
 
         foreach ($this->trainingData as $row) {
             $wind = $row[0];
-            $rain = $row[1];
             $label = $row[5];
+            $labels[] = $label;
 
-            if ($label === 'Elevated') {
-                $this->assertLessThan(39, $wind, "Elevated row must have wind < 39 km/h (got {$wind})");
-                $this->assertGreaterThanOrEqual(7.5, $rain, "Elevated row must have rainfall >= 7.5 mm/hr (got {$rain})");
-                $this->assertLessThan(30.0, $rain, "Elevated row must have rainfall < 30 mm/hr (got {$rain})");
+            if (! str_starts_with($label, 'Signal ')) {
                 continue;
             }
 
-            $this->assertArrayHasKey($label, $thresholds, "Thresholds must define range for {$label}");
-            [$minWind, $maxWind] = $thresholds[$label];
-
-            $this->assertGreaterThanOrEqual(
-                $minWind,
-                $wind,
-                "Row labeled '{$label}' with wind {$wind} km/h is below bracket min {$minWind} km/h"
-            );
-            $this->assertLessThanOrEqual(
-                $maxWind,
-                $wind,
-                "Row labeled '{$label}' with wind {$wind} km/h exceeds bracket max {$maxWind} km/h"
-            );
+            if ($wind < $thresholds[$label][0]) {
+                $forecastWarningsBelowCurrentWindBracket[] = $row;
+            }
         }
+
+        $this->assertNotEmpty(
+            $forecastWarningsBelowCurrentWindBracket,
+            'Real PAGASA signals are forecast warnings and must not be recreated from the current wind field.'
+        );
+        $this->assertContains('Normal', $labels);
+        $this->assertContains('Signal 1', $labels);
+        $this->assertContains('Signal 2', $labels);
+        $this->assertContains('Signal 3', $labels);
+        $this->assertNotContains('Elevated', $labels);
     }
 
     public function test_predict_returns_valid_label_for_calm_input(): void

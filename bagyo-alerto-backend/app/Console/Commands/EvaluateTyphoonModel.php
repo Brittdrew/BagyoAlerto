@@ -2,212 +2,283 @@
 
 namespace App\Console\Commands;
 
+use App\Services\HistoricalTyphoonDataset;
 use App\Services\TyphoonMLService;
 use Illuminate\Console\Command;
-use Illuminate\Console\Application as Artisan;
 use Phpml\Classification\Ensemble\RandomForest;
-use Phpml\CrossValidation\StratifiedRandomSplit;
-use Phpml\Dataset\ArrayDataset;
 use Phpml\Metric\Accuracy;
 use Phpml\Metric\ClassificationReport;
 use Phpml\Metric\ConfusionMatrix;
-use ReflectionClass;
-
-// Provide ml:train if not already registered elsewhere in the application
-Artisan::starting(function ($artisan) {
-    if (!$artisan->has('ml:train')) {
-        $artisan->add(new class extends Command {
-            protected $signature = 'ml:train';
-            protected $description = 'Train the typhoon severity ML model';
-
-            public function handle(): int
-            {
-                $this->info('Training typhoon ML model...');
-                $ml = new TyphoonMLService();
-                $ml->train();
-                $this->info('Model trained and saved successfully!');
-                return self::SUCCESS;
-            }
-        });
-    }
-});
 
 class EvaluateTyphoonModel extends Command
 {
     protected $signature = 'ml:evaluate';
 
-    protected $description = 'Evaluate the typhoon severity ML model with stratified 80/20 train/test split';
+    protected $description = 'Evaluate the typhoon model by holding out each complete storm in turn';
 
-    public function handle(): int
-    {
-        $this->info('Starting Typhoon ML Model Evaluation (80/20 Stratified Split)...');
+    public function handle(
+        HistoricalTyphoonDataset $dataset,
+        TyphoonMLService $mlService,
+    ): int {
+        $records = $dataset->records(deduplicateGrid: false);
+        $events = array_values(array_unique(array_column($records, 'event_id')));
 
-        $mlService = new TyphoonMLService();
+        if (count($events) < 2) {
+            $this->error('At least two storm events are required for event-held-out evaluation.');
 
-        // Extract raw training dataset and feature normalizer using Reflection
-        $ref = new ReflectionClass(TyphoonMLService::class);
-        $trainingDataMethod = $ref->getMethod('trainingData');
-        $trainingDataMethod->setAccessible(true);
-        $data = $trainingDataMethod->invoke($mlService);
-
-        $normMethod = $ref->getMethod('normalizeFeatures');
-        $normMethod->setAccessible(true);
-
-        $rawSamples = [];
-        $labels = [];
-        foreach ($data as $row) {
-            $rawSamples[] = [$row[0], $row[1], $row[2], $row[3], $row[4]];
-            $labels[]     = $row[5];
+            return self::FAILURE;
         }
 
-        // 80/20 Stratified Random Split with fixed seed for reproducibility
-        $dataset = new ArrayDataset($rawSamples, $labels);
-        $split = new StratifiedRandomSplit($dataset, 0.20, 42);
+        $this->info('Evaluating with leave-one-storm-out cross-validation...');
 
-        $trainRaw    = $split->getTrainSamples();
-        $trainLabels = $split->getTrainLabels();
-        $testRaw     = $split->getTestSamples();
-        $testLabels  = $split->getTestLabels();
-
-        $totalCount = count($rawSamples);
-        $trainCount = count($trainRaw);
-        $testCount  = count($testRaw);
-
-        // Normalize features for the fresh model
-        $trainFeatures = array_map(function ($s) use ($normMethod, $mlService) {
-            return $normMethod->invoke($mlService, $s[0], $s[1], $s[2], $s[3], $s[4]);
-        }, $trainRaw);
-
-        $testFeatures = array_map(function ($s) use ($normMethod, $mlService) {
-            return $normMethod->invoke($mlService, $s[0], $s[1], $s[2], $s[3], $s[4]);
-        }, $testRaw);
-
-        // Train a FRESH RandomForest (100 trees) on the train part ONLY (does NOT overwrite model file)
-        $freshForest = new RandomForest(numClassifier: 100);
-        $freshForest->train($trainFeatures, $trainLabels);
-
-        // All classes in severity order
-        $classes = array_keys(TyphoonMLService::SIGNAL_RANK);
-
-        // (a) Raw Forest Evaluation
-        $rawPredictions = $freshForest->predict($testFeatures);
-        $rawAccuracy    = Accuracy::score($testLabels, $rawPredictions);
-        $rawReport      = new ClassificationReport($testLabels, $rawPredictions);
-        $rawMatrix      = ConfusionMatrix::compute($testLabels, $rawPredictions, $classes);
-
-        // (b) Post-windOverride Evaluation
+        $actual = [];
+        $rawPredictions = [];
         $postPredictions = [];
-        foreach ($testRaw as $i => $s) {
-            $rawPred = $rawPredictions[$i];
-            $postPredictions[] = $mlService->windOverride($rawPred, (float) $s[0], (float) $s[1], (float) $s[2]);
+        $folds = [];
+
+        foreach ($events as $heldOutEvent) {
+            $trainRows = array_values(array_filter(
+                $records,
+                fn (array $row): bool => $row['event_id'] !== $heldOutEvent,
+            ));
+            $testRows = array_values(array_filter(
+                $records,
+                fn (array $row): bool => $row['event_id'] === $heldOutEvent,
+            ));
+
+            $trainSamples = array_map(
+                fn (array $row): array => $this->features($mlService, $row),
+                $trainRows,
+            );
+            $trainLabels = array_column($trainRows, 'label');
+            $testSamples = array_map(
+                fn (array $row): array => $this->features($mlService, $row),
+                $testRows,
+            );
+            $testLabels = array_column($testRows, 'label');
+
+            $forest = new RandomForest(numClassifier: TyphoonMLService::FOREST_TREES);
+            $forest->train($trainSamples, $trainLabels);
+            $foldRaw = $forest->predict($testSamples);
+            $foldPost = [];
+
+            foreach ($testRows as $index => $row) {
+                $foldPost[] = $mlService->windOverride(
+                    $foldRaw[$index],
+                    (float) $row['wind_kmh'],
+                    (float) $row['rainfall_mm'],
+                    (float) $row['pressure_hpa'],
+                );
+            }
+
+            $folds[] = [
+                'event' => $heldOutEvent,
+                'storm' => $testRows[0]['storm_name'],
+                'samples' => count($testRows),
+                'raw' => Accuracy::score($testLabels, $foldRaw),
+                'post' => Accuracy::score($testLabels, $foldPost),
+            ];
+
+            array_push($actual, ...$testLabels);
+            array_push($rawPredictions, ...$foldRaw);
+            array_push($postPredictions, ...$foldPost);
+
+            $this->line("  Held out {$heldOutEvent} ({$testRows[0]['storm_name']}): ".count($testRows).' samples');
         }
-        $postAccuracy = Accuracy::score($testLabels, $postPredictions);
-        $postReport   = new ClassificationReport($testLabels, $postPredictions);
-        $postMatrix   = ConfusionMatrix::compute($testLabels, $postPredictions, $classes);
 
-        // Class sample distribution
-        $sampleCounts = array_count_values($labels);
+        $classes = array_values(array_filter(
+            array_keys(TyphoonMLService::SIGNAL_RANK),
+            fn (string $label): bool => in_array($label, $actual, true),
+        ));
+        $rawAccuracy = Accuracy::score($actual, $rawPredictions);
+        $postAccuracy = Accuracy::score($actual, $postPredictions);
 
-        // Build Markdown Report
-        $md = [];
-        $md[] = '# Typhoon ML Model Evaluation Report';
-        $md[] = '';
-        $md[] = '> **Note:** Dataset is synthetic (hand-built from PAGASA thresholds), so accuracy is optimistic and not evidence of real-world performance.';
-        $md[] = '';
-        $md[] = '## Dataset Overview';
-        $md[] = "- **Total Samples:** {$totalCount}";
-        $md[] = "- **Training Set (80%):** {$trainCount} samples";
-        $md[] = "- **Test Set (20%):** {$testCount} samples";
-        $md[] = '- **Split Strategy:** Stratified Random Split (seed: 42)';
-        $md[] = '';
-        $md[] = '### Sample Counts per Class';
-        $md[] = '| Class | Count |';
-        $md[] = '|---|---|';
-        foreach ($classes as $cls) {
-            $count = $sampleCounts[$cls] ?? 0;
-            $md[] = "| {$cls} | {$count} |";
-        }
-        $md[] = '';
+        $report = $this->buildReport(
+            dataset: $dataset,
+            records: $records,
+            events: $events,
+            classes: $classes,
+            actual: $actual,
+            rawPredictions: $rawPredictions,
+            postPredictions: $postPredictions,
+            rawAccuracy: $rawAccuracy,
+            postAccuracy: $postAccuracy,
+            folds: $folds,
+        );
 
-        // (a) Section
-        $md[] = '## (a) Raw Random Forest Evaluation';
-        $md[] = sprintf('- **Overall Accuracy:** %.2f%% (%.4f)', $rawAccuracy * 100, $rawAccuracy);
-        $md[] = '';
-        $md[] = '### Classification Report';
-        $md[] = $this->renderReportTable($classes, $rawReport);
-        $md[] = '';
-        $md[] = '### Confusion Matrix';
-        $md[] = $this->renderConfusionTable($classes, $rawMatrix);
-        $md[] = '';
-
-        // (b) Section
-        $md[] = '## (b) Final Result After windOverride()';
-        $md[] = sprintf('- **Overall Accuracy:** %.2f%% (%.4f)', $postAccuracy * 100, $postAccuracy);
-        $md[] = '';
-        $md[] = '### Classification Report';
-        $md[] = $this->renderReportTable($classes, $postReport);
-        $md[] = '';
-        $md[] = '### Confusion Matrix';
-        $md[] = $this->renderConfusionTable($classes, $postMatrix);
-        $md[] = '';
-
-        $reportContent = implode("\n", $md);
         $reportPath = storage_path('app/ml-evaluation.md');
+        file_put_contents($reportPath, $report);
 
-        if (!is_dir(dirname($reportPath))) {
-            mkdir(dirname($reportPath), 0755, true);
-        }
-        file_put_contents($reportPath, $reportContent);
-
-        // Short console summary
         $this->newLine();
         $this->info('=== Evaluation Summary ===');
-        $this->line(sprintf('Dataset: %d samples (%d train / %d test)', $totalCount, $trainCount, $testCount));
-        $this->line(sprintf('Raw Random Forest Accuracy: %.2f%% (%.4f)', $rawAccuracy * 100, $rawAccuracy));
-        $this->line(sprintf('After windOverride() Accuracy: %.2f%% (%.4f)', $postAccuracy * 100, $postAccuracy));
-        $this->line('Report written to: ' . $reportPath);
-        $this->newLine();
+        $this->line('Dataset rows: '.count($records));
+        $this->line('Storm folds: '.count($events));
+        $this->line(sprintf('Raw Random Forest Accuracy: %.2f%%', $rawAccuracy * 100));
+        $this->line(sprintf('After windOverride() Accuracy: %.2f%%', $postAccuracy * 100));
+        $this->line("Report written to: {$reportPath}");
 
         return self::SUCCESS;
     }
 
+    /** @param array<string, string> $row */
+    private function features(TyphoonMLService $service, array $row): array
+    {
+        return $service->featureVector(
+            $row['wind_kmh'],
+            $row['rainfall_mm'],
+            $row['pressure_hpa'],
+            $row['temperature_c'],
+            $row['humidity_pct'],
+        );
+    }
+
+    /**
+     * @param  array<int, array<string, string>>  $records
+     * @param  array<int, string>  $events
+     * @param  array<int, string>  $classes
+     * @param  array<int, string>  $actual
+     * @param  array<int, string>  $rawPredictions
+     * @param  array<int, string>  $postPredictions
+     * @param  array<int, array<string, mixed>>  $folds
+     */
+    private function buildReport(
+        HistoricalTyphoonDataset $dataset,
+        array $records,
+        array $events,
+        array $classes,
+        array $actual,
+        array $rawPredictions,
+        array $postPredictions,
+        float $rawAccuracy,
+        float $postAccuracy,
+        array $folds,
+    ): string {
+        $labelCounts = array_count_values($actual);
+        $barangayCount = count(array_unique(array_column($records, 'barangay_name')));
+        $bulletinCount = count(array_unique(array_map(
+            fn (array $row): string => $row['event_id'].'|'.$row['issued_at'],
+            $records,
+        )));
+
+        $rawReport = new ClassificationReport($actual, $rawPredictions);
+        $postReport = new ClassificationReport($actual, $postPredictions);
+        $rawMatrix = ConfusionMatrix::compute($actual, $rawPredictions, $classes);
+        $postMatrix = ConfusionMatrix::compute($actual, $postPredictions, $classes);
+
+        $lines = [
+            '# Typhoon ML Model Evaluation Report',
+            '',
+            '> Labels are real PAGASA TCWS bulletins; weather inputs are Open-Meteo ECMWF IFS historical values at each stored Surigao City barangay coordinate.',
+            '>',
+            '> TCWS is a forecast warning, while these five model inputs describe weather at bulletin issue time. Accuracy therefore measures pattern agreement, not authority to replace PAGASA.',
+            '',
+            '## Dataset Overview',
+            '',
+            '- **Dataset:** `'.$dataset->path().'`',
+            '- **Samples:** '.count($records),
+            '- **PAGASA bulletins:** '.$bulletinCount,
+            '- **Storm events:** '.count($events),
+            '- **Barangays represented:** '.$barangayCount,
+            '- **Validation:** Leave-one-storm-out cross-validation',
+            '',
+            '### Class Distribution',
+            '',
+            '| Class | Samples |',
+            '|---|---:|',
+        ];
+
+        foreach ($classes as $class) {
+            $lines[] = "| {$class} | ".($labelCounts[$class] ?? 0).' |';
+        }
+
+        array_push(
+            $lines,
+            '',
+            '## Held-out Storm Results',
+            '',
+            '| Storm | Event | Samples | Raw accuracy | After safety floor |',
+            '|---|---|---:|---:|---:|',
+        );
+        foreach ($folds as $fold) {
+            $lines[] = sprintf(
+                '| %s | `%s` | %d | %.2f%% | %.2f%% |',
+                $fold['storm'],
+                $fold['event'],
+                $fold['samples'],
+                $fold['raw'] * 100,
+                $fold['post'] * 100,
+            );
+        }
+
+        array_push(
+            $lines,
+            '',
+            '## Raw Random Forest',
+            '',
+            sprintf('- **Overall accuracy:** %.2f%%', $rawAccuracy * 100),
+            '',
+            $this->renderReportTable($classes, $rawReport),
+            '',
+            $this->renderConfusionTable($classes, $rawMatrix),
+            '',
+            '## Result After windOverride()',
+            '',
+            sprintf('- **Overall accuracy:** %.2f%%', $postAccuracy * 100),
+            '',
+            $this->renderReportTable($classes, $postReport),
+            '',
+            $this->renderConfusionTable($classes, $postMatrix),
+            '',
+        );
+
+        return implode("\n", $lines);
+    }
+
+    /** @param array<int, string> $classes */
     private function renderReportTable(array $classes, ClassificationReport $report): string
     {
         $precision = $report->getPrecision();
-        $recall    = $report->getRecall();
-        $f1        = $report->getF1score();
-        $support   = $report->getSupport();
+        $recall = $report->getRecall();
+        $f1 = $report->getF1score();
+        $support = $report->getSupport();
+        $rows = [
+            '| Class | Precision | Recall | F1-Score | Support |',
+            '|---|---:|---:|---:|---:|',
+        ];
 
-        $rows = [];
-        $rows[] = '| Class | Precision | Recall | F1-Score | Support |';
-        $rows[] = '|---|---|---|---|---|';
-
-        foreach ($classes as $cls) {
-            $p = isset($precision[$cls]) ? sprintf('%.2f%%', $precision[$cls] * 100) : 'N/A';
-            $r = isset($recall[$cls]) ? sprintf('%.2f%%', $recall[$cls] * 100) : 'N/A';
-            $f = isset($f1[$cls]) ? sprintf('%.4f', $f1[$cls]) : 'N/A';
-            $s = $support[$cls] ?? 0;
-            $rows[] = "| {$cls} | {$p} | {$r} | {$f} | {$s} |";
+        foreach ($classes as $class) {
+            $rows[] = sprintf(
+                '| %s | %.2f%% | %.2f%% | %.4f | %d |',
+                $class,
+                ($precision[$class] ?? 0) * 100,
+                ($recall[$class] ?? 0) * 100,
+                $f1[$class] ?? 0,
+                $support[$class] ?? 0,
+            );
         }
 
         return implode("\n", $rows);
     }
 
+    /**
+     * @param  array<int, string>  $classes
+     * @param  array<int, array<int, int>>  $matrix
+     */
     private function renderConfusionTable(array $classes, array $matrix): string
     {
-        $header = '| Actual \\ Predicted | ' . implode(' | ', $classes) . ' |';
-        $separator = '|---|' . str_repeat('---|', count($classes));
+        $rows = [
+            '| Actual \\ Predicted | '.implode(' | ', $classes).' |',
+            '|---|'.str_repeat('---:|', count($classes)),
+        ];
 
-        $rows = [$header, $separator];
-        foreach ($classes as $rIdx => $actualClass) {
-            $cols = [];
-            foreach ($classes as $cIdx => $_) {
-                $cols[] = $matrix[$rIdx][$cIdx] ?? 0;
+        foreach ($classes as $rowIndex => $actualClass) {
+            $values = [];
+            foreach ($classes as $columnIndex => $_) {
+                $values[] = $matrix[$rowIndex][$columnIndex] ?? 0;
             }
-            $rows[] = "| {$actualClass} | " . implode(' | ', $cols) . ' |';
+            $rows[] = "| {$actualClass} | ".implode(' | ', $values).' |';
         }
 
         return implode("\n", $rows);
     }
 }
-
