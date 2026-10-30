@@ -457,6 +457,29 @@ class TyphoonAssessmentTest extends TestCase
         $this->assertStringNotContainsString('Supertyphoon', $response->json('message'));
     }
 
+    public function test_out_of_range_dashboard_case_does_not_publish_a_fallback_ml_prediction(): void
+    {
+        $response = $this->postJson('/api/typhoon/assess', [
+            'wind_speed' => 88.0,
+            'rainfall' => 50.0,
+            'pressure' => 1013.7,
+            'temperature' => 30.2,
+            'humidity' => 74.0,
+            'barangay_id' => $this->barangay->id,
+            'manual_override' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('severity', 'high')
+            ->assertJsonPath('score', 23)
+            ->assertJsonPath('wind_signal', 'Signal 2')
+            ->assertJsonPath('ml_prediction', null)
+            ->assertJsonPath('ml_pattern.out_of_range', ['wind', 'rain'])
+            ->assertJsonPath('ml_pattern.pattern', null);
+
+        $this->assertNotContains('pressure', $response->json('ml_pattern.out_of_range'));
+    }
+
     public function test_wind_driven_classification_matches_pagasa_thresholds(): void
     {
         $cases = [

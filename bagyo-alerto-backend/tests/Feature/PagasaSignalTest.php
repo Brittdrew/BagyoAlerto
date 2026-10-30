@@ -17,8 +17,11 @@ class PagasaSignalTest extends TestCase
     use DatabaseTransactions;
 
     protected User $user;
+
     protected Admin $admin;
+
     protected Barangay $barangay;
+
     protected EvacuationCenter $center;
 
     protected function setUp(): void
@@ -26,7 +29,7 @@ class PagasaSignalTest extends TestCase
         parent::setUp();
 
         if (config('database.default') === 'sqlite') {
-            if (!Schema::hasTable('users')) {
+            if (! Schema::hasTable('users')) {
                 Schema::create('users', function ($table) {
                     $table->increments('id');
                     $table->string('name');
@@ -38,7 +41,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('personal_access_tokens')) {
+            if (! Schema::hasTable('personal_access_tokens')) {
                 Schema::create('personal_access_tokens', function ($table) {
                     $table->increments('id');
                     $table->morphs('tokenable');
@@ -51,7 +54,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('admins')) {
+            if (! Schema::hasTable('admins')) {
                 Schema::create('admins', function ($table) {
                     $table->increments('id');
                     $table->string('name');
@@ -61,7 +64,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('barangays')) {
+            if (! Schema::hasTable('barangays')) {
                 Schema::create('barangays', function ($table) {
                     $table->increments('id');
                     $table->string('name', 100);
@@ -73,7 +76,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('evacuation_centers_list')) {
+            if (! Schema::hasTable('evacuation_centers_list')) {
                 Schema::create('evacuation_centers_list', function ($table) {
                     $table->increments('id');
                     $table->string('name', 150);
@@ -88,7 +91,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('typhoon_logs')) {
+            if (! Schema::hasTable('typhoon_logs')) {
                 Schema::create('typhoon_logs', function ($table) {
                     $table->increments('id');
                     $table->decimal('wind_speed', 5, 2);
@@ -106,7 +109,7 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('recommendations')) {
+            if (! Schema::hasTable('recommendations')) {
                 Schema::create('recommendations', function ($table) {
                     $table->increments('id');
                     $table->integer('barangay_id');
@@ -116,11 +119,12 @@ class PagasaSignalTest extends TestCase
                 });
             }
 
-            if (!Schema::hasTable('pagasa_signals')) {
+            if (! Schema::hasTable('pagasa_signals')) {
                 Schema::create('pagasa_signals', function ($table) {
                     $table->increments('id');
                     $table->unsignedTinyInteger('signal');
                     $table->unsignedBigInteger('set_by')->nullable();
+                    $table->string('source', 10)->default('manual');
                     $table->timestamp('created_at')->useCurrent();
                 });
             }
@@ -137,21 +141,21 @@ class PagasaSignalTest extends TestCase
         );
 
         $this->barangay = Barangay::create([
-            'name'       => 'Test Barangay ' . uniqid(),
-            'city'       => 'Surigao City',
-            'latitude'   => 9.784000,
-            'longitude'  => 125.488000,
+            'name' => 'Test Barangay '.uniqid(),
+            'city' => 'Surigao City',
+            'latitude' => 9.784000,
+            'longitude' => 125.488000,
             'risk_level' => 'high',
         ]);
 
         $this->center = EvacuationCenter::create([
-            'name'        => 'Test Evac Center ' . uniqid(),
+            'name' => 'Test Evac Center '.uniqid(),
             'barangay_id' => $this->barangay->id,
-            'address'     => '123 Test St',
-            'latitude'    => 9.785000,
-            'longitude'   => 125.489000,
-            'capacity'    => 500,
-            'is_active'   => true,
+            'address' => '123 Test St',
+            'latitude' => 9.785000,
+            'longitude' => 125.489000,
+            'capacity' => 500,
+            'is_active' => true,
         ]);
 
         PagasaSignal::clearCache();
@@ -166,11 +170,11 @@ class PagasaSignalTest extends TestCase
     private function lowSeverityPayload(): array
     {
         return [
-            'wind_speed'  => 10.0,
-            'rainfall'    => 0.0,
-            'pressure'    => 1010.0,
+            'wind_speed' => 10.0,
+            'rainfall' => 0.0,
+            'pressure' => 1010.0,
             'temperature' => 28.0,
-            'humidity'    => 80.0,
+            'humidity' => 80.0,
             'barangay_id' => $this->barangay->id,
         ];
     }
@@ -178,11 +182,11 @@ class PagasaSignalTest extends TestCase
     private function highSeverityPayload(): array
     {
         return [
-            'wind_speed'  => 120.0, // Triggers Signal 4 override -> catastrophic
-            'rainfall'    => 40.0,
-            'pressure'    => 950.0,
+            'wind_speed' => 120.0, // Triggers Signal 4 override -> catastrophic
+            'rainfall' => 40.0,
+            'pressure' => 950.0,
             'temperature' => 25.0,
-            'humidity'    => 95.0,
+            'humidity' => 95.0,
             'barangay_id' => $this->barangay->id,
         ];
     }
@@ -194,8 +198,8 @@ class PagasaSignalTest extends TestCase
     {
         // Signal 1 has floor 'high' (0 => none, 1 => high, 2 => high, 3 => critical, 4 => catastrophic, 5 => catastrophic)
         PagasaSignal::create([
-            'signal'     => 1,
-            'set_by'     => $this->admin->id,
+            'signal' => 1,
+            'set_by' => $this->admin->id,
             'created_at' => now(),
         ]);
         PagasaSignal::clearCache();
@@ -204,10 +208,10 @@ class PagasaSignalTest extends TestCase
 
         $response->assertOk();
         $response->assertJson([
-            'severity'          => 'high',
+            'severity' => 'high',
             'computed_severity' => 'low',
-            'pagasa_signal'     => 1,
-            'floor_applied'     => true,
+            'pagasa_signal' => 1,
+            'floor_applied' => true,
         ]);
     }
 
@@ -219,8 +223,8 @@ class PagasaSignalTest extends TestCase
     {
         // Signal 3 has floor 'critical'
         PagasaSignal::create([
-            'signal'     => 3,
-            'set_by'     => $this->admin->id,
+            'signal' => 3,
+            'set_by' => $this->admin->id,
             'created_at' => now(),
         ]);
         PagasaSignal::clearCache();
@@ -229,10 +233,10 @@ class PagasaSignalTest extends TestCase
 
         $response->assertOk();
         $response->assertJson([
-            'severity'          => 'critical',
+            'severity' => 'critical',
             'computed_severity' => 'low',
-            'pagasa_signal'     => 3,
-            'floor_applied'     => true,
+            'pagasa_signal' => 3,
+            'floor_applied' => true,
         ]);
 
         $message = $response->json('message');
@@ -247,8 +251,8 @@ class PagasaSignalTest extends TestCase
     {
         // Signal 1 has floor 'high'
         PagasaSignal::create([
-            'signal'     => 1,
-            'set_by'     => $this->admin->id,
+            'signal' => 1,
+            'set_by' => $this->admin->id,
             'created_at' => now(),
         ]);
         PagasaSignal::clearCache();
@@ -271,8 +275,8 @@ class PagasaSignalTest extends TestCase
     public function test_signal_zero_applies_no_floor(): void
     {
         PagasaSignal::create([
-            'signal'     => 0,
-            'set_by'     => $this->admin->id,
+            'signal' => 0,
+            'set_by' => $this->admin->id,
             'created_at' => now(),
         ]);
         PagasaSignal::clearCache();
@@ -281,10 +285,10 @@ class PagasaSignalTest extends TestCase
 
         $response->assertOk();
         $response->assertJson([
-            'severity'          => 'low',
+            'severity' => 'low',
             'computed_severity' => 'low',
-            'pagasa_signal'     => 0,
-            'floor_applied'     => false,
+            'pagasa_signal' => 0,
+            'floor_applied' => false,
         ]);
     }
 

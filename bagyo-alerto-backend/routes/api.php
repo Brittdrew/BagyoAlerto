@@ -1,19 +1,33 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\BarangayController;
-use App\Http\Controllers\EvacuationCenterController;
-use App\Http\Controllers\TyphoonController;
-use App\Http\Controllers\RecommendationController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\BarangayController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\CurrentRiskController;
+use App\Http\Controllers\EvacuationCenterController;
 use App\Http\Controllers\EvacuationLogController;
+use App\Http\Controllers\PagasaDetectedController;
+use App\Http\Controllers\PagasaFeedController;
+use App\Http\Controllers\PagasaPinnedPostController;
 use App\Http\Controllers\PagasaSignalController;
+use App\Http\Controllers\RecommendationController;
+use App\Http\Controllers\RouteController;
+use App\Http\Controllers\RouteHazardScoreController;
+use App\Http\Controllers\RouteViaCandidatesController;
+use App\Http\Controllers\TyphoonController;
+use Illuminate\Support\Facades\Route;
 
 // ── Public list endpoints (responses cached 60 s inside controllers) ────────
 Route::get('/pagasa-signal', [PagasaSignalController::class, 'show']);
+Route::get('/pagasa-update', [PagasaDetectedController::class, 'publicUpdate']);
+Route::get('/pagasa/bulletin', [PagasaDetectedController::class, 'liveBulletin']);
+Route::get('/pagasa-post', [PagasaPinnedPostController::class, 'show']);
+Route::get('/pagasa/latest', [PagasaFeedController::class, 'latest']);
+Route::get('/pagasa/status', [PagasaFeedController::class, 'status']);
+Route::get('/risk/current', [CurrentRiskController::class, 'show']);
 Route::get('/barangays', [BarangayController::class, 'index']);
 Route::get('/barangays/{id}', [BarangayController::class, 'show']);
+Route::get('/barangays/{id}/weather', [BarangayController::class, 'weather']);
 Route::get('/barangays/{id}/evacuation-target', [BarangayController::class, 'evacuationTarget']);
 
 // IMPORTANT: literal-segment routes MUST come before wildcard /{id} routes.
@@ -27,9 +41,9 @@ Route::get('/evacuation-centers/nearest', [EvacuationCenterController::class, 'n
 Route::get('/evacuation-centers', [EvacuationCenterController::class, 'index']);
 Route::get('/evacuation-centers/{id}', [EvacuationCenterController::class, 'show']);
 
-Route::get('/route', [\App\Http\Controllers\RouteController::class, 'show']);
-Route::middleware('throttle:30,1')->post('/route-hazard-score', [\App\Http\Controllers\RouteHazardScoreController::class, 'score']);
-Route::middleware('throttle:30,1')->post('/route-via-candidates', [\App\Http\Controllers\RouteViaCandidatesController::class, 'candidates']);
+Route::get('/route', [RouteController::class, 'show']);
+Route::middleware('throttle:30,1')->post('/route-hazard-score', [RouteHazardScoreController::class, 'score']);
+Route::middleware('throttle:30,1')->post('/route-via-candidates', [RouteViaCandidatesController::class, 'candidates']);
 
 Route::middleware('throttle:20,1')->post('/typhoon/assess', [TyphoonController::class, 'assess']);
 
@@ -53,8 +67,6 @@ Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
 // Admin authentication (no auth middleware)
 Route::post('/admin/login', [AdminController::class, 'login']);
 
-
-
 // ── Admin routes (auth:sanctum + /admin prefix) ─────────────────────────────
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/logout', [AdminController::class, 'logout']);
@@ -65,6 +77,8 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::get('/hazard-map', [AdminController::class, 'hazardMap']);
 
     Route::post('/pagasa-signal', [PagasaSignalController::class, 'store']);
+    Route::get('/pagasa-detected', [PagasaDetectedController::class, 'show']);
+    Route::post('/pagasa-post', [PagasaPinnedPostController::class, 'store']);
 
     Route::get('/barangays', [AdminController::class, 'barangaysIndex']);
     Route::post('/barangays', [AdminController::class, 'barangaysStore']);

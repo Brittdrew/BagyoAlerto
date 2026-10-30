@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Barangay;
 use App\Models\EvacuationCenter;
-use Illuminate\Http\Request;
+use App\Services\OpenMeteoWeatherService;
 use Illuminate\Support\Facades\Cache;
+use Throwable;
 
 class BarangayController extends Controller
 {
@@ -30,6 +31,29 @@ class BarangayController extends Controller
             return response()->json(['message' => 'Barangay not found'], 404);
         }
         return response()->json($barangay);
+    }
+
+    /** GET /api/barangays/{id}/weather — read-only, cached five minutes. */
+    public function weather($id, OpenMeteoWeatherService $weatherService)
+    {
+        $barangay = Barangay::find($id);
+        if (! $barangay) {
+            return response()->json(['message' => 'Barangay not found'], 404);
+        }
+
+        try {
+            $weather = Cache::remember(
+                "api.barangays.{$barangay->id}.weather",
+                now()->addMinutes(5),
+                fn (): array => $weatherService->forBarangay($barangay),
+            );
+        } catch (Throwable) {
+            return response()->json([
+                'message' => 'Live weather is temporarily unavailable.',
+            ], 503);
+        }
+
+        return response()->json($weather);
     }
 
     public function evacuationTarget($id)

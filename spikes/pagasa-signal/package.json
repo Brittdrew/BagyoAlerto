@@ -1,0 +1,17 @@
+{
+  "name": "bagyo-alerto-pagasa-signal-spike",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only feasibility spike for extracting PAGASA tropical cyclone wind signals.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node spike.js",
+    "spike": "node spike.js"
+  },
+  "dependencies": {
+    "@pagasa-parser/source-pdf": "^1.1.9",
+    "pagasa-archiver": "^1.5.0",
+    "pagasa-parser": "^2.2.4",
+    "pdf-parse": "^1.1.1"
+  }
+}

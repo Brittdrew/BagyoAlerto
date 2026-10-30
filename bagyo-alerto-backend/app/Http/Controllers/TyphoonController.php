@@ -9,6 +9,8 @@ use App\Models\Recommendation;
 use App\Models\TyphoonLog;
 use App\Services\TyphoonMLService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Validation\ValidationException;
 
 class TyphoonController extends Controller
 {
@@ -20,7 +22,7 @@ class TyphoonController extends Controller
             'pressure' => 'required|numeric|min:850|max:1100',
             'temperature' => 'nullable|numeric|min:-10|max:50',
             'humidity' => 'nullable|numeric|min:0|max:100',
-            'barangay_id' => 'required|integer|exists:barangays,id',
+            'barangay_id' => 'required|integer',
         ], [
             'wind_speed.min' => 'Wind speed must be at least 0 km/h.',
             'wind_speed.max' => 'Wind speed cannot exceed 400 km/h.',
@@ -49,6 +51,31 @@ class TyphoonController extends Controller
         $pressure = $request->pressure;
         $temperature = $request->temperature ?? 30;
         $humidity = $request->humidity ?? 85;
+        $barangayId = (int) $request->barangay_id;
+
+        $currentSignalData = PagasaSignal::current();
+        $pagasaSignal = (int) ($currentSignalData['signal'] ?? 0);
+        $assessmentCache = app()->environment('testing') ? Cache::store() : Cache::store('file');
+        $assessmentCacheKey = 'typhoon_assessment.auto.v2.'.hash('sha256', json_encode([
+            'barangay_id' => $barangayId,
+            'wind_speed' => (float) $windSpeed,
+            'rainfall' => (float) $rainfall,
+            'pressure' => (float) $pressure,
+            'temperature' => (float) $temperature,
+            'humidity' => (float) $humidity,
+            'pagasa_signal' => $pagasaSignal,
+        ], JSON_THROW_ON_ERROR));
+
+        if ($isAuto && is_array($cached = $assessmentCache->get($assessmentCacheKey))) {
+            return response()->json($cached);
+        }
+
+        $barangay = Barangay::find($barangayId);
+        if ($barangay === null) {
+            throw ValidationException::withMessages([
+                'barangay_id' => ['The selected barangay does not exist.'],
+            ]);
+        }
 
         // Rule-Based Severity Scoring
         [$severity, $score, $rank, $factors] = $this->calculateSeverity(
@@ -57,9 +84,6 @@ class TyphoonController extends Controller
 
         // Apply PAGASA signal minimum severity floor
         $computedSeverity = $severity;
-        $currentSignalData = PagasaSignal::current();
-        $pagasaSignal = (int) ($currentSignalData['signal'] ?? 0);
-
         $signalFloors = config('pagasa.signal_floors', PagasaSignal::PAGASA_SIGNAL_FLOORS);
         $severityOrder = config('pagasa.severity_order', PagasaSignal::SEVERITY_ORDER);
 
@@ -87,17 +111,17 @@ class TyphoonController extends Controller
             'humidity' => $humidity,
         ];
 
-        // ML Prediction
+        // Historical pattern check. The trained classifier is deliberately not
+        // used as a fallback outside its recorded feature ranges.
         $ml = new TyphoonMLService;
-        $mlResult = $ml->predictWithDetails(
+        $mlPattern = $ml->getPatternAnalysis(
             $weatherData['wind'],
             $weatherData['rain'],
             $weatherData['pressure'],
             $weatherData['temp'],
             $weatherData['humidity']
         );
-        $mlPrediction = $mlResult['raw_prediction'];
-        $mlExplanation = $ml->getConfidence($mlPrediction);
+        $mlPrediction = $mlPattern['pattern']['label'] ?? null;
         $mlApplicability = $ml->getApplicability(
             $weatherData['wind'],
             $weatherData['rain'],
@@ -105,16 +129,28 @@ class TyphoonController extends Controller
             $weatherData['temp'],
             $weatherData['humidity']
         );
+        $mlSafetyPrediction = $ml->windOverride(
+            $mlPrediction ?? 'Normal',
+            (float) $weatherData['wind'],
+            (float) $weatherData['rain'],
+            (float) $weatherData['pressure'],
+        );
+        $mlSafetyOverrideApplied = $mlPrediction !== null && $mlPrediction !== $mlSafetyPrediction;
 
-        // Check if rule-based and ML agree
-        $agreement = $this->checkAgreement($classification, $mlPrediction);
+        // Check agreement only when a historical comparison is valid.
+        $agreement = $mlPrediction === null
+            ? [
+                'match' => false,
+                'difference' => null,
+                'status' => 'No pattern comparison outside recorded history',
+            ]
+            : $this->checkAgreement($classification, $mlPrediction);
 
         // ── Log deduplication for auto-assess ────────────────────────────────
         // For source="auto": find the most recent log for this barangay.
         // If its severity_level already matches the newly computed severity, skip
         // creating a new row and reuse the existing one.
         // For source="manual": always create a new row (original behaviour).
-        $barangayId = $request->barangay_id;
         $logWasCreated = false;
 
         if ($isAuto) {
@@ -161,7 +197,6 @@ class TyphoonController extends Controller
             $logWasCreated = true;
         }
 
-        $barangay = Barangay::find($barangayId);
         $center = null;
 
         // Pick the nearest active evacuation center to the selected barangay.
@@ -210,17 +245,21 @@ class TyphoonController extends Controller
 
         $effectiveRank = $floorApplied ? max($rank, $pagasaSignal + 2) : $rank;
 
-        return response()->json([
+        $responseData = [
             'severity' => $severity,
             'score' => $score,
             'weather' => $weatherData,
             'factors' => $factors,
             'classification' => $classification,   // Rule-based signal label
-            'ml_prediction' => $mlPrediction,     // ML signal label
-            'ml_explanation' => $mlExplanation,
-            'ml_safety_prediction' => $mlResult['safety_prediction'],
-            'ml_safety_override_applied' => $mlResult['safety_override_applied'],
-            'ml_safety_explanation' => $mlResult['safety_explanation'],
+            'wind_signal' => $this->getWindSignal((float) $windSpeed),
+            'ml_prediction' => $mlPrediction,
+            'ml_explanation' => null,
+            'ml_pattern' => $mlPattern,
+            'ml_safety_prediction' => $mlSafetyPrediction,
+            'ml_safety_override_applied' => $mlSafetyOverrideApplied,
+            'ml_safety_explanation' => $mlSafetyOverrideApplied
+                ? "Wind safety floor raised the historical pattern from {$mlPrediction} to {$mlSafetyPrediction} for {$windSpeed} km/h wind."
+                : null,
             'ml_applicability' => $mlApplicability,
             'agreement' => $agreement,         // Do both systems agree?
             'message' => $this->getSeverityMessage($effectiveRank),
@@ -228,7 +267,13 @@ class TyphoonController extends Controller
             'pagasa_signal' => $pagasaSignal,
             'floor_applied' => $floorApplied,
             'computed_severity' => $computedSeverity,
-        ]);
+        ];
+
+        if ($isAuto) {
+            $assessmentCache->put($assessmentCacheKey, $responseData, now()->addMinutes(2));
+        }
+
+        return response()->json($responseData);
     }
 
     /**
@@ -371,6 +416,18 @@ class TyphoonController extends Controller
         ];
 
         return $map[$rank] ?? 'Normal';
+    }
+
+    private function getWindSignal(float $windSpeed): string
+    {
+        return match (true) {
+            $windSpeed >= 185 => 'Signal 5',
+            $windSpeed >= 118 => 'Signal 4',
+            $windSpeed >= 89 => 'Signal 3',
+            $windSpeed >= 62 => 'Signal 2',
+            $windSpeed >= 39 => 'Signal 1',
+            default => 'No signal',
+        };
     }
 
     /**

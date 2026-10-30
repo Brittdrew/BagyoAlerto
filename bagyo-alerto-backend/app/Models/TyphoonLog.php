@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class TyphoonLog extends Model
 {
     public $timestamps = false;
-    
+
     protected $fillable = [
         'wind_speed',
         'rainfall',
@@ -24,6 +24,7 @@ class TyphoonLog extends Model
 
     protected $casts = [
         'is_manual' => 'boolean',
+        'logged_at' => 'datetime',
     ];
 
     public function barangay()

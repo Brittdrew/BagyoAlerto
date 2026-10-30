@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Tornado, BarChart2, Clock, CloudSun, Menu, X } from 'lucide-react'
+import { Tornado, BarChart2, Clock, CloudSun, Layers, Menu, X } from 'lucide-react'
 
 export default function Sidebar({ children, activePage }) {
     const navigate = useNavigate()
@@ -18,13 +18,9 @@ export default function Sidebar({ children, activePage }) {
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [])
 
-    // Close drawer on route change
-    useEffect(() => {
-        setIsDrawerOpen(false)
-    }, [location.pathname])
-
     const navItems = [
         { id: 'dashboard', icon: <BarChart2 size={14} />, label: 'Dashboard', path: '/' },
+        { id: 'map', icon: <Layers size={14} />, label: 'Weather Map', path: '/map' },
         { id: 'forecast', icon: <CloudSun size={14} />, label: 'Forecast', path: '/forecast' },
         { id: 'history', icon: <Clock size={14} />, label: 'History', path: '/history' },
     ]
@@ -97,12 +93,10 @@ export default function Sidebar({ children, activePage }) {
                             }}
                             style={{
                                 ...styles.sidebarItem,
-                                background: isActive ? '#f0f4ff' : 'transparent',
-                                color: isActive ? '#1a237e' : '#555',
-                                fontWeight: isActive ? 600 : 500,
+                                background: isActive ? 'var(--accent)' : 'transparent',
+                                color: isActive ? 'var(--accent-foreground)' : 'var(--muted-foreground)',
+                                fontWeight: isActive ? 650 : 500,
                                 cursor: 'pointer',
-                                borderLeft: isActive ? '3px solid #1a237e' : '3px solid transparent',
-                                paddingLeft: isActive ? 11 : 14,
                                 minHeight: 44,
                             }}
                         >
@@ -135,12 +129,10 @@ export default function Sidebar({ children, activePage }) {
                             onClick={() => navigate(path)}
                             style={{
                                 ...styles.sidebarItem,
-                                background: isActive ? '#f0f4ff' : 'transparent',
-                                color: isActive ? '#1a237e' : '#555',
-                                fontWeight: isActive ? 600 : 500,
+                                background: isActive ? 'var(--accent)' : 'transparent',
+                                color: isActive ? 'var(--accent-foreground)' : 'var(--muted-foreground)',
+                                fontWeight: isActive ? 650 : 500,
                                 cursor: 'pointer',
-                                borderLeft: isActive ? '3px solid #1a237e' : '3px solid transparent',
-                                paddingLeft: isActive ? 11 : 14,
                             }}
                         >
                             {icon}
@@ -157,10 +149,10 @@ export default function Sidebar({ children, activePage }) {
 
 const styles = {
     sidebar: {
-        width: 220,
-        minWidth: 220,
-        background: 'white',
-        borderRight: '0.5px solid #e8ecf0',
+        width: 256,
+        minWidth: 256,
+        background: 'var(--card)',
+        borderRight: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
         position: 'sticky',
@@ -170,8 +162,8 @@ const styles = {
     },
     mobileTopbar: {
         height: 52,
-        background: '#ffffff',
-        borderBottom: '1px solid #e8ecf0',
+        background: 'color-mix(in oklch, var(--card) 92%, transparent)',
+        borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -179,7 +171,7 @@ const styles = {
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        backdropFilter: 'blur(12px)',
         width: '100%',
         boxSizing: 'border-box',
     },
@@ -228,11 +220,12 @@ const styles = {
         bottom: 0,
         width: 280,
         maxWidth: '85vw',
-        background: '#ffffff',
+        background: 'var(--card)',
         zIndex: 1200,
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '4px 0 24px rgba(0, 0, 0, 0.15)',
+        boxShadow: 'none',
+        borderRight: '1px solid var(--border)',
         overflowY: 'auto',
         transition: 'transform 0.25s ease-in-out',
     },
@@ -241,7 +234,7 @@ const styles = {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '10px 14px',
-        borderBottom: '1px solid #f0f0f0',
+        borderBottom: '1px solid var(--border)',
     },
     closeBtn: {
         display: 'inline-flex',
@@ -262,21 +255,21 @@ const styles = {
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '6px 0',
+        padding: '16px 18px 14px',
     },
     sidebarTitle: {
         fontSize: 14,
         fontWeight: 700,
-        color: '#1a237e',
+        color: 'var(--primary)',
     },
     sidebarSub: {
         fontSize: 10,
-        color: '#888',
+        color: 'var(--muted-foreground)',
     },
     navSection: {
         fontSize: 10,
-        color: '#bbb',
-        padding: '12px 14px 4px',
+        color: 'var(--muted-foreground)',
+        padding: '18px 20px 6px',
         fontWeight: 600,
         letterSpacing: '0.08em',
         textTransform: 'uppercase',
@@ -285,7 +278,9 @@ const styles = {
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '9px 14px',
+        padding: '10px 12px',
+        margin: '2px 12px',
+        borderRadius: 10,
         fontSize: 13,
         transition: 'background 0.15s, color 0.15s',
     },

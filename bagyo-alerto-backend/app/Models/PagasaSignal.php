@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Cache;
 class PagasaSignal extends Model
 {
     public const CREATED_AT = 'created_at';
+
     public const UPDATED_AT = null;
 
     public const PAGASA_SIGNAL_FLOORS = [
@@ -20,22 +21,23 @@ class PagasaSignal extends Model
     ];
 
     public const SEVERITY_ORDER = [
-        'low'          => 0,
-        'moderate'     => 1,
-        'high'         => 2,
-        'critical'     => 3,
+        'low' => 0,
+        'moderate' => 1,
+        'high' => 2,
+        'critical' => 3,
         'catastrophic' => 4,
     ];
 
     protected $fillable = [
         'signal',
         'set_by',
+        'source',
         'created_at',
     ];
 
     protected $casts = [
-        'signal'     => 'integer',
-        'set_by'     => 'integer',
+        'signal' => 'integer',
+        'set_by' => 'integer',
         'created_at' => 'datetime',
     ];
 
@@ -44,7 +46,9 @@ class PagasaSignal extends Model
      */
     public static function current(): array
     {
-        return Cache::remember('pagasa_signal.current', 30, function () {
+        $cache = app()->environment('testing') ? Cache::store() : Cache::store('file');
+
+        return $cache->remember('pagasa_signal.current', 30, function () {
             try {
                 $latest = self::orderByDesc('id')->first();
             } catch (\Throwable $e) {
@@ -55,6 +59,7 @@ class PagasaSignal extends Model
                 'signal' => $latest ? (int) $latest->signal : 0,
                 'set_at' => $latest ? $latest->created_at?->toISOString() : null,
                 'set_by' => $latest ? $latest->set_by : null,
+                'source' => $latest?->source ?? 'manual',
             ];
         });
     }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react"
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
-import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Camera, Info, Shield, ChevronDown, ChevronUp, ArrowLeft } from "lucide-react"
+import { Navigation, AlertTriangle, CheckCircle2, WifiOff, MapPin, Loader, Camera, Info, Shield, ChevronDown, ChevronUp, ArrowLeft, Building2, Car, Footprints, Users } from "lucide-react"
 import { useLiveLocation } from "../hooks/useLiveLocation"
 import { useNearestCenter } from "../hooks/useNearestCenter"
 import { HazardBadge } from "./HazardBadge"
@@ -1189,137 +1189,61 @@ export default function MapView({
         )
     }
 
+    const destinationControl = (
+        <div style={{ ...styles.routeSegmented, ...(isMobile ? styles.routeSegmentedMobile : null) }} aria-label="Destination">
+            <button
+                type="button"
+                id="route-mode-nearest"
+                onClick={() => {
+                    if (routeMode !== "nearest") {
+                        setRouteMode("nearest")
+                        handleBackToOriginalCenter()
+                    }
+                }}
+                style={{ ...styles.routeSegmentButton, ...(routeMode === "nearest" ? styles.routeSegmentActive : null) }}
+            >
+                Closest to me
+            </button>
+            <button
+                type="button"
+                id="route-mode-barangay"
+                onClick={() => {
+                    if (routeMode !== "barangay") {
+                        setRouteMode("barangay")
+                        handleBackToOriginalCenter()
+                    }
+                }}
+                style={{ ...styles.routeSegmentButton, ...(routeMode === "barangay" ? styles.routeSegmentActive : null) }}
+            >
+                My barangay
+            </button>
+        </div>
+    )
+
+    const travelModeControl = (
+        <div style={{ ...styles.routeSegmented, ...(isMobile ? styles.routeSegmentedMobile : null) }} aria-label="Travel mode">
+            <button
+                type="button"
+                id="travel-mode-vehicle"
+                onClick={() => handleTravelModeChange("car")}
+                style={{ ...styles.routeSegmentButton, ...(travelMode === "car" ? styles.routeSegmentActive : null) }}
+            >
+                <Car size={14} aria-hidden="true" /> Vehicle
+            </button>
+            <button
+                type="button"
+                id="travel-mode-walk"
+                onClick={() => handleTravelModeChange("foot")}
+                style={{ ...styles.routeSegmentButton, ...(travelMode === "foot" ? styles.routeSegmentActive : null) }}
+            >
+                <Footprints size={14} aria-hidden="true" /> Walk
+            </button>
+        </div>
+    )
+
     // Primary Route Card (Info Panel)
     const infoPanel = (
         <div style={isMobile ? styles.panelMobile : styles.panelDesktop}>
-            {/* Toggles: Destination ("Closest to me" vs "My barangay's center") + Travel Mode ("Walk" vs "Vehicle") */}
-            <div style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 8,
-                marginBottom: 10,
-            }}>
-                <div style={{
-                    display: "flex",
-                    background: "#f1f5f9",
-                    borderRadius: 8,
-                    padding: 3,
-                    border: "1px solid #e2e8f0",
-                    gap: 4,
-                    flex: "1 1 200px",
-                }}>
-                    <button
-                        type="button"
-                        id="route-mode-nearest"
-                        onClick={() => {
-                            if (routeMode !== "nearest") {
-                                setRouteMode("nearest")
-                                handleBackToOriginalCenter()
-                            }
-                        }}
-                        style={{
-                            flex: 1,
-                            padding: "7px 10px",
-                            fontSize: 12,
-                            fontWeight: routeMode === "nearest" ? 700 : 500,
-                            borderRadius: 6,
-                            border: "none",
-                            background: routeMode === "nearest" ? "#1a237e" : "transparent",
-                            color: routeMode === "nearest" ? "#ffffff" : "#64748b",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            minHeight: 38,
-                        }}
-                    >
-                        Closest to me
-                    </button>
-                    <button
-                        type="button"
-                        id="route-mode-barangay"
-                        onClick={() => {
-                            if (routeMode !== "barangay") {
-                                setRouteMode("barangay")
-                                handleBackToOriginalCenter()
-                            }
-                        }}
-                        style={{
-                            flex: 1,
-                            padding: "7px 10px",
-                            fontSize: 12,
-                            fontWeight: routeMode === "barangay" ? 700 : 500,
-                            borderRadius: 6,
-                            border: "none",
-                            background: routeMode === "barangay" ? "#1a237e" : "transparent",
-                            color: routeMode === "barangay" ? "#ffffff" : "#64748b",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            minHeight: 38,
-                        }}
-                    >
-                        My barangay's center
-                    </button>
-                </div>
-
-                <div style={{
-                    display: "flex",
-                    background: "#f1f5f9",
-                    borderRadius: 8,
-                    padding: 3,
-                    border: "1px solid #e2e8f0",
-                    gap: 4,
-                    flex: "0 1 170px",
-                }}>
-                    <button
-                        type="button"
-                        id="travel-mode-walk"
-                        onClick={() => handleTravelModeChange("foot")}
-                        style={{
-                            flex: 1,
-                            padding: "7px 10px",
-                            fontSize: 12,
-                            fontWeight: travelMode === "foot" ? 700 : 500,
-                            borderRadius: 6,
-                            border: "none",
-                            background: travelMode === "foot" ? "#1a237e" : "transparent",
-                            color: travelMode === "foot" ? "#ffffff" : "#64748b",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: 4,
-                            minHeight: 38,
-                        }}
-                    >
-                        Walk
-                    </button>
-                    <button
-                        type="button"
-                        id="travel-mode-vehicle"
-                        onClick={() => handleTravelModeChange("car")}
-                        style={{
-                            flex: 1,
-                            padding: "7px 10px",
-                            fontSize: 12,
-                            fontWeight: travelMode === "car" ? 700 : 500,
-                            borderRadius: 6,
-                            border: "none",
-                            background: travelMode === "car" ? "#1a237e" : "transparent",
-                            color: travelMode === "car" ? "#ffffff" : "#64748b",
-                            cursor: "pointer",
-                            transition: "all 0.15s ease",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: 4,
-                            minHeight: 38,
-                        }}
-                    >
-                        Vehicle
-                    </button>
-                </div>
-            </div>
-
             {/* Fallback notice if any */}
             {fallbackNotice && (
                 <div style={{
@@ -1356,28 +1280,32 @@ export default function MapView({
             )}
 
             {/* 1. Center name (large) + "X.X km · N min by vehicle/on foot" */}
-            <div style={styles.titleBlock}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                    <h3 style={styles.centerTitle}>{target?.name || "Evacuation Center"}</h3>
-                    {isFull && (
-                        <span style={{
-                            background: "#dc2626",
-                            color: "#ffffff",
-                            fontSize: 11,
-                            fontWeight: 800,
-                            padding: "2px 7px",
-                            borderRadius: 4,
-                            letterSpacing: "0.5px",
-                        }}>
-                            FULL
-                        </span>
-                    )}
-                </div>
-                {routeMetricsText && (
-                    <div style={{ fontSize: 13, color: "#64748b", fontWeight: 600, marginTop: 2 }}>
-                        {routeMetricsText}
+            <div style={styles.facilityRow}>
+                <div style={styles.facilityIcon}><Building2 size={22} aria-hidden="true" /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
+                        <h3 style={styles.centerTitle}>{target?.name || "Evacuation Center"}</h3>
+                        <span style={isFull ? styles.fullBadge : styles.openBadge}>{isFull ? "Full" : "Open"}</span>
                     </div>
-                )}
+                    <div style={styles.centerAddress}>{target?.address || barangay?.name || "Surigao City"}</div>
+                </div>
+            </div>
+
+            {travelModeControl}
+
+            <div style={styles.figuresRow}>
+                <div style={styles.figureCard}>
+                    <span style={styles.figureLabel}>Distance</span>
+                    <span style={styles.figureValue}>
+                        {routeDistance || target?.distance_km || "--"}<small style={styles.figureUnit}> km</small>
+                    </span>
+                </div>
+                <div style={styles.figureCard}>
+                    <span style={styles.figureLabel}>Travel time</span>
+                    <span style={styles.figureValue}>
+                        {routeMinutes != null && Number.isFinite(routeMinutes) ? routeMinutes : "--"}<small style={styles.figureUnit}> min</small>
+                    </span>
+                </div>
             </div>
 
             {/* Route selection toggle: Safest vs Fastest (only shown when a safer route exists) */}
@@ -1463,45 +1391,48 @@ export default function MapView({
                 </div>
             )}
 
-            {/* 2. ONE safety banner */}
-            <div
-                role="status"
-                style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    background: bannerCfg.bg,
-                    border: `1px solid ${bannerCfg.border}`,
-                    color: bannerCfg.color,
-                    borderRadius: 8,
-                    padding: "9px 12px",
-                    marginTop: 10,
-                    marginBottom: 10,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    lineHeight: 1.4,
-                }}
-            >
-                <BannerIcon size={16} style={{ color: bannerCfg.iconColor, flexShrink: 0 }} />
-                <span>{safetyBanner.text}</span>
-            </div>
-
             {/* 3. Spaces free + existing progress bar */}
             <div style={styles.capacitySection}>
                 <div style={styles.capacityHeader}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: freeSpaceCount !== null && freeSpaceCount <= 0 ? "#dc2626" : "#334155" }}>
-                        {freeSpaceText}
-                    </span>
+                    <span style={styles.capacityLabelText}><Users size={14} aria-hidden="true" /> Capacity</span>
+                    <strong style={{
+                        minWidth: 0,
+                        marginLeft: "auto",
+                        color: freeSpaceCount !== null && freeSpaceCount <= 0 ? "var(--destructive)" : "var(--foreground)",
+                        overflowWrap: "anywhere",
+                        textAlign: "right",
+                    }}>{freeSpaceText}</strong>
                 </div>
                 <div style={styles.progressTrack}>
                     <div
                         style={{
                             ...styles.progressFill,
                             width: `${capacityPercent}%`,
-                            background: freeSpaceCount !== null && freeSpaceCount <= 0 ? "#dc2626" : (capacityPercent >= 80 ? "#f59e0b" : "#1a237e"),
+                            background: freeSpaceCount !== null && freeSpaceCount <= 0 ? "var(--destructive)" : "var(--success)",
                         }}
                     />
                 </div>
+            </div>
+
+            {/* 2. ONE safety banner */}
+            <div
+                role="status"
+                style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    background: bannerCfg.bg,
+                    border: `1px solid ${bannerCfg.border}`,
+                    color: bannerCfg.color,
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                    fontSize: 11,
+                    fontWeight: 500,
+                    lineHeight: 1.55,
+                }}
+            >
+                <BannerIcon size={15} style={{ color: bannerCfg.iconColor, flexShrink: 0, marginTop: 1 }} />
+                <span>{safetyBanner.text}</span>
             </div>
 
             {/* 4. The existing "Open in Google Maps" button, full width */}
@@ -1675,23 +1606,25 @@ export default function MapView({
                 </button>
             )}
 
-            {/* Meta row */}
-            <div style={{ ...styles.metaRow, marginTop: 8 }}>
-                <span>Updated {secondsAgo}s ago</span>
-                <span style={styles.metaDot}>•</span>
-                <span>
-                    {hasLiveGps && Number.isFinite(accuracy)
-                        ? `GPS ±${Math.round(accuracy)} m`
-                        : "Barangay coordinates"}
-                </span>
-            </div>
         </div>
     )
 
     return (
         <div style={styles.container}>
-            {/* 5. The route info panel goes above the map on phones and desktop */}
-            {infoPanel}
+            <header style={{ ...styles.routeCardHeader, ...(isMobile ? styles.routeCardHeaderMobile : null) }}>
+                <div>
+                    <h2 style={styles.routeCardTitle}>Evacuation route</h2>
+                    <div style={styles.routeCardMeta}>
+                        Updated {secondsAgo}s ago{" \u00B7 "}
+                        {hasLiveGps && Number.isFinite(accuracy)
+                            ? <>{"GPS \u00B1"}{Math.round(accuracy)} m</>
+                            : "Barangay coordinates"}
+                    </div>
+                </div>
+                {destinationControl}
+            </header>
+
+            <div style={isMobile ? styles.routeBodyMobile : styles.routeBodyDesktop}>
 
             {/* Map Container */}
             <div style={styles.mapWrap}>
@@ -1722,12 +1655,14 @@ export default function MapView({
                 </div>
 
                 {/* Hazard overlay control panel – positioned below Street/Satellite toggle */}
-                <HazardControl
-                    activeLayers={hazardLayers}
-                    opacity={hazardOpacity}
-                    onToggleLayer={handleHazardToggle}
-                    onOpacityChange={setHazardOpacity}
-                />
+                {hazardDetailsOpen && (
+                    <HazardControl
+                        activeLayers={hazardLayers}
+                        opacity={hazardOpacity}
+                        onToggleLayer={handleHazardToggle}
+                        onOpacityChange={setHazardOpacity}
+                    />
+                )}
 
                 {!mapReady && <div style={styles.loadingOverlay}>Loading map...</div>}
                 {routeLoading && <div style={{ ...styles.loadingOverlay, top: mapReady ? 48 : 0 }}>Updating route...</div>}
@@ -1834,8 +1769,11 @@ export default function MapView({
                 </MapContainer>
             </div>
 
-            {/* Photo Card */}
-            <div style={styles.streetCard}>
+            {infoPanel}
+            </div>
+
+            {/* Facility photo remains available when one has been uploaded. */}
+            {(photoLoading || photoUrl) && <div style={styles.streetCard}>
                 <div style={{ ...styles.streetTitle, display: "flex", alignItems: "center", gap: 6 }}>
                     <Camera size={14} style={{ color: "#1a237e" }} />
                     Evacuation Center Facility
@@ -1860,33 +1798,72 @@ export default function MapView({
                     <Info size={12} style={{ color: "#4b5563", flexShrink: 0 }} />
                     {target?.name} — {target?.address}
                 </div>
-            </div>
+            </div>}
         </div>
     )
 }
 
 const styles = {
     container: {
-        background: "#fff",
+        width: "100%",
+        minWidth: 0,
+        maxWidth: "100%",
+        background: "var(--card)",
         borderRadius: 16,
-        border: "1px solid #e2e8f0",
-        padding: 14,
-        marginTop: 14,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        border: "1px solid var(--border)",
+        padding: 0,
+        marginTop: 0,
+        boxShadow: "none",
         display: "grid",
-        gap: 12,
+        gap: 0,
+        overflow: "hidden",
+    },
+    routeCardHeader: {
+        minHeight: 88,
+        padding: "18px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+        borderBottom: "1px solid var(--border)",
+    },
+    routeCardHeaderMobile: { minHeight: 0, padding: 16, alignItems: "stretch", flexDirection: "column" },
+    routeCardTitle: { margin: 0, color: "var(--foreground)", fontSize: 15, fontWeight: 700 },
+    routeCardMeta: { marginTop: 3, color: "var(--muted-foreground)", fontFamily: "var(--mono)", fontSize: 11, fontVariantNumeric: "tabular-nums" },
+    routeBodyDesktop: { width: "100%", minWidth: 0, display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(360px, 1fr)", minHeight: 560 },
+    routeBodyMobile: { width: "100%", minWidth: 0, display: "flex", flexDirection: "column" },
+    routeSegmented: {
+        display: "flex", alignItems: "center", gap: 3, minWidth: 0, width: 300, maxWidth: "100%", padding: 4,
+        borderRadius: 10, background: "var(--secondary)",
+    },
+    routeSegmentedMobile: { minWidth: 0, width: "100%" },
+    routeSegmentButton: {
+        flex: 1, minWidth: 0, minHeight: 38, padding: "8px 12px", border: 0, borderRadius: 8,
+        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+        background: "transparent", color: "var(--muted-foreground)", fontFamily: "inherit",
+        fontSize: 11, fontWeight: 550, cursor: "pointer", whiteSpace: "nowrap",
+    },
+    routeSegmentActive: {
+        background: "var(--card)", color: "var(--foreground)", fontWeight: 700,
+        boxShadow: "inset 0 0 0 1px var(--border)",
     },
     panelDesktop: {
+        minWidth: 0,
+        maxWidth: "100%",
         display: "grid",
-        gap: 12,
-        background: "#ffffff",
-        borderRadius: 12,
-        border: "1px solid #e2e8f0",
-        padding: "14px 16px",
+        alignContent: "start",
+        gap: 16,
+        background: "var(--card)",
+        borderLeft: "1px solid var(--border)",
+        padding: 24,
     },
     panelMobile: {
+        minWidth: 0,
+        maxWidth: "100%",
         display: "grid",
         gap: 12,
+        padding: 16,
+        borderTop: "1px solid var(--border)",
     },
     bottomSheetWrap: {
         background: "#ffffff",
@@ -1908,6 +1885,13 @@ const styles = {
         display: "grid",
         gap: 2,
     },
+    facilityRow: { minWidth: 0, display: "flex", alignItems: "center", gap: 12 },
+    facilityIcon: {
+        width: 48, height: 48, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0, background: "var(--success-soft)", color: "var(--success)",
+    },
+    openBadge: { padding: "3px 9px", borderRadius: 999, background: "var(--success-soft)", color: "var(--success)", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" },
+    fullBadge: { padding: "3px 9px", borderRadius: 999, background: "#fee2e2", color: "var(--destructive)", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" },
     centerTitle: {
         margin: 0,
         fontSize: 18,
@@ -1923,10 +1907,11 @@ const styles = {
     },
     figuresRow: {
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
         gap: 10,
     },
     figureCard: {
+        minWidth: 0,
         background: "#f8fafc",
         border: "1px solid #e2e8f0",
         borderRadius: 10,
@@ -1943,12 +1928,14 @@ const styles = {
         color: "#64748b",
     },
     figureValue: {
+        fontFamily: "var(--mono)",
         fontSize: 22,
         fontWeight: 700,
         color: "#1e293b",
         fontVariantNumeric: "tabular-nums",
         lineHeight: 1.2,
     },
+    figureUnit: { color: "var(--muted-foreground)", fontSize: 10, fontWeight: 500 },
     capacitySection: {
         display: "grid",
         gap: 6,
@@ -1957,8 +1944,11 @@ const styles = {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
+        flexWrap: "wrap",
+        gap: 12,
         fontSize: 12,
     },
+    capacityLabelText: { display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted-foreground)", fontSize: 11 },
     capacityLabel: {
         fontSize: 11,
         fontWeight: 600,
@@ -1998,6 +1988,8 @@ const styles = {
     },
     primaryNavBtn: {
         width: "100%",
+        minWidth: 0,
+        maxWidth: "100%",
         minHeight: 44,
         borderRadius: 10,
         border: "1px solid #1a237e",
@@ -2070,13 +2062,15 @@ const styles = {
         color: "#64748b",
     },
     mapWrap: {
+        minWidth: 0,
         position: "relative",
-        borderRadius: 12,
+        borderRadius: 0,
         overflow: "hidden",
     },
     map: {
         width: "100%",
-        height: 420,
+        height: "100%",
+        minHeight: 560,
     },
     mapMobile: {
         width: "100%",

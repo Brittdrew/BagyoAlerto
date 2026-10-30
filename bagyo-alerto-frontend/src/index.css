@@ -1,57 +1,56 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  --background: oklch(0.975 0.004 255);
+  --foreground: oklch(0.22 0.03 262);
+  --card: oklch(1 0 0);
+  --primary: oklch(0.42 0.15 262);
+  --primary-foreground: oklch(0.985 0.005 255);
+  --secondary: oklch(0.955 0.008 255);
+  --muted: oklch(0.955 0.008 255);
+  --muted-foreground: oklch(0.52 0.02 260);
+  --accent: oklch(0.945 0.02 258);
+  --accent-foreground: oklch(0.35 0.12 262);
+  --destructive: oklch(0.58 0.21 27);
+  --success: oklch(0.6 0.13 158);
+  --success-soft: oklch(0.96 0.035 160);
+  --warning: oklch(0.72 0.15 70);
+  --warning-soft: oklch(0.97 0.04 85);
+  --border: oklch(0.92 0.008 255);
+  --input: oklch(0.9 0.01 255);
+  --ring: oklch(0.55 0.14 262);
+  --chart-1: oklch(0.55 0.16 258);
+  --chart-2: oklch(0.74 0.15 65);
+  --chart-3: oklch(0.6 0.13 158);
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --text: var(--muted-foreground);
+  --text-h: var(--foreground);
+  --bg: var(--background);
+  --code-bg: var(--muted);
+  --accent-bg: var(--accent);
+  --accent-border: var(--ring);
+  --social-bg: var(--muted);
+  --shadow: none;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  --sans: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --heading: var(--sans);
+  --mono: 'Geist Mono', 'SFMono-Regular', Consolas, monospace;
+
+  font: 16px/145% var(--sans);
+  letter-spacing: 0;
+  color-scheme: light;
+  color: var(--foreground);
+  background: var(--background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
 }
 
 body {
   margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--sans);
 }
 
 @keyframes ticker {

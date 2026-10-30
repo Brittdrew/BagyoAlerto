@@ -16,6 +16,22 @@ class TyphoonMLService
 
     private bool $classifierLoaded = false;
 
+    /** @var array<int, array<string, string>>|null */
+    private ?array $trainingRecordsCache = null;
+
+    /** @var array<string, array{min: float, max: float, tolerance: float}>|null */
+    private ?array $trainingRangesCache = null;
+
+    private const RANGE_TOLERANCE = 0.05;
+
+    private const RAW_FEATURES = [
+        'wind' => ['column' => 'wind_kmh', 'legacy' => 'wind speed'],
+        'rain' => ['column' => 'rainfall_mm', 'legacy' => 'rainfall'],
+        'pressure' => ['column' => 'pressure_hpa', 'legacy' => 'pressure'],
+        'temp' => ['column' => 'temperature_c', 'legacy' => 'temperature'],
+        'humidity' => ['column' => 'humidity_pct', 'legacy' => 'humidity'],
+    ];
+
     public const SIGNAL_THRESHOLDS = [
         'Normal' => [0, 29],
         'Watch' => [30, 38],
@@ -89,7 +105,7 @@ class TyphoonMLService
     /** @return array<int, array<string, string>> */
     public function trainingRecords(): array
     {
-        return $this->historicalDataset->records(deduplicateGrid: false);
+        return $this->trainingRecordsCache ??= $this->historicalDataset->records(deduplicateGrid: false);
     }
 
     /**
@@ -189,7 +205,7 @@ class TyphoonMLService
     public function getConfidence($prediction): string
     {
         $confidence = [
-            'Normal' => 'Low risk - no PAGASA wind signal matched in comparable history',
+            'Normal' => 'Closest recorded storm pattern was labelled Normal.',
             'Watch' => 'Moderate concern - wind threshold reached',
             'Elevated' => 'Elevated risk - hazardous rain or pressure pattern',
             'Signal 1' => 'High risk - pattern resembles historical Signal 1 periods',
@@ -204,32 +220,160 @@ class TyphoonMLService
 
     /**
      * Explain whether a live input is represented by the historical dataset.
-     * Random forests do not extrapolate beyond their training data reliably,
-     * so callers should visibly qualify predictions for out-of-range inputs.
+     * A five-percent tolerance avoids treating harmless sensor precision at a
+     * range edge as extrapolation.
      *
-     * @return array{within_range: bool, outside_features: array<int, string>, message: string}
+     * @return array{within_range: bool, out_of_range: array<int, string>, outside_features: array<int, string>, ranges: array<string, array{min: float, max: float, tolerance: float}>, message: string}
      */
     public function getApplicability($wind, $rainfall, $pressure, $temp, $humidity): array
     {
+        $assessment = $this->rangeAssessment($wind, $rainfall, $pressure, $temp, $humidity);
+        $outsideFeatures = array_map(
+            fn (string $name): string => self::RAW_FEATURES[$name]['legacy'],
+            $assessment['out_of_range'],
+        );
+
+        if ($assessment['out_of_range'] === []) {
+            return [
+                'within_range' => true,
+                'out_of_range' => [],
+                'outside_features' => [],
+                'ranges' => $assessment['ranges'],
+                'message' => 'Inputs are within the historical training range.',
+            ];
+        }
+
+        return [
+            'within_range' => false,
+            'out_of_range' => $assessment['out_of_range'],
+            'outside_features' => $outsideFeatures,
+            'ranges' => $assessment['ranges'],
+            'message' => 'Outside historical training range: '.implode(', ', $outsideFeatures).'. Treat the ML cross-check with extra caution.',
+        ];
+    }
+
+    /**
+     * Compare an in-range reading with the three closest recorded storm rows.
+     * Distance is calculated after normalizing every raw feature to its own
+     * training range, so pressure cannot dominate wind or rainfall by scale.
+     *
+     * @return array{within_range: bool, out_of_range: array<int, string>, ranges: array<string, array{min: float, max: float, tolerance: float}>, pattern: array{storm: string, date: string, label: string, agreeing: int, compared: int}|null}
+     */
+    public function getPatternAnalysis($wind, $rainfall, $pressure, $temp, $humidity): array
+    {
+        $assessment = $this->rangeAssessment($wind, $rainfall, $pressure, $temp, $humidity);
+
+        if ($assessment['out_of_range'] !== []) {
+            return [
+                'within_range' => false,
+                'out_of_range' => $assessment['out_of_range'],
+                'ranges' => $assessment['ranges'],
+                'pattern' => null,
+            ];
+        }
+
+        $inputs = $assessment['inputs'];
+        $ranges = $assessment['ranges'];
+        $neighbors = [];
+
+        foreach ($this->trainingRecords() as $index => $record) {
+            $distance = 0.0;
+
+            foreach (self::RAW_FEATURES as $name => $definition) {
+                $span = max($ranges[$name]['max'] - $ranges[$name]['min'], PHP_FLOAT_EPSILON);
+                $normalizedInput = ($inputs[$name] - $ranges[$name]['min']) / $span;
+                $normalizedRecord = ((float) $record[$definition['column']] - $ranges[$name]['min']) / $span;
+                $distance += ($normalizedInput - $normalizedRecord) ** 2;
+            }
+
+            $neighbors[] = [
+                'distance' => $distance,
+                'index' => $index,
+                'record' => $record,
+            ];
+        }
+
+        usort($neighbors, static fn (array $left, array $right): int =>
+            ($left['distance'] <=> $right['distance']) ?: ($left['index'] <=> $right['index'])
+        );
+
+        $closest = array_slice($neighbors, 0, 3);
+        $winner = $closest[0]['record']['label'];
+        $winnerCount = 0;
+
+        foreach ($closest as $candidate) {
+            $label = $candidate['record']['label'];
+            $count = count(array_filter(
+                $closest,
+                static fn (array $neighbor): bool => $neighbor['record']['label'] === $label,
+            ));
+
+            if ($count > $winnerCount) {
+                $winner = $label;
+                $winnerCount = $count;
+            }
+        }
+
+        $representative = current(array_filter(
+            $closest,
+            static fn (array $neighbor): bool => $neighbor['record']['label'] === $winner,
+        ));
+        $record = $representative['record'];
+
+        return [
+            'within_range' => true,
+            'out_of_range' => [],
+            'ranges' => $ranges,
+            'pattern' => [
+                'storm' => $record['storm_name'],
+                'date' => $record['issued_at'],
+                'label' => $winner,
+                'agreeing' => $winnerCount,
+                'compared' => count($neighbors),
+            ],
+        ];
+    }
+
+    /**
+     * @return array{inputs: array<string, float>, out_of_range: array<int, string>, ranges: array<string, array{min: float, max: float, tolerance: float}>}
+     */
+    private function rangeAssessment($wind, $rainfall, $pressure, $temp, $humidity): array
+    {
         $inputs = [
-            'wind speed' => (float) $wind,
-            'rainfall' => (float) $rainfall,
+            'wind' => (float) $wind,
+            'rain' => (float) $rainfall,
             'pressure' => (float) $pressure,
-            'temperature' => (float) $temp,
+            'temp' => (float) $temp,
             'humidity' => (float) $humidity,
         ];
-        $columns = [
-            'wind speed' => 'wind_kmh',
-            'rainfall' => 'rainfall_mm',
-            'pressure' => 'pressure_hpa',
-            'temperature' => 'temperature_c',
-            'humidity' => 'humidity_pct',
-        ];
-        $ranges = [];
+        $ranges = $this->trainingRanges();
+        $outOfRange = [];
 
+        foreach ($inputs as $name => $value) {
+            $range = $ranges[$name];
+            if ($value < $range['min'] - $range['tolerance'] || $value > $range['max'] + $range['tolerance']) {
+                $outOfRange[] = $name;
+            }
+        }
+
+        return [
+            'inputs' => $inputs,
+            'out_of_range' => $outOfRange,
+            'ranges' => $ranges,
+        ];
+    }
+
+    /** @return array<string, array{min: float, max: float, tolerance: float}> */
+    private function trainingRanges(): array
+    {
+        if ($this->trainingRangesCache !== null) {
+            return $this->trainingRangesCache;
+        }
+
+        $ranges = [];
         foreach ($this->trainingRecords() as $record) {
-            foreach ($columns as $name => $column) {
-                $value = (float) $record[$column];
+            foreach (self::RAW_FEATURES as $name => $definition) {
+                $value = (float) $record[$definition['column']];
                 $ranges[$name]['min'] = isset($ranges[$name]['min'])
                     ? min($ranges[$name]['min'], $value)
                     : $value;
@@ -239,26 +383,11 @@ class TyphoonMLService
             }
         }
 
-        $outsideFeatures = [];
-        foreach ($inputs as $name => $value) {
-            if (! isset($ranges[$name]) || $value < $ranges[$name]['min'] || $value > $ranges[$name]['max']) {
-                $outsideFeatures[] = $name;
-            }
+        foreach ($ranges as $name => $range) {
+            $ranges[$name]['tolerance'] = ($range['max'] - $range['min']) * self::RANGE_TOLERANCE;
         }
 
-        if ($outsideFeatures === []) {
-            return [
-                'within_range' => true,
-                'outside_features' => [],
-                'message' => 'Inputs are within the historical training range.',
-            ];
-        }
-
-        return [
-            'within_range' => false,
-            'outside_features' => $outsideFeatures,
-            'message' => 'Outside historical training range: '.implode(', ', $outsideFeatures).'. Treat the ML cross-check with extra caution.',
-        ];
+        return $this->trainingRangesCache = $ranges;
     }
 
     private function modelIsCurrent(): bool

@@ -1,5 +1,12 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { margin: 0; padding: 0; background: #f0f4f8; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; overflow-x: hidden; }
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--sans);
+  overflow-x: hidden;
+}
 
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -24,6 +31,14 @@ body { margin: 0; padding: 0; background: #f0f4f8; font-family: 'Segoe UI', Taho
   }
   .bakwit-mobile-barangay-bar {
     display: none !important;
+  }
+}
+
+/* Keep the route card wide enough for its map and details panel on tablets and
+   smaller desktop windows. The phone layout takes over below 768px. */
+@media (min-width: 768px) and (max-width: 1199px) {
+  .bakwit-row3 {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
 

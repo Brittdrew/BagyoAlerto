@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\PagasaSignal;
+use App\Services\PagasaSignalService;
 use Illuminate\Http\Request;
 
 class PagasaSignalController extends Controller
@@ -18,6 +19,7 @@ class PagasaSignalController extends Controller
         return response()->json([
             'signal' => (int) $current['signal'],
             'set_at' => $current['set_at'],
+            'source' => $current['source'] ?? 'manual',
         ]);
     }
 
@@ -27,23 +29,22 @@ class PagasaSignalController extends Controller
      * Validate integer 0-5, return 422 otherwise.
      * Inserts a row, clears the cache, returns the new current signal.
      */
-    public function store(Request $request)
+    public function store(Request $request, PagasaSignalService $signalService)
     {
         $validated = $request->validate([
             'signal' => 'required|integer|min:0|max:5',
         ]);
 
-        $pagasaSignal = PagasaSignal::create([
-            'signal'     => (int) $validated['signal'],
-            'set_by'     => $request->user()?->id,
-            'created_at' => now(),
-        ]);
-
-        PagasaSignal::clearCache();
+        $pagasaSignal = $signalService->setSignal(
+            (int) $validated['signal'],
+            'manual',
+            $request->user()?->id
+        );
 
         return response()->json([
             'signal' => (int) $pagasaSignal->signal,
             'set_at' => $pagasaSignal->created_at?->toISOString() ?? $pagasaSignal->created_at,
+            'source' => $pagasaSignal->source,
         ]);
     }
 }

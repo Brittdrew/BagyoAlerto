@@ -7,40 +7,22 @@ import MapView, { formatWalkTime } from "../components/MapView"
 import Sidebar from "../components/Sidebar"
 import EvacuationAlertBanner from "../components/EvacuationAlertBanner"
 import SelfArrivalController from "../components/SelfArrivalController"
+import LatestPagasaPostCard from "../components/LatestPagasaPostCard"
 import { useSavedBarangay } from "../hooks/useSavedBarangay"
 
 import {
-    Tornado, BarChart2, Clock, AlertTriangle, Info, Wind,
+    Tornado, Clock, AlertTriangle, Info, Wind,
     CloudRain, Gauge, Edit3, Search, Route, Satellite,
-    Loader, MapPin, Thermometer, Droplets, X, Shield
+    Loader, MapPin, Thermometer, Droplets, Shield
 } from "lucide-react"
 import { getSavedRoutePref, saveRoutePref, formatExposureSummary, getHighHazardMeters } from "../utils/routeSafety"
 
 // --- Constants ---------------------------------------------------------------
 const API_BASE = import.meta.env.VITE_API_BASE
-const WEATHER_REFRESH = 10 * 60 * 1000 // 10 minutes
-const WEATHER_RETRY = 60 * 1000 // 60 seconds
-const ASSESS_TIMEOUT = 30000
-const ASSESS_RETRY = 60 * 1000 // 60 seconds
+const WEATHER_TIMEOUT = 15000
+const ASSESS_TIMEOUT = 8000
 import { RefreshCw } from "lucide-react"
-const OPEN_METEO_CURRENT_FIELDS = "wind_speed_10m,precipitation,surface_pressure,temperature_2m,relativehumidity_2m,weathercode,windgusts_10m"
 const ERROR_MARKERS = new Set(["__assess_error__", "__weather_error__"])
-const TOO_MANY_REQUESTS_MESSAGE = "Too many requests. Retrying shortly."
-
-function pickCurrentMetric(current, keys) {
-    for (const key of keys) {
-        const value = current?.[key]
-        if (value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value))) {
-            return Number(value)
-        }
-    }
-    return null
-}
-
-function toFixedOrEmpty(value, digits = 1) {
-    if (value === null || value === undefined || Number.isNaN(Number(value))) return ""
-    return Number(value).toFixed(digits)
-}
 
 function fmtKm(v, digits = 1) {
     if (v === null || v === undefined) return "--"
@@ -54,6 +36,14 @@ function fmtMins(v) {
     const num = Number(v)
     if (!Number.isFinite(num)) return "--"
     return String(Math.max(1, Math.round(num)))
+}
+
+function formatTrendTime(value, isLatest) {
+    if (isLatest) return "Now"
+    const time = String(value || "").split("T")[1] || ""
+    const hour = Number(time.split(":")[0])
+    if (!Number.isFinite(hour)) return time || "-"
+    return `${hour % 12 || 12}${hour < 12 ? "am" : "pm"}`
 }
 
 function fmtMeters(v) {
@@ -239,6 +229,135 @@ const RISK_COLORS = {
     low: "#1D9E75", moderate: "#BA7517", high: "#D85A30", critical: "#A32D2D", catastrophic: "#7F1D1D",
 }
 
+const FACTOR_WEIGHTS = { wind: 0.35, pressure: 0.30, rain: 0.20, humidity: 0.10, temp: 0.05 }
+
+function formatReading(value, maximumFractionDigits = 1) {
+    const number = Number(value)
+    if (!Number.isFinite(number)) return "-"
+    return number.toLocaleString("en-PH", { maximumFractionDigits })
+}
+
+function windSignalFor(wind) {
+    const value = Number(wind) || 0
+    if (value >= 185) return "Signal 5"
+    if (value >= 118) return "Signal 4"
+    if (value >= 89) return "Signal 3"
+    if (value >= 62) return "Signal 2"
+    if (value >= 39) return "Signal 1"
+    return "No signal"
+}
+
+function factorResult(name, value) {
+    const number = Number(value) || 0
+
+    if (name === "wind") return windSignalFor(number)
+    if (name === "rain") {
+        if (number >= 30) return "Extreme rain"
+        if (number >= 15) return "Intense rain"
+        if (number >= 7.5) return "Heavy rain"
+        if (number > 0) return "Light to moderate rain"
+        return "No rain"
+    }
+    if (name === "pressure") {
+        if (number <= 960) return "Typhoon-core pressure"
+        if (number <= 975) return "Very low pressure"
+        if (number <= 990) return "Low pressure"
+        if (number <= 1005) return "Falling pressure"
+        return "Typical pressure"
+    }
+    if (name === "temp") {
+        if (number < 24) return "Strong cold inflow"
+        if (number < 30) return "Below the 30 °C baseline"
+        return "At or above the baseline"
+    }
+    if (number >= 95) return "Near saturation"
+    if (number >= 85) return "Very humid"
+    return "Below the risk baseline"
+}
+
+function factorRowsFor(weather, factors = {}) {
+    const definitions = [
+        { key: "wind", label: "Wind", unit: "km/h", value: weather.wind },
+        { key: "rain", label: "Rain", unit: "mm/hr", value: weather.rain },
+        { key: "pressure", label: "Pressure", unit: "hPa", value: weather.pressure },
+        { key: "temp", label: "Temperature", unit: "°C", value: weather.temp },
+        { key: "humidity", label: "Humidity", unit: "%", value: weather.humidity },
+    ]
+
+    return definitions.map(definition => ({
+        ...definition,
+        result: factorResult(definition.key, definition.value),
+        weighted: ((Number(factors[definition.key]) || 0) * FACTOR_WEIGHTS[definition.key]).toFixed(1),
+    }))
+}
+
+function topRiskDrivers(weather, factors = {}) {
+    return factorRowsFor(weather, factors)
+        .sort((left, right) => Number(right.weighted) - Number(left.weighted))
+        .slice(0, 2)
+        .map(row => row.key === "wind"
+            ? `Wind ${formatReading(row.value)} ${row.unit} (${row.result})`
+            : `${row.result} ${formatReading(row.value)} ${row.unit}`)
+}
+
+function raisedRiskReasons(weather, result) {
+    if (!result) return []
+
+    const reasons = []
+    const rain = Number(weather.rain) || 0
+    const pressure = Number(weather.pressure) || 0
+
+    if (rain >= 30) reasons.push(`Extreme rain (${formatReading(rain)} mm/hr)`)
+    else if (rain >= 7.5) reasons.push(`${factorResult("rain", rain)} (${formatReading(rain)} mm/hr)`)
+
+    if (pressure <= 1005) {
+        reasons.push(`${factorResult("pressure", pressure)} (${formatReading(pressure)} hPa)`)
+    }
+
+    if (result?.floor_applied) reasons.push(`PAGASA Signal ${result.pagasa_signal} floor`)
+    return reasons
+}
+
+function joinReadable(items) {
+    if (items.length < 2) return items[0] || ""
+    if (items.length === 2) return `${items[0]} and ${items[1]}`
+    return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`
+}
+
+function patternMonth(date) {
+    if (!date) return "date unavailable"
+    const parsed = new Date(date)
+    if (Number.isNaN(parsed.getTime())) return "date unavailable"
+    return parsed.toLocaleDateString("en-PH", { month: "short", year: "numeric", timeZone: "UTC" })
+}
+
+function beyondHistoryText(analysis, weather, finalSeverity) {
+    const definitions = {
+        wind: { label: "Wind", unit: "km/h", decimals: 0 },
+        rain: { label: "Rain", unit: "mm/hr", decimals: 0 },
+        pressure: { label: "Pressure", unit: "hPa", decimals: 1 },
+        temp: { label: "Temperature", unit: "°C", decimals: 1 },
+        humidity: { label: "Humidity", unit: "%", decimals: 0 },
+    }
+    const names = analysis?.out_of_range || []
+    const actual = names.map((name, index) => {
+        const definition = definitions[name]
+        const label = index === 0 ? definition.label : definition.label.toLowerCase()
+        return `${label} ${formatReading(weather[name], definition.decimals)} ${definition.unit}`
+    })
+    const maxima = names.map(name => {
+        const definition = definitions[name]
+        return `${formatReading(analysis?.ranges?.[name]?.max, definition.decimals)} ${definition.unit}`
+    })
+    const allAbove = names.every(name => Number(weather[name]) > Number(analysis?.ranges?.[name]?.max))
+    const subject = names.length === 1 ? "is" : "are"
+    const rangeDescription = allAbove
+        ? `${subject} above anything in the recorded storms (max ${joinReadable(maxima)})`
+        : `${subject} outside the recorded storm ranges`
+
+    return `${joinReadable(actual)} ${rangeDescription}. Follow the overall risk: ${finalSeverity}.`
+}
+
 
 
 // --- Sub-components ----------------------------------------------------------
@@ -256,11 +375,11 @@ function LiveDot() {
 function getOverrideInputBorderColor(name, value) {
     if (value === "" || isNaN(parseFloat(value))) return "#e0e0e0";
     const val = parseFloat(value);
-    if (name === "wind_speed" && val >= 60) return "#E24B4A";
-    if (name === "rainfall" && val >= 30) return "#E24B4A";
-    if (name === "pressure" && val <= 989) return "#E24B4A";
-    if (name === "humidity" && val >= 95) return "#E24B4A";
-    return "#e0e0e0";
+    if (name === "wind_speed" && val >= 60) return "#d79627";
+    if (name === "rainfall" && val >= 30) return "#d79627";
+    if (name === "pressure" && val <= 989) return "#d79627";
+    if (name === "humidity" && val >= 95) return "#d79627";
+    return "var(--input)";
 }
 
 function getCardBadgeAndBorder(name, value) {
@@ -305,14 +424,19 @@ function getCardBadgeAndBorder(name, value) {
     return { badge: null, border: null, barColor: null };
 }
 
-function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, barPct, barColor, badge, borderColor }) {
+function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, barPct, barColor, badge, borderColor, hideThreshold = false }) {
     const noData = value === "N/A" || value === "—" || value === "-"
-    const displayBorder = borderColor ? `1.5px solid ${borderColor}` : "0.5px solid #e8ecf0"
+    const safePct = Math.max(0, Math.min(100, Number(barPct) || 0))
+    const meterColor = safePct >= 80 ? "var(--destructive)" : safePct >= 60 ? "var(--warning)" : (barColor || "var(--chart-1)")
+    const displayBorder = badge || borderColor ? "1px solid var(--warning)" : "1px solid var(--border)"
     return (
         <div style={{ ...styles.metricCard, border: displayBorder }}>
             <div style={styles.metricIconRow}>
-                <div style={{ ...styles.metricIconBox, background: bg }}>
-                    <span style={{ fontSize: 15, color }}>{icon}</span>
+                <div style={styles.metricLabelGroup}>
+                    <div style={{ ...styles.metricIconBox, color }}>
+                        {icon}
+                    </div>
+                    <span style={styles.metricLabel}>{label}</span>
                 </div>
                 {badge ? (
                     <span style={{
@@ -339,10 +463,16 @@ function MetricCard({ icon, color, bg, label, value, unit, trend, trendLabel, ba
                 <span style={styles.metricVal}>{value ?? "-"}</span>
                 {!noData && <span style={styles.metricUnit}> {unit}</span>}
             </div>
-            <div style={styles.metricLabel}>{label}</div>
-            <div style={styles.metricBarTrack}>
-                <div style={{ ...styles.metricBarFill, width: `${barPct}%`, background: barColor }} />
-            </div>
+            {!hideThreshold && (
+                <>
+                    <div role="meter" aria-label={`${label} level`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(safePct)} style={styles.metricBarTrack}>
+                        <div style={{ ...styles.metricBarFill, width: `${safePct}%`, background: meterColor }} />
+                    </div>
+                    <div style={{ ...styles.metricStatus, color: badge ? "#92400e" : "var(--muted-foreground)" }}>
+                        {badge || (noData ? "Awaiting data" : `${Math.round(safePct)}% of threshold`)}
+                    </div>
+                </>
+            )}
         </div>
     )
 }
@@ -366,12 +496,8 @@ function TrendChart({ data }) {
                         type: "bar",
                         label: "Wind Speed",
                         data: data.map(d => d.wind),
-                        backgroundColor: data.map(d =>
-                            d.wind >= 118 ? "#E24B4A" :
-                                d.wind >= 88 ? "#EF9F27" :
-                                    "#378ADD"
-                        ),
-                        borderRadius: 4,
+                        backgroundColor: "#5267d9",
+                        borderRadius: 6,
                         borderSkipped: false,
                         yAxisID: "yWind",
                     },
@@ -379,11 +505,11 @@ function TrendChart({ data }) {
                         type: "line",
                         label: "Temperature",
                         data: data.map(d => d.temp),
-                        borderColor: "#EF9F27",
+                        borderColor: "#d79627",
                         borderWidth: 2,
                         tension: 0.3,
                         fill: false,
-                        pointBackgroundColor: "#EF9F27",
+                        pointBackgroundColor: "#d79627",
                         pointRadius: 3,
                         yAxisID: "yTemp",
                     }
@@ -393,15 +519,7 @@ function TrendChart({ data }) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        display: true,
-                        position: "top",
-                        labels: {
-                            boxWidth: 10,
-                            font: { size: 10 },
-                            color: "#666"
-                        }
-                    },
+                    legend: { display: false },
                     tooltip: {
                         callbacks: {
                             label: context => {
@@ -413,12 +531,13 @@ function TrendChart({ data }) {
                     }
                 },
                 scales: {
-                    x: { grid: { display: false }, ticks: { font: { size: 11 }, color: "#aaa" } },
+                    x: { grid: { display: false }, border: { display: false }, ticks: { font: { size: 10, family: "Geist Mono, monospace" }, color: "#8a90a0" } },
                     yWind: {
                         type: "linear",
                         position: "left",
-                        grid: { color: "rgba(0,0,0,0.05)" },
-                        ticks: { font: { size: 11 }, color: "#aaa", callback: v => v + " km/h" },
+                        grid: { color: "rgba(80,90,120,0.09)" },
+                        border: { display: false },
+                        ticks: { font: { size: 10, family: "Geist Mono, monospace" }, color: "#8a90a0", callback: v => v + " km/h" },
                         min: 0,
                     },
                     yTemp: {
@@ -440,7 +559,7 @@ function TrendChart({ data }) {
         </div>
     )
 
-    return <div style={{ position: "relative", width: "100%", height: 140 }}>
+    return <div style={{ position: "relative", width: "100%", height: 220 }}>
         <canvas ref={chartRef} role="img" aria-label="6-hour wind speed & temperature chart" />
     </div>
 }
@@ -473,13 +592,17 @@ function SeverityGauge({ score, wind = 0, rain = 0, pressure = 1013 }) {
 }
 
 function FactorBar({ label, pct, color }) {
+    const safePct = Math.max(0, Math.min(100, Number(pct) || 0))
+    const meterColor = safePct >= 80 ? "var(--destructive)" : safePct >= 60 ? "var(--warning)" : color
     return (
-        <div style={{ display: "flex", alignItems: "center", fontSize: 11, gap: 0 }}>
-            <span style={{ color: "#999", minWidth: 52 }}>{label}</span>
-            <div style={{ flex: 1, height: 4, background: "#f0f0f0", borderRadius: 2, margin: "0 8px" }}>
-                <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.5s" }} />
+        <div style={styles.factorRow}>
+            <div style={styles.factorLabelRow}>
+                <span>{label}</span>
+                <span style={styles.factorValue}>{safePct}%</span>
             </div>
-            <span style={{ fontWeight: 600, color: "#333", minWidth: 28, textAlign: "right" }}>{pct}%</span>
+            <div role="meter" aria-label={`${label} contribution`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(safePct)} style={styles.factorTrack}>
+                <div style={{ width: `${safePct}%`, height: "100%", background: meterColor, borderRadius: 999, transition: "width 0.5s" }} />
+            </div>
         </div>
     )
 }
@@ -627,8 +750,7 @@ function EvacRoutes({
     return (
         <div style={{
             ...styles.evacCard,
-            background: needsEvac ? "#FCEBEB" : "#f8f9fa",
-            border: `0.5px solid ${needsEvac ? "#F09595" : "#e0e0e0"}`,
+            borderColor: needsEvac ? "color-mix(in oklch, var(--destructive) 32%, var(--border))" : "var(--border)",
         }}>
             <div style={styles.evacHeader}>
                 <Route size={15} style={{ color: needsEvac ? "#501313" : "#333" }} />
@@ -639,6 +761,27 @@ function EvacRoutes({
                         ACTIVE
                     </span>
                 )}
+            </div>
+
+            <div style={styles.routeControls} aria-label="Route preferences">
+                <div style={styles.segmentedControl} aria-label="Route origin">
+                    <span style={{ ...styles.segment, ...(isLiveActive ? styles.segmentActive : null) }}>Closest to me</span>
+                    <span style={{ ...styles.segment, ...(!isLiveActive ? styles.segmentActive : null) }}>Barangay center</span>
+                </div>
+                <div style={styles.segmentedControl} aria-label="Travel mode">
+                    <button
+                        type="button"
+                        onClick={() => onTravelModeChange?.("foot")}
+                        aria-pressed={travelMode === "foot"}
+                        style={{ ...styles.segmentButton, ...(travelMode === "foot" ? styles.segmentActive : null) }}
+                    >Walk</button>
+                    <button
+                        type="button"
+                        onClick={() => onTravelModeChange?.("car")}
+                        aria-pressed={travelMode === "car"}
+                        style={{ ...styles.segmentButton, ...(travelMode === "car" ? styles.segmentActive : null) }}
+                    >Drive</button>
+                </div>
             </div>
 
             <div style={{ ...styles.routeItem, borderBottom: `0.5px solid ${needsEvac ? "#F7C1C1" : "#eee"}` }}>
@@ -680,15 +823,14 @@ function EvacRoutes({
     )
 }
 
-function RecentHistory({ logs }) {
+function RecentHistory({ logs, onViewAll }) {
     const recent = (logs || []).slice(0, 4)
 
     return (
         <div style={styles.historyCard}>
             <div style={styles.cardHeader}>
-                <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                    <Clock size={14} style={{ color: "#555" }} /> Recent assessments
-                </div>
+                <div style={styles.cardTitle}>Recent assessments</div>
+                <button type="button" onClick={onViewAll} style={styles.cardLink}>See all</button>
             </div>
             {recent.length === 0 && (
                 <p style={{ fontSize: 12, color: "#aaa", padding: "8px 0" }}>No assessments yet.</p>
@@ -704,19 +846,18 @@ function RecentHistory({ logs }) {
                 )) : 0
                 const cfg = getSeverityConfig(score)
                 const date = new Date(log.recommended_at)
-                const dateStr = date.toLocaleDateString("en-PH", { month: "short", year: "numeric" })
+                const dateStr = date.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
                 return (
                     <div key={log.id} style={{ ...styles.histRow, borderBottom: i < recent.length - 1 ? "0.5px solid #f0f0f0" : "none" }}>
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: cfg.dot || "#ccc", flexShrink: 0 }} />
-                        <span style={{ color: "#aaa", minWidth: 70, fontSize: 11 }}>{dateStr}</span>
-                        <span style={{ flex: 1, fontWeight: 500, fontSize: 11, color: "#333" }}>
-                            {log.barangay?.name || "-"}
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                            <strong style={{ display: "block", color: "var(--foreground)", fontSize: 12, fontWeight: 650 }}>{log.barangay?.name || "-"}</strong>
+                            <span style={styles.historyDate}>{dateStr}</span>
                         </span>
                         <span style={{
-                            fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10,
-                            background: cfg.bg, color: cfg.text
+                            fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 999,
+                            background: cfg.bg, color: cfg.text, whiteSpace: "nowrap"
                         }}>
-                            {cfg.label}
+                            {String(cfg.label || "Normal").split("/")[0].trim()}
                         </span>
                     </div>
                 )
@@ -738,13 +879,16 @@ export default function Dashboard() {
     const [extraWeather, setExtraWeather] = useState({ wind_gusts: "N/A" })
     const [weatherLoading, setWeatherLoading] = useState(false)
     const [weatherFetched, setWeatherFetched] = useState(false)
+    const [weatherError, setWeatherError] = useState(false)
     const [lastUpdated, setLastUpdated] = useState(null)
+    const [weatherRevision, setWeatherRevision] = useState(0)
     const [trendData, setTrendData] = useState([])
     const [result, setResult] = useState(null)
+    const [assessedAt, setAssessedAt] = useState(null)
+    const [assessedWeatherRevision, setAssessedWeatherRevision] = useState(null)
     const [assessing, setAssessing] = useState(false)
     const [assessError, setAssessError] = useState(null)
     const [recentLogs, setRecentLogs] = useState([])
-    const [confirmModalOpen, setConfirmModalOpen] = useState(false)
     const [isMobileScreen, setIsMobileScreen] = useState(() => (typeof window !== "undefined" ? window.innerWidth <= 768 : false))
     // True while MapView has a drawn GPS route to the evacuation center
     const [routingActive, setRoutingActive] = useState(false)
@@ -797,10 +941,11 @@ export default function Dashboard() {
         return () => window.removeEventListener("resize", handleResize)
     }, [])
 
-    const weatherTimer = useRef(null)
-    const assessRetryTimer = useRef(null)
     const isManualOverrideRef = useRef(false)
     const activeBarangayIdRef = useRef(null)
+    const weatherRevisionRef = useRef(0)
+    const assessmentGenerationRef = useRef(0)
+    const bootstrapStartedRef = useRef(false)
 
     useEffect(() => {
         isManualOverrideRef.current = isManualOverride
@@ -808,6 +953,9 @@ export default function Dashboard() {
 
     // -- Fetch barangays on mount ------------------------------------------------
     useEffect(() => {
+        if (bootstrapStartedRef.current) return
+        bootstrapStartedRef.current = true
+
         axios.get(`${API_BASE}/barangays`)
             .then(res => {
                 const opts = res.data.map(b => ({
@@ -839,67 +987,22 @@ export default function Dashboard() {
 
         fetchRecentLogs()
 
-        return () => {
-            if (weatherTimer.current) clearTimeout(weatherTimer.current)
-            if (assessRetryTimer.current) clearTimeout(assessRetryTimer.current)
-        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    function scheduleWeatherFetch(option, delay) {
-        if (weatherTimer.current) clearTimeout(weatherTimer.current)
-        weatherTimer.current = setTimeout(() => fetchWeather(option), delay)
-    }
-
-    function clearAssessRetry() {
-        if (assessRetryTimer.current) {
-            clearTimeout(assessRetryTimer.current)
-            assessRetryTimer.current = null
-        }
-    }
-
-    function scheduleAssessRetry(payload) {
-        clearAssessRetry()
-        assessRetryTimer.current = setTimeout(() => runAssess(payload), ASSESS_RETRY)
-    }
-
     // -- Fetch live weather ------------------------------------------------------
     async function fetchWeather(option) {
-        if (!option?.latitude || !option?.longitude) return
+        if (!option?.value) return
         const requestedBarangayId = option.value
         if (activeBarangayIdRef.current !== null &&
             String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
             return
         }
         setWeatherLoading(true)
-        setWeatherFetched(false)
-        if (!isManualOverrideRef.current) {
-            setFormData(f => ({
-                ...f,
-                wind_speed: "",
-                rainfall: "",
-                pressure: "",
-                temperature: "",
-                humidity: "",
-                barangay_id: option.value,
-            }))
-        }
-        setExtraWeather({ wind_gusts: "N/A" })
         try {
-            const [currentRes, hourlyRes] = await Promise.all([
-                fetch(
-                    `https://api.open-meteo.com/v1/forecast` +
-                    `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&current=${OPEN_METEO_CURRENT_FIELDS}` +
-                    `&timezone=Asia%2FManila`
-                ).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
-                fetch(
-                    `https://api.open-meteo.com/v1/forecast` +
-                    `?latitude=${option.latitude}&longitude=${option.longitude}` +
-                    `&hourly=wind_speed_10m,temperature_2m&forecast_days=1` +
-                    `&timezone=Asia%2FManila`
-                ).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() }),
-            ])
+            const response = await axios.get(`${API_BASE}/barangays/${requestedBarangayId}/weather`, {
+                timeout: WEATHER_TIMEOUT,
+            })
 
             if (activeBarangayIdRef.current !== null &&
                 String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
@@ -907,20 +1010,14 @@ export default function Dashboard() {
                 return
             }
 
-            const cur = currentRes.current
-            const windVal = pickCurrentMetric(cur, ["wind_speed_10m"])
-            const rainVal = pickCurrentMetric(cur, ["precipitation", "rain"])
-            const pressureVal = pickCurrentMetric(cur, ["surface_pressure"])
-            const temperatureVal = pickCurrentMetric(cur, ["temperature_2m"])
-            const humidityVal = pickCurrentMetric(cur, ["relativehumidity_2m", "relative_humidity_2m"])
-            const gustVal = pickCurrentMetric(cur, ["windgusts_10m"])
-
+            const current = response.data?.current || {}
+            const metric = value => Number.isFinite(Number(value)) ? Number(value).toFixed(1) : ""
             const liveMetrics = {
-                wind_speed: toFixedOrEmpty(windVal, 1),
-                rainfall: toFixedOrEmpty(rainVal, 1),
-                pressure: toFixedOrEmpty(pressureVal, 1),
-                temperature: toFixedOrEmpty(temperatureVal, 1),
-                humidity: toFixedOrEmpty(humidityVal, 1),
+                wind_speed: metric(current.wind_speed),
+                rainfall: metric(current.rainfall),
+                pressure: metric(current.pressure),
+                temperature: metric(current.temperature),
+                humidity: metric(current.humidity),
             }
             setLiveWeather(liveMetrics)
             if (!isManualOverrideRef.current) {
@@ -930,88 +1027,28 @@ export default function Dashboard() {
                     barangay_id: option.value,
                 }))
             }
-            setExtraWeather({
-                wind_gusts: metricDisplay(toFixedOrEmpty(gustVal, 1)),
-            })
-            setLastUpdated(new Date())
+            setExtraWeather({ wind_gusts: metricDisplay(metric(current.wind_gusts)) })
+            setLastUpdated(response.data?.updated_at ? new Date(response.data.updated_at) : new Date())
             setWeatherFetched(true)
-            setAssessError(null)
-
-            // Build 6-point trend (last 6 hours)
-            const hourly = hourlyRes.hourly
-            const nowH = new Date().getHours()
-            const points = []
-            for (let i = 5; i >= 0; i--) {
-                const h = ((nowH - i) + 24) % 24
-                const label = h === nowH ? "Now" : `${h % 12 || 12}${h < 12 ? "am" : "pm"}`
-                points.push({
-                    time: label,
-                    wind: parseFloat(hourly.wind_speed_10m[h]?.toFixed(1) || 0),
-                    temp: parseFloat(hourly.temperature_2m[h]?.toFixed(1) || 0)
-                })
-            }
-            setTrendData(points)
-
-            // Auto-run assess on live weather when not in manual override mode
-            if (!isManualOverrideRef.current) {
-                runAssess({
-                    ...liveMetrics,
-                    barangay_id: option.value,
-                    manual_override: false,
-                    source: "auto",
-                })
-            }
-
-            scheduleWeatherFetch(option, WEATHER_REFRESH)
-
-        } catch {
-            console.error("Weather fetch failed")
+            setWeatherError(false)
+            setTrendData((response.data?.trend || []).map((point, index, all) => ({
+                time: formatTrendTime(point.time, index === all.length - 1),
+                wind: Number(point.wind) || 0,
+                temp: Number(point.temp) || 0,
+            })))
+            weatherRevisionRef.current += 1
+            setWeatherRevision(weatherRevisionRef.current)
+        } catch (error) {
+            console.error("Weather fetch failed:", error.response?.status, error.message)
             if (activeBarangayIdRef.current === null ||
                 String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
-                setExtraWeather({ wind_gusts: "N/A" })
-                setAssessError(["__weather_error__"])
-                scheduleWeatherFetch(option, WEATHER_RETRY)
+                setWeatherError(true)
             }
         } finally {
             if (activeBarangayIdRef.current === null ||
                 String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
                 setWeatherLoading(false)
             }
-        }
-    }
-
-    // Auto-assess helper — includes stale-response guard (point 6)
-    async function runAssess(payload) {
-        if (!payload?.barangay_id) return
-        // Capture which barangay this request is for
-        const requestedBarangayId = payload.barangay_id
-        setAssessing(true)
-        setAssessError(null)
-        try {
-            const res = await axios.post(`${API_BASE}/typhoon/assess`, payload, { timeout: ASSESS_TIMEOUT })
-            // Stale-response guard: discard result if the barangay changed while the request was in-flight
-            if (activeBarangayIdRef.current !== null &&
-                String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
-                console.info("[assess] Stale response discarded — barangay changed during request")
-                return
-            }
-            setResult(res.data)
-            setAssessError(null)
-            clearAssessRetry()
-            if (selectedBarangay) scheduleWeatherFetch(selectedBarangay, WEATHER_REFRESH)
-            fetchRecentLogs()
-        } catch (err) {
-            console.error("Auto-assess failed:", err.response?.status, err.message)
-            // Only surface the error if the barangay still matches
-            if (activeBarangayIdRef.current === null ||
-                String(activeBarangayIdRef.current) === String(requestedBarangayId)) {
-                setAssessError(err.response?.status === 429
-                    ? ["__assess_error__", TOO_MANY_REQUESTS_MESSAGE]
-                    : ["__assess_error__"])
-                scheduleAssessRetry(payload)
-            }
-        } finally {
-            setAssessing(false)
         }
     }
 
@@ -1029,18 +1066,23 @@ export default function Dashboard() {
     const handleBarangayChange = (option) => {
         // Update stale-response guard ref immediately so in-flight requests are discarded
         activeBarangayIdRef.current = option?.value ?? null
+        assessmentGenerationRef.current += 1
         setSelectedBarangay(option)
         setBarangayId(option?.value ?? null)
-        setFormData(f => ({ ...f, barangay_id: option?.value ?? null }))
+        setFormData({ wind_speed: "", rainfall: "", pressure: "", temperature: "", humidity: "", barangay_id: option?.value ?? null })
+        setLiveWeather(null)
+        setExtraWeather({ wind_gusts: "N/A" })
+        setTrendData([])
         setResult(null)
+        setAssessedAt(null)
+        setAssessedWeatherRevision(null)
         setAssessError(null)
+        setWeatherError(false)
         setWeatherFetched(false)
         setRoutedCenter(null)
         setRouteDistance(null)
         setPreferredCenterId(null)
         setLowerHazardSuggestion(null)
-        if (weatherTimer.current) clearTimeout(weatherTimer.current)
-        clearAssessRetry()
         setIsManualOverride(false)
         isManualOverrideRef.current = false
         if (option) fetchWeather(option)
@@ -1054,9 +1096,12 @@ export default function Dashboard() {
     }
 
     const handleResetToLiveData = () => {
+        assessmentGenerationRef.current += 1
         setIsManualOverride(false)
         isManualOverrideRef.current = false
         setResult(null)
+        setAssessedAt(null)
+        setAssessedWeatherRevision(null)
         setAssessError(null)
         if (liveWeather) {
             setFormData(f => ({
@@ -1064,38 +1109,38 @@ export default function Dashboard() {
                 ...liveWeather,
                 barangay_id: formData.barangay_id,
             }))
-            runAssess({
-                ...liveWeather,
-                barangay_id: formData.barangay_id,
-                manual_override: false,
-                source: "auto",
-            })
-        } else if (selectedBarangay) {
-            fetchWeather(selectedBarangay)
         }
+        if (selectedBarangay) fetchWeather(selectedBarangay)
     }
 
     // -- Assess (manual) ------------------------------------------------------------------
     const handleAssess = async () => {
         const requestedBarangayId = formData.barangay_id
+        const requestedGeneration = assessmentGenerationRef.current
+        const assessmentWeatherVersion = weatherRevisionRef.current
         setAssessing(true)
         setAssessError(null)
         try {
+            const readings = isManualOverride ? formData : {
+                ...liveWeather,
+                barangay_id: requestedBarangayId,
+            }
             const payload = {
-                ...formData,
+                ...readings,
                 manual_override: isManualOverride,
                 source: "manual",
             }
             const res = await axios.post(`${API_BASE}/typhoon/assess`, payload, { timeout: ASSESS_TIMEOUT })
             // Stale-response guard for manual assess too
             if (activeBarangayIdRef.current !== null &&
-                String(activeBarangayIdRef.current) !== String(requestedBarangayId)) {
+                (String(activeBarangayIdRef.current) !== String(requestedBarangayId) ||
+                    assessmentGenerationRef.current !== requestedGeneration)) {
                 return
             }
             setResult(res.data)
+            setAssessedAt(new Date())
+            setAssessedWeatherRevision(assessmentWeatherVersion)
             setAssessError(null)
-            clearAssessRetry()
-            if (selectedBarangay) scheduleWeatherFetch(selectedBarangay, WEATHER_REFRESH)
             fetchRecentLogs()
         } catch (err) {
             const status = err.response?.status
@@ -1105,40 +1150,18 @@ export default function Dashboard() {
                 const messages = Object.values(errors).flat()
                 setAssessError(messages.length ? messages : ["Invalid input. Please check your values."])
             } else if (status === 429) {
-                setAssessError(["__assess_error__", TOO_MANY_REQUESTS_MESSAGE])
-                scheduleAssessRetry({
-                    ...formData,
-                    manual_override: isManualOverride,
-                    source: "manual",
-                })
+                setAssessError(["Too many requests. Please wait a moment, then press Assess risk again."])
             } else {
-                setAssessError(["__assess_error__"])
-                scheduleAssessRetry({
-                    ...formData,
-                    manual_override: isManualOverride,
-                    source: "manual",
-                })
+                setAssessError(["Risk assessment is temporarily unavailable. Please press Assess risk to try again."])
             }
+        } finally {
+            setAssessing(false)
         }
-        setAssessing(false)
     }
 
     const handleAssessClick = () => {
         if (isBtnDisabled) return
-        if (maxRank >= 3) {
-            setConfirmModalOpen(true)
-        } else {
-            handleAssess()
-        }
-    }
-
-    const handleConfirmSubmit = () => {
-        setConfirmModalOpen(false)
         handleAssess()
-    }
-
-    const handleCancelSubmit = () => {
-        setConfirmModalOpen(false)
     }
 
     // -- Derived UI values --------------------------------------------------------
@@ -1148,30 +1171,9 @@ export default function Dashboard() {
     const temperature = parseFloat(formData.temperature) || 0
     const humidity = parseFloat(formData.humidity) || 0
 
-    const hasWind = formData.wind_speed !== "" && !isNaN(parseFloat(formData.wind_speed))
-    const hasRain = formData.rainfall !== "" && !isNaN(parseFloat(formData.rainfall))
-    const hasPressure = formData.pressure !== "" && !isNaN(parseFloat(formData.pressure))
-    const hasHumidity = formData.humidity !== "" && !isNaN(parseFloat(formData.humidity))
-    const hasTemp = formData.temperature !== "" && !isNaN(parseFloat(formData.temperature))
-
-    const previewWind = hasWind ? wind : 0
-    const previewRain = hasRain ? rain : 0
-    const previewPressure = hasPressure ? pressure : 1013
-    const previewTemperature = hasTemp ? temperature : 30
-    const previewHumidity = hasHumidity ? humidity : 85
-    const previewScore = calculateSeverityScore(
-        previewWind,
-        previewRain,
-        previewPressure,
-        previewTemperature,
-        previewHumidity
-    )
-    const previewConfig = getSeverityConfig(previewScore, previewWind, previewRain, previewPressure)
-    const maxRank = previewConfig.rank
-
-    const isBtnDisabled = assessing || !formData.barangay_id
-
-    const conditionLabel = maxRank >= 3 ? previewConfig.signal : previewConfig.label
+    const hasAssessmentReadings = ["wind_speed", "rainfall", "pressure", "temperature", "humidity"]
+        .every(name => formData[name] !== "" && Number.isFinite(Number(formData[name])))
+    const isBtnDisabled = assessing || !formData.barangay_id || !hasAssessmentReadings || (!isManualOverride && !weatherFetched)
 
     // Factor bar percentages from assess API response (empty / 0 before assessment runs)
     const windPct = result?.factors?.wind ?? 0
@@ -1187,28 +1189,38 @@ export default function Dashboard() {
     const activeSeverity = result?.severity || null
 
     // Classify assessError into display type
-    const isWeatherError = Array.isArray(assessError) && assessError.includes("__weather_error__")
+    const isWeatherError = weatherError
     const isAssessError = Array.isArray(assessError) && assessError.includes("__assess_error__")
     const isConditionsError = isWeatherError || isAssessError
     const userFacingErrors = Array.isArray(assessError)
         ? assessError.filter(msg => !ERROR_MARKERS.has(msg))
         : []
     const hasUserFacingErrors = !isConditionsError && userFacingErrors.length > 0
-    const conditionsNoticeText = userFacingErrors.includes(TOO_MANY_REQUESTS_MESSAGE)
-        ? TOO_MANY_REQUESTS_MESSAGE
-        : "Can't check conditions right now."
+    const conditionsNoticeText = isWeatherError
+        ? "Can't load live weather right now."
+        : "Can't assess risk right now."
     const sevCfg = compositeScore !== null ? getSeverityConfig(compositeScore, wind, rain, pressure) : null
     const ruleBasedLabel = result?.classification || sevCfg?.label
-    const mlPrediction = result?.ml_prediction || "Unavailable"
-    const mlExplanation = result?.ml_explanation || "Train the model to show an ML explanation."
-    const mlSafetyPrediction = result?.ml_safety_prediction
-    const mlSafetyOverrideApplied = Boolean(result?.ml_safety_override_applied)
-    const mlSafetyExplanation = result?.ml_safety_explanation
-    const mlApplicability = result?.ml_applicability
+    const assessmentWeather = {
+        wind: result?.weather?.wind ?? wind,
+        rain: result?.weather?.rain ?? rain,
+        pressure: result?.weather?.pressure ?? pressure,
+        temp: result?.weather?.temp ?? temperature,
+        humidity: result?.weather?.humidity ?? humidity,
+    }
+    const historicalPatternAnalysis = result?.ml_pattern
+    const historicalPattern = historicalPatternAnalysis?.pattern
+    const outsideHistory = historicalPatternAnalysis?.out_of_range || []
 
     const lastUpdatedStr = lastUpdated
         ? lastUpdated.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
         : null
+    const assessedAtStr = assessedAt
+        ? assessedAt.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })
+        : null
+    const weatherChangedSinceAssessment = Boolean(
+        result && !isManualOverride && assessedWeatherRevision !== null && weatherRevision > assessedWeatherRevision
+    )
 
     // Alert banner config based on result
     const alertBanner = () => {
@@ -1265,6 +1277,40 @@ export default function Dashboard() {
     const pressureCardStyle = getCardBadgeAndBorder("pressure", formData.pressure)
     const tempCardStyle = getCardBadgeAndBorder("temperature", formData.temperature)
     const humidityCardStyle = getCardBadgeAndBorder("humidity", formData.humidity)
+    const baselineKeyRaw = String(selectedBarangay?.riskLevel || "low").toLowerCase().replaceAll(" ", "_")
+    const baselineKey = baselineKeyRaw === "normal" ? "low" : baselineKeyRaw
+    const baselineLabel = baselineKey.charAt(0).toUpperCase() + baselineKey.slice(1).replaceAll("_", " ")
+    const riskKey = (result?.severity || baselineKey || "low").toLowerCase()
+    const riskLabel = riskKey.charAt(0).toUpperCase() + riskKey.slice(1)
+    const riskColor = RISK_COLORS[riskKey] || RISK_COLORS.low
+    const ruleWindSignal = result?.wind_signal || windSignalFor(assessmentWeather.wind)
+    const riskFactorRows = factorRowsFor(assessmentWeather, result?.factors)
+    const riskDrivers = topRiskDrivers(assessmentWeather, result?.factors)
+    const raiseReasons = raisedRiskReasons(assessmentWeather, result)
+    const mlTileTitle = outsideHistory.length > 0
+        ? "Beyond recorded history"
+        : historicalPattern
+            ? `Resembles ${historicalPattern.storm} (${patternMonth(historicalPattern.date)}), ${historicalPattern.label}`
+            : "Pattern unavailable"
+    const mlTileDetail = outsideHistory.length > 0
+        ? beyondHistoryText(historicalPatternAnalysis, assessmentWeather, riskLabel)
+        : historicalPattern
+            ? `${historicalPattern.agreeing} of 3 closest recorded hours agree. Compared against ${historicalPattern.compared.toLocaleString("en-PH")} storm hours.`
+            : "No historical comparison is available. Follow the overall risk."
+    const riskAdvice = {
+        low: "Conditions are normal. No evacuation is advised at this time.",
+        moderate: "Stay alert and prepare essential supplies in case conditions worsen.",
+        high: "Prepare to evacuate and follow instructions from barangay officials.",
+        critical: "Evacuate when instructed and avoid exposed or flood-prone routes.",
+        catastrophic: "Seek designated shelter immediately and follow emergency instructions.",
+    }[riskKey] || "Continue monitoring official updates and local instructions."
+    const heroTitle = result ? riskLabel : "Not assessed yet"
+    const heroAdvice = result ? riskAdvice : "Press Assess risk to check your barangay."
+    const sidebarBadgeLabel = isManualOverride
+        ? `Test: ${riskLabel}`
+        : result
+            ? `Risk: ${riskLabel}`
+            : `Baseline: ${baselineLabel}`
 
     return (
         <div style={styles.page}>
@@ -1280,14 +1326,27 @@ export default function Dashboard() {
             animation: pulseBtn 1.5s infinite;
         }
         .bagyo-nav:hover { background: rgba(255,255,255,0.08) !important; }
-        .bagyo-sidebar-item:hover { background: #f5f7ff !important; color: #185FA5 !important; }
+        .bagyo-sidebar-item:hover { background: var(--accent) !important; color: var(--accent-foreground) !important; }
         .bagyo-assess:hover:not(:disabled) { opacity: 0.88 !important; transform: translateY(-1px); }
         .bagyo-assess:active:not(:disabled) { transform: scale(0.98); }
+        @media (max-width: 1199px) {
+            .bakwit-risk-overview { grid-template-columns: minmax(0, 1fr) !important; }
+            .bakwit-metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+        }
+        @media (max-width: 1023px) {
+            .bakwit-charts-grid, .bakwit-row3 { grid-template-columns: minmax(0, 1fr) !important; }
+        }
+        @media (min-width: 768px) and (max-width: 1023px) {
+            .bakwit-metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+        }
         /* Mobile: last lone metric card spans full width */
         @media (max-width: 768px) {
             .bakwit-metrics-grid > *:last-child:nth-child(odd) {
                 grid-column: 1 / -1;
             }
+            .bakwit-risk-overview > article { padding: 20px !important; }
+            .bakwit-risk-hero-main { flex-direction: column !important; align-items: stretch !important; }
+            .bakwit-risk-tiles { min-width: 0 !important; grid-template-columns: minmax(0, 1fr) !important; }
         }
       `}</style>
 
@@ -1312,13 +1371,13 @@ export default function Dashboard() {
                             styles={selectStyles}
                         />
                         {/* Sidebar badge — static area risk from database (selectedBarangay.riskLevel) */}
-                        {selectedBarangay?.riskLevel && (
+                        {selectedBarangay && (
                             <div style={{
-                                marginTop: 8, fontSize: 11, fontWeight: 600, padding: "3px 10px",
-                                borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 5, color: "white",
-                                background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
+                                marginTop: 10, fontSize: 11, fontWeight: 650, padding: "3px 9px",
+                                borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 5,
+                                color: riskColor, background: `${riskColor}18`, border: `1px solid ${riskColor}55`,
                             }}>
-                                <AlertTriangle size={12} /> Area risk: {selectedBarangay.riskLevel.toUpperCase()}
+                                <Shield size={12} aria-hidden="true" /> {sidebarBadgeLabel}
                             </div>
                         )}
                     </div>
@@ -1326,9 +1385,8 @@ export default function Dashboard() {
                     {/* Weather status in sidebar */}
                     <div style={{ padding: "0 12px", marginTop: "auto", paddingBottom: 16 }}>
                         <div style={{
-                            background: weatherFetched ? "#E1F5EE" : "#f5f5f5",
-                            borderRadius: 8, padding: "8px 10px", fontSize: 11,
-                            color: weatherFetched ? "#085041" : "#aaa",
+                            borderTop: "1px solid var(--border)", padding: "12px 4px 0", fontSize: 11,
+                            color: weatherFetched ? "var(--foreground)" : "var(--muted-foreground)",
                             display: "flex",
                             alignItems: "center",
                             gap: 6,
@@ -1340,7 +1398,7 @@ export default function Dashboard() {
                                 </>
                             ) : weatherFetched ? (
                                 <>
-                                    <Satellite size={12} style={{ color: "#1D9E75" }} />
+                                    <LiveDot />
                                     <span>Live · Updated {lastUpdatedStr}</span>
                                 </>
                             ) : (
@@ -1356,16 +1414,22 @@ export default function Dashboard() {
                     {/* Topbar */}
                     <div className="bakwit-page-topbar" style={styles.topbar}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 14, fontWeight: 600, color: "white" }}>Dashboard</span>
-                            <span style={styles.liveBadge}><LiveDot /> Live</span>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255, 255, 255, 0.85)" }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                <MapPin size={12} style={{ color: "rgba(255, 255, 255, 0.7)" }} /> {selectedBarangay ? `${selectedBarangay.name}, ${selectedBarangay.city}` : "No barangay selected"}
+                            <span style={{ fontSize: 14, fontWeight: 650, color: "var(--foreground)" }}>Dashboard</span>
+                            <span style={isManualOverride ? styles.testBadge : styles.liveBadge}>
+                                {isManualOverride ? (
+                                    <><span style={styles.testDot} /> Test</>
+                                ) : (
+                                    <><LiveDot /> Live</>
+                                )}
                             </span>
-                            {lastUpdatedStr && <span style={{ color: "rgba(255, 255, 255, 0.3)" }}>|</span>}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <MapPin size={12} aria-hidden="true" /> {selectedBarangay ? `${selectedBarangay.name}, ${selectedBarangay.city}` : "No barangay selected"}
+                            </span>
+                            {lastUpdatedStr && <span style={{ color: "var(--border)" }}>|</span>}
                             {lastUpdatedStr && (
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <span style={styles.updatedBadge}>
                                     <RefreshCw size={11} style={{ animation: weatherLoading ? "spin 1.5s linear infinite" : "none" }} /> Updated {lastUpdatedStr}
                                 </span>
                             )}
@@ -1375,29 +1439,84 @@ export default function Dashboard() {
                     {/* Content area */}
                     <div className="bakwit-content" style={styles.content}>
 
-                        {/* Top Resident Evacuation Alert Banner */}
-                        <EvacuationAlertBanner
-                            barangayId={formData.barangay_id}
-                            selectedBarangay={selectedBarangay}
-                            severity={activeSeverity}
-                            routedCenter={hasLiveGps ? routedCenter : null}
-                            routeDistance={hasLiveGps ? routeDistance : null}
-                            routeMinutes={hasLiveGps ? routeMinutes : null}
-                            evacuationCenter={result?.evacuation_center}
-                            hasLiveGps={hasLiveGps}
-                            travelMode={travelMode}
-                            routeSafetyInfo={routeSafetyInfo}
-                            routePref={routePref}
-                            onRoutePrefChange={handleRoutePrefChange}
-                        />
+                        <section className="bakwit-risk-overview" style={styles.riskOverview} aria-labelledby="risk-overview-title">
+                            <article style={styles.riskHero}>
+                                <div className="bakwit-risk-hero-main" style={styles.riskHeroMain}>
+                                    <div style={styles.riskHeroCopy}>
+                                        <div id="risk-overview-title" style={styles.riskEyebrow}>
+                                            Current risk · {selectedBarangay ? `Brgy. ${selectedBarangay.name}` : "Select a barangay"}
+                                        </div>
+                                        <div style={styles.riskLevelRow}>
+                                            <Shield size={38} strokeWidth={1.8} aria-hidden="true" />
+                                            <span style={styles.riskLevel}>{heroTitle}</span>
+                                        </div>
+                                        <p style={styles.riskAdvice}>{heroAdvice}</p>
+                                        {result && (
+                                            <p style={styles.riskWhy}>
+                                                <strong>Why:</strong> {joinReadable(riskDrivers)}
+                                            </p>
+                                        )}
+                                        <div style={styles.assessmentActions}>
+                                            <button
+                                                type="button"
+                                                className="bagyo-assess"
+                                                onClick={handleAssessClick}
+                                                disabled={isBtnDisabled}
+                                                style={{
+                                                    ...styles.heroAssessButton,
+                                                    opacity: isBtnDisabled ? 0.55 : 1,
+                                                    cursor: isBtnDisabled ? "not-allowed" : "pointer",
+                                                }}
+                                            >
+                                                {assessing ? <><Loader size={14} /> Assessing...</> : <><Search size={14} /> Assess risk</>}
+                                            </button>
+                                            {result && assessedAtStr && (
+                                                <span style={styles.assessedMeta}>Assessed {assessedAtStr}</span>
+                                            )}
+                                        </div>
+                                        {weatherChangedSinceAssessment && (
+                                            <p style={styles.assessmentHint}>Weather changed since last assessment. Assess again?</p>
+                                        )}
+                                    </div>
+
+                                    {result && <div className="bakwit-risk-tiles" style={styles.riskTiles}>
+                                        <div style={styles.riskTile}>
+                                            <span style={styles.riskTileLabel}>Rule-based</span>
+                                            <strong style={styles.riskTileValue}>{ruleWindSignal}</strong>
+                                            <span style={styles.riskTileDetail}>Score {compositeScore ?? 0}/100</span>
+                                            {raiseReasons.length > 0 && (
+                                                <span style={styles.riskTileDetail}>
+                                                    Raised to {riskLabel} by: {joinReadable(raiseReasons)}.
+                                                </span>
+                                            )}
+                                            <details style={styles.ruleDetails}>
+                                                <summary style={styles.ruleSummary}>How this is worked out</summary>
+                                                <div style={styles.ruleBreakdown}>
+                                                    {riskFactorRows.map(row => (
+                                                        <div key={row.key} style={styles.ruleFactorRow}>
+                                                            <span>{row.label} {formatReading(row.value)} {row.unit}: {row.result}</span>
+                                                            <span style={styles.ruleFactorPoints}>{row.weighted} pts</span>
+                                                        </div>
+                                                    ))}
+                                                    <div style={styles.ruleTotal}>Weighted score: {compositeScore ?? 0}/100</div>
+                                                </div>
+                                            </details>
+                                        </div>
+                                        <div style={styles.riskTile}>
+                                            <span style={styles.riskTileLabel}>ML pattern</span>
+                                            <strong style={{ ...styles.riskTileValue, fontSize: 14 }}>{mlTileTitle}</strong>
+                                            <span style={styles.riskTileDetail}>{mlTileDetail}</span>
+                                        </div>
+                                    </div>}
+                                </div>
+                            </article>
+
+                            <div style={styles.pagasaOverviewCard}>
+                                <LatestPagasaPostCard />
+                            </div>
+                        </section>
 
                         {/* Self-arrival GPS controller — runs independently of severity */}
-                        <SelfArrivalController
-                            barangayId={formData.barangay_id}
-                            routingActive={routingActive}
-                            targetCenter={routedCenter}
-                        />
-
                         {/* Conditions unavailable notice (weather or assess error) */}
                         {isConditionsError && (
                             <div style={{
@@ -1409,12 +1528,7 @@ export default function Dashboard() {
                                 <AlertTriangle size={15} style={{ color: "#F59E0B", flexShrink: 0, marginTop: 1 }} />
                                 <div>
                                     <strong>{conditionsNoticeText}</strong>
-                                    {conditionsNoticeText === TOO_MANY_REQUESTS_MESSAGE
-                                        ? " Please wait while we try again."
-                                        : " Follow PAGASA and your barangay officials."}
-                                    <span style={{ fontSize: 10, color: "#B45309", marginLeft: 6 }}>
-                                        Retrying automatically…
-                                    </span>
+                                    {" Follow PAGASA and your barangay officials."}
                                 </div>
                             </div>
                         )}
@@ -1442,13 +1556,13 @@ export default function Dashboard() {
                                     Active Barangay
                                 </span>
                                 {/* Mobile badge — static area risk from database */}
-                                {selectedBarangay?.riskLevel && (
+                                {selectedBarangay && (
                                     <span style={{
                                         fontSize: 10, fontWeight: 700, padding: "2px 8px",
                                         borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4, color: "white",
-                                        background: RISK_COLORS[selectedBarangay.riskLevel] || "#888",
+                                        background: riskColor,
                                     }}>
-                                        <AlertTriangle size={11} /> Area risk: {selectedBarangay.riskLevel.toUpperCase()}
+                                        <AlertTriangle size={11} /> {sidebarBadgeLabel}
                                     </span>
                                 )}
                             </div>
@@ -1467,7 +1581,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* Mobile-only: live evacuation route directly after barangay selector (before weather cards) */}
-                        {isMobileScreen && selectedBarangay && (
+                        {false && isMobileScreen && selectedBarangay && (
                             <div className="bakwit-mobile-evac-early" id="evacuation-map-section-mobile">
                                 <RouteErrorBoundary travelMode={travelMode} selectedBarangay={selectedBarangay}>
                                     <EvacRoutes
@@ -1566,7 +1680,7 @@ export default function Dashboard() {
                                         </button>
                                     </div>
                                 )}
-                                {result ? (
+                                {false && (result ? (
                                     alertBanner()
                                 ) : (
                                     <div style={{ background: "#EBF3FB", border: "0.5px solid #B5D4F4", borderRadius: 8, padding: "9px 12px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -1577,12 +1691,44 @@ export default function Dashboard() {
                                                 : "Weather data loading..."}
                                         </div>
                                     </div>
-                                )}
+                                ))}
                             </>
                         )}
 
-                        {/* Metric cards */}
-                        <div className="bakwit-metrics-grid" style={styles.metricsRow}>
+                        <section aria-labelledby="current-conditions-title">
+                            <div style={styles.sectionHeadingRow}>
+                                <div>
+                                    <h2 id="current-conditions-title" style={styles.sectionTitle}>Current conditions</h2>
+                                </div>
+                                <div style={styles.weatherStatusRow}>
+                                    <span style={{
+                                        ...styles.sectionStatus,
+                                        color: isConditionsError ? "#92400e" : "var(--muted-foreground)",
+                                        background: isConditionsError ? "var(--warning-soft)" : "transparent",
+                                    }}>
+                                        {isConditionsError
+                                            ? conditionsNoticeText
+                                            : isManualOverride
+                                                ? "Manual values active"
+                                                : weatherFetched
+                                                    ? "Live weather"
+                                                    : "Loading live weather…"}
+                                    </span>
+                                    {lastUpdatedStr && <span style={styles.weatherUpdated}>Weather updated {lastUpdatedStr}</span>}
+                                    <button
+                                        type="button"
+                                        aria-label="Refresh live weather"
+                                        title="Refresh live weather"
+                                        onClick={() => selectedBarangay && fetchWeather(selectedBarangay)}
+                                        disabled={!selectedBarangay || weatherLoading}
+                                        style={styles.weatherRefreshButton}
+                                    >
+                                        <RefreshCw size={13} style={{ animation: weatherLoading ? "spin 1.5s linear infinite" : "none" }} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bakwit-metrics-grid" style={styles.metricsRow}>
                             <MetricCard
                                 icon={<Wind size={15} />} color="#185FA5" bg="#E6F1FB"
                                 label="Wind speed" value={metricDisplay(formData.wind_speed)} unit="km/h"
@@ -1592,14 +1738,14 @@ export default function Dashboard() {
                             />
                             <MetricCard
                                 icon={<CloudRain size={15} />} color="#3B6D11" bg="#EAF3DE"
-                                label="Rainfall rate" value={metricDisplay(formData.rainfall)} unit="mm/hr"
+                                label="Rainfall" value={metricDisplay(formData.rainfall)} unit="mm/hr"
                                 trend={rain > 15 ? "up" : null} trendLabel={rain > 30 ? "Heavy" : "Moderate"}
                                 barPct={rainPct} barColor={rainCardStyle.barColor || "#ddd"}
                                 badge={rainCardStyle.badge} borderColor={rainCardStyle.border}
                             />
                             <MetricCard
                                 icon={<Gauge size={15} />} color="#993C1D" bg="#FAECE7"
-                                label="Atmos. pressure" value={metricDisplay(formData.pressure)} unit="hPa"
+                                label="Pressure" value={metricDisplay(formData.pressure)} unit="hPa"
                                 trend={pressure > 0 && pressure < 990 ? "up" : null} trendLabel="Dropping"
                                 barPct={pressurePct} barColor={pressureCardStyle.barColor || "#ddd"}
                                 badge={pressureCardStyle.badge} borderColor={pressureCardStyle.border}
@@ -1616,159 +1762,75 @@ export default function Dashboard() {
                                 barPct={humidityPct} barColor={humidityCardStyle.barColor || "#ddd"}
                                 badge={humidityCardStyle.badge} borderColor={humidityCardStyle.border}
                             />
-                        </div>
-
-                        <div style={{
-                            ...styles.card,
-                            padding: "9px 12px",
-                            ...(isManualOverride ? { opacity: 0.45, filter: "grayscale(100%)", pointerEvents: "none", position: "relative" } : {})
-                        }}>
-                            <div style={{ ...styles.cardHeader, marginBottom: 6 }}>
-                                <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                                    <Info size={13} style={{ color: "#555" }} /> Bonus weather details
-                                </div>
-                                <span style={{ fontSize: 11, color: isManualOverride ? "#b45309" : "#888" }}>
-                                    {isManualOverride ? "Live data only (inactive)" : "Open-Meteo current"}
-                                </span>
+                            <MetricCard
+                                icon={<Wind size={15} />} color="#185FA5" bg="#E6F1FB"
+                                label="Wind gusts"
+                                value={isManualOverride ? "n/a (test mode)" : extraWeather.wind_gusts}
+                                unit={isManualOverride ? "" : "km/h"}
+                                barPct={Number.isFinite(Number(extraWeather.wind_gusts))
+                                    ? Math.min(100, (Number(extraWeather.wind_gusts) / 200) * 100)
+                                    : 0}
+                                barColor="#378ADD"
+                                hideThreshold={isManualOverride}
+                            />
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
-                                <div style={{ background: "#f8f9fc", border: "1px solid #eef1f5", borderRadius: 8, padding: "8px 10px" }}>
-                                    <div style={{ fontSize: 10, fontWeight: 600, color: "#888", textTransform: "uppercase", letterSpacing: 0.4 }}>Wind Gusts</div>
-                                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a2e", marginTop: 2 }}>
-                                        {extraWeather.wind_gusts} {extraWeather.wind_gusts === "N/A" ? "" : "km/h"}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        </section>
 
-                        {/* Trend chart + Severity gauge */}
-                        <div className="bakwit-row2" style={styles.row2}>
+                        <section className="bakwit-charts-grid" style={styles.chartsGrid} aria-label="Weather analysis charts">
                             <div style={{
                                 ...styles.card,
-                                ...(isManualOverride ? { opacity: 0.45, filter: "grayscale(100%)", pointerEvents: "none", position: "relative" } : {})
+                                ...(isManualOverride ? { opacity: 0.55, pointerEvents: "none" } : {})
                             }}>
                                 <div style={styles.cardHeader}>
-                                    <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                                        <BarChart2 size={13} style={{ color: "#555" }} /> 6-hour wind trend
+                                    <div>
+                                        <div style={styles.cardTitle}>6-hour trend</div>
+                                        <div style={styles.cardSubtitle}>Wind speed and temperature</div>
                                     </div>
-                                    <span onClick={() => !isManualOverride && navigate("/history")} style={styles.cardAction}>
-                                        {isManualOverride ? "Live data only (inactive)" : "View history >"}
-                                    </span>
+                                    <div style={styles.chartHeaderMeta}>
+                                        <span style={styles.legendItem}><i style={{ ...styles.legendMark, background: "var(--chart-1)" }} /> Wind</span>
+                                        <span style={styles.legendItem}><i style={{ ...styles.legendLine, background: "var(--chart-2)" }} /> Temperature</span>
+                                        <button type="button" onClick={() => navigate("/history")} style={styles.cardLink}>View history →</button>
+                                    </div>
                                 </div>
                                 <TrendChart data={trendData} />
                             </div>
 
                             <div style={styles.card}>
                                 <div style={styles.cardHeader}>
-                                    <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                                        <Tornado size={13} style={{ animation: result ? "spin 4s linear infinite" : "none", color: "#555" }} /> Severity assessment
-                                    </div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                                        {result?.severity && (
-                                            <span style={{
-                                                fontSize: 10, fontWeight: 700, padding: "2px 9px",
-                                                borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 4,
-                                                color: "white",
-                                                background: RISK_COLORS[result.severity.toLowerCase()] || "#888",
-                                            }}>
-                                                Current: {result.severity.toUpperCase()}
-                                            </span>
-                                        )}
-                                        {result?.floor_applied && (
-                                            <span style={{
-                                                fontSize: 10, fontWeight: 600, padding: "2px 8px",
-                                                borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 4,
-                                                color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a",
-                                            }}>
-                                                Raised by PAGASA Signal {result.pagasa_signal}
-                                            </span>
-                                        )}
-                                        {!result && <span style={{ fontSize: 11, color: "#bbb" }}>Run assess first</span>}
+                                    <div>
+                                        <div style={styles.cardTitle}>What drives the score</div>
+                                        <div style={styles.cardSubtitle}>Contribution of each factor to risk</div>
                                     </div>
                                 </div>
-                                {result ? (
-                                    <>
-                                        <div style={styles.mlCompareGrid}>
-                                            <div style={styles.mlCompareBox}>
-                                                <div style={styles.mlCompareLabel}>Rule-Based</div>
-                                                <div style={styles.mlCompareScore}>Score: {compositeScore}</div>
-                                                {result?.floor_applied && (
-                                                    <div style={{ fontSize: 10, color: "#888", fontStyle: "italic", marginTop: 2 }}>
-                                                        Computed from weather data
-                                                    </div>
-                                                )}
-                                                <div style={{ ...styles.mlCompareResult, color: sevCfg.color }}>
-                                                    {ruleBasedLabel}
-                                                </div>
-                                            </div>
-                                            <div style={styles.mlCompareBox}>
-                                                <div style={styles.mlCompareLabel}>ML historical pattern (advisory)</div>
-                                                <div style={styles.mlCompareScore}>{mlPrediction}</div>
-                                                <div style={styles.mlExplanation}>{mlExplanation}</div>
-                                                {mlSafetyOverrideApplied && (
-                                                    <div style={{ fontSize: 10, color: "#7c2d12", marginTop: 5, lineHeight: 1.35 }}>
-                                                        <strong>Wind safety floor: {mlSafetyPrediction}</strong><br />
-                                                        {mlSafetyExplanation}
-                                                    </div>
-                                                )}
-                                                {mlApplicability && !mlApplicability.within_range && (
-                                                    <div style={{ fontSize: 10, color: "#92400e", marginTop: 5, lineHeight: 1.35 }}>
-                                                        {mlApplicability.message}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
-                                            <FactorBar label="Wind" pct={windPct} color="#378ADD" />
-                                            <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
-                                            <FactorBar label="Pressure" pct={pressurePct} color="#D85A30" />
-                                            <FactorBar label="Temp" pct={tempPct} color="#EF9F27" />
-                                            <FactorBar label="Humidity" pct={humidityPct} color="#185FA5" />
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 0", gap: 8 }}>
-                                        <Tornado size={36} style={{ color: "#ddd" }} />
-                                        <span style={{ fontSize: 12, color: "#bbb" }}>Assessment not yet run</span>
-                                    </div>
-                                )}
+                                <div style={styles.factorList}>
+                                    <FactorBar label="Wind" pct={windPct} color="#378ADD" />
+                                    <FactorBar label="Rainfall" pct={rainPct} color="#639922" />
+                                    <FactorBar label="Pressure" pct={pressurePct} color="#D85A30" />
+                                    <FactorBar label="Temp" pct={tempPct} color="#EF9F27" />
+                                    <FactorBar label="Humidity" pct={humidityPct} color="#185FA5" />
+                                </div>
                             </div>
-                        </div>
+                        </section>
 
-                        {/* Manual input row - allows override */}
-                        <div style={styles.card}>
-                            <div style={styles.cardHeader}>
-                                <div style={{ ...styles.cardTitle, display: "flex", alignItems: "center", gap: 5 }}>
-                                    <Edit3 size={13} style={{ color: "#555" }} /> Override weather values (optional)
-                                </div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    {isManualOverride && (
-                                        <button
-                                            type="button"
-                                            onClick={handleResetToLiveData}
-                                            style={{
-                                                background: "#FEF3C7",
-                                                border: "1px solid #F59E0B",
-                                                color: "#92400E",
-                                                borderRadius: 6,
-                                                padding: "3px 10px",
-                                                fontSize: 11,
-                                                fontWeight: 600,
-                                                cursor: "pointer",
-                                                display: "inline-flex",
-                                                alignItems: "center",
-                                                gap: 4
-                                            }}
-                                        >
+                        {/* Manual input row - collapsed until a resident needs it */}
+                        <details style={{ ...styles.card, padding: 0 }} open={isManualOverride || hasUserFacingErrors ? true : undefined}>
+                            <summary style={styles.overrideSummary}>
+                                <span style={styles.overrideSummaryIcon}><Edit3 size={14} aria-hidden="true" /></span>
+                                <span>
+                                    <strong style={styles.cardTitle}>Run a manual assessment</strong>
+                                    <span style={styles.overrideSummaryHelp}>Override live readings to test a scenario</span>
+                                </span>
+                                {isManualOverride && <span style={styles.manualActiveBadge}>Custom values active</span>}
+                            </summary>
+                            <div style={styles.overrideBody}>
+                                {isManualOverride && (
+                                    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                                        <button type="button" onClick={handleResetToLiveData} style={styles.resetLiveButton}>
                                             <RefreshCw size={11} /> Reset to live data
                                         </button>
-                                    )}
-                                    <span style={{ fontSize: 11, color: isManualOverride ? "#b45309" : "#aaa" }}>
-                                        {isManualOverride ? "Custom values active" : "Auto-filled from live API"}
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="bakwit-override-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
+                                    </div>
+                                )}
+                                <div className="bakwit-override-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) auto", gap: 10, alignItems: "flex-end" }}>
                                 {[
                                     { name: "wind_speed", label: "Wind (km/h)", placeholder: "e.g. 120" },
                                     { name: "rainfall", label: "Rain (mm/hr)", placeholder: "e.g. 25" },
@@ -1789,21 +1851,14 @@ export default function Dashboard() {
                                     </div>
                                 ))}
                                 <button
-                                    className={`bagyo-assess bakwit-override-btn ${(!isBtnDisabled && maxRank >= 4) ? "bagyo-pulse-btn" : ""}`}
+                                    className="bagyo-assess bakwit-override-btn"
                                     onClick={handleAssessClick}
                                     disabled={isBtnDisabled}
                                     style={{
                                         ...styles.assessBtn,
                                         minHeight: 44,
-                                        background: isBtnDisabled
-                                            ? "#ccc"
-                                            : maxRank === 1 || maxRank === 2
-                                                ? "#EF9F27"
-                                                : maxRank === 3
-                                                    ? "#E24B4A"
-                                                    : maxRank >= 4
-                                                        ? "#A32D2D"
-                                                        : "linear-gradient(135deg, #1a237e, #1565c0)",
+                                        background: isBtnDisabled ? "var(--muted)" : "var(--primary)",
+                                        color: isBtnDisabled ? "var(--muted-foreground)" : "var(--primary-foreground)",
                                         cursor: isBtnDisabled ? "not-allowed" : "pointer",
                                         display: "flex",
                                         alignItems: "center",
@@ -1817,54 +1872,53 @@ export default function Dashboard() {
                                             <Loader size={13} style={{ animation: "spin 1.5s linear infinite" }} /> Assessing...
                                         </>
                                     ) : (
-                                        <><Search size={13} /> Assess</>
+                                        <><Search size={13} /> Run assessment</>
                                     )}
                                 </button>
-                            </div>
-
-                            {hasUserFacingErrors && (
-                                <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8 }}>
-                                    {Array.isArray(assessError) ? (
-                                        <ul style={{ margin: 0, padding: "0 0 0 16px" }}>
-                                            {userFacingErrors.map((msg, i) => (
-                                                <li key={i} style={{ marginBottom: 2 }}>{msg}</li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                            <AlertTriangle size={14} /> {assessError}
-                                        </div>
-                                    )}
                                 </div>
-                            )}
-                        </div>
+
+                                {hasUserFacingErrors && (
+                                    <div style={{ marginTop: 10, fontSize: 12, color: "#dc3545", background: "#fff0f0", padding: "8px 12px", borderRadius: 8 }}>
+                                        {Array.isArray(assessError) ? (
+                                            <ul style={{ margin: 0, padding: "0 0 0 16px" }}>
+                                                {userFacingErrors.map((msg, i) => (
+                                                    <li key={i} style={{ marginBottom: 2 }}>{msg}</li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                <AlertTriangle size={14} /> {assessError}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </details>
 
                         {/* Evacuation routes + Recent history */}
+                        <EvacuationAlertBanner
+                            barangayId={formData.barangay_id}
+                            selectedBarangay={selectedBarangay}
+                            severity={activeSeverity}
+                            routedCenter={hasLiveGps ? routedCenter : null}
+                            routeDistance={hasLiveGps ? routeDistance : null}
+                            routeMinutes={hasLiveGps ? routeMinutes : null}
+                            evacuationCenter={result?.evacuation_center}
+                            hasLiveGps={hasLiveGps}
+                            travelMode={travelMode}
+                            routeSafetyInfo={routeSafetyInfo}
+                            routePref={routePref}
+                            onRoutePrefChange={handleRoutePrefChange}
+                        />
+
+                        <SelfArrivalController
+                            barangayId={formData.barangay_id}
+                            routingActive={routingActive}
+                            targetCenter={routedCenter}
+                        />
+
                         <div className="bakwit-row3" style={styles.row3}>
-                            {!isMobileScreen && (
-                                <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                                    <RouteErrorBoundary travelMode={travelMode} selectedBarangay={selectedBarangay}>
-                                        <EvacRoutes
-                                            evacuationCenter={result?.evacuation_center}
-                                            severity={activeSeverity}
-                                            selectedBarangay={selectedBarangay}
-                                            routedCenter={hasLiveGps ? routedCenter : null}
-                                            originalCenter={baseTarget || result?.evacuation_center}
-                                            routeDistance={hasLiveGps ? routeDistance : null}
-                                            routeMinutes={hasLiveGps ? routeMinutes : null}
-                                            hasLiveGps={hasLiveGps}
-                                            barangays={barangays}
-                                            travelMode={travelMode}
-                                            onTravelModeChange={handleTravelModeChange}
-                                            lowerHazardSuggestion={lowerHazardSuggestion}
-                                            isOverrideActive={preferredCenterId != null}
-                                            onRouteHere={(id) => setPreferredCenterId(id)}
-                                            onBackToNearest={() => setPreferredCenterId(null)}
-                                            routeSafetyInfo={routeSafetyInfo}
-                                            routePref={routePref}
-                                            onRoutePrefChange={handleRoutePrefChange}
-                                        />
-                                    </RouteErrorBoundary>
+                            <div id="evacuation-map-section" style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
                                     {selectedBarangay && (
                                     <MapView
                                         evacuationCenter={result?.evacuation_center}
@@ -1887,57 +1941,21 @@ export default function Dashboard() {
                                         onRoutePrefChange={handleRoutePrefChange}
                                     />
                                     )}
-                                </div>
-                            )}
-                            <RecentHistory logs={recentLogs} />
+                            </div>
+                            <RecentHistory logs={recentLogs} onViewAll={() => navigate("/history")} />
                         </div>
 
                     </div>
                 </main>
             </div>
 
-            {confirmModalOpen && (
-                <div style={styles.overlay} onClick={handleCancelSubmit}>
-                    <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.modalHeader}>
-                            <h2 style={{ ...styles.modalTitle, color: "#a32d2d", display: "flex", alignItems: "center", gap: 6 }}>
-                                <AlertTriangle size={18} /> Confirm Assessment
-                            </h2>
-                            <div onClick={handleCancelSubmit} style={styles.closeBtn}><X size={18} /></div>
-                        </div>
-                        <div style={{ ...styles.modalBody, fontSize: 14, color: "#333", lineHeight: 1.5 }}>
-                            <p style={{ margin: "0 0 10px 0" }}>
-                                Weather data indicates <strong>{conditionLabel}</strong> conditions.
-                            </p>
-                            <p style={{ margin: "0 0 10px 0" }}>
-                                Submitting this assessment will notify barangay officials.
-                            </p>
-                            <p style={{ margin: 0, fontWeight: 600 }}>Proceed?</p>
-                        </div>
-                        <div style={styles.modalFooter}>
-                            <button
-                                onClick={handleCancelSubmit}
-                                style={styles.cancelBtn}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleConfirmSubmit}
-                                style={styles.saveBtn}
-                            >
-                                Yes, Submit Assessment
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     )
 }
 
 // --- Styles ------------------------------------------------------------------
 const styles = {
-    page: { minHeight: "100vh", background: "#f0f4f8", display: "flex", flexDirection: "column", fontFamily: "system-ui, -apple-system, sans-serif" },
+    page: { minHeight: "100vh", background: "var(--background)", color: "var(--foreground)", display: "flex", flexDirection: "column", fontFamily: "var(--sans)" },
 
     // Navbar
     navbar: { background: "linear-gradient(135deg, #1a237e, #1565c0)", display: "flex", flexDirection: "column", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(26,35,126,0.25)" },
@@ -1954,41 +1972,92 @@ const styles = {
     tickerText: { color: "rgba(255,255,255,0.85)", fontSize: 12, fontWeight: 500, padding: "0 20px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5 },
 
     // Layout
-    layout: { display: "flex", flex: 1 },
+    layout: { display: "flex", flex: 1, minHeight: "100vh" },
 
 
-    navSection: { fontSize: 10, color: "#bbb", padding: "12px 14px 4px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" },
+    navSection: { fontSize: 10, color: "var(--muted-foreground)", padding: "18px 20px 6px", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" },
     sidebarItem: { display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", fontSize: 13, transition: "background 0.15s, color 0.15s" },
-    barangayLabel: { fontSize: 10, color: "#aaa", marginBottom: 6, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" },
+    barangayLabel: { fontSize: 10, color: "var(--muted-foreground)", marginBottom: 6, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" },
 
     // Main
     main: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
-    topbar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", background: "linear-gradient(135deg, #1a237e, #1565c0)", borderBottom: "0.5px solid #1a237e", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" },
-    liveBadge: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#00e676", background: "rgba(0, 230, 118, 0.15)", padding: "3px 9px", borderRadius: 20, fontWeight: 600, border: "0.5px solid rgba(0, 230, 118, 0.3)" },
+    topbar: { position: "sticky", top: 0, zIndex: 40, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 24px", background: "color-mix(in oklch, var(--card) 92%, transparent)", backdropFilter: "blur(12px)", borderBottom: "1px solid var(--border)", flexShrink: 0 },
+    liveBadge: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--success)", background: "var(--success-soft)", padding: "3px 9px", borderRadius: 999, fontWeight: 650, border: "1px solid color-mix(in oklch, var(--success) 25%, transparent)" },
+    testBadge: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#9A3412", background: "#FFEDD5", padding: "3px 9px", borderRadius: 999, fontWeight: 700, border: "1px solid #FDBA74" },
+    testDot: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#F97316" },
+    updatedBadge: { display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontFamily: "var(--mono)", fontSize: 10, fontVariantNumeric: "tabular-nums" },
     aiChip: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, background: "rgba(255, 255, 255, 0.15)", color: "#90caf9", padding: "3px 9px", borderRadius: 20, fontWeight: 600, border: "0.5px solid rgba(255, 255, 255, 0.25)" },
 
-    content: { padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12, flex: 1 },
+    content: { width: "100%", maxWidth: 1400, margin: "0 auto", padding: "24px 32px 40px", display: "flex", flexDirection: "column", gap: 24, flex: 1 },
+
+    riskOverview: { display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(340px, 2fr)", gap: 16, alignItems: "stretch" },
+    riskHero: { display: "flex", flexDirection: "column", justifyContent: "space-between", minWidth: 0, padding: 24, borderRadius: 16, background: "var(--primary)", color: "var(--primary-foreground)" },
+    riskHeroMain: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 24 },
+    riskHeroCopy: { minWidth: 0, flex: "1 1 300px" },
+    riskEyebrow: { fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", opacity: 0.75 },
+    riskLevelRow: { display: "flex", alignItems: "center", gap: 12, marginTop: 10 },
+    riskLevel: { fontSize: 40, lineHeight: 1, fontWeight: 700, letterSpacing: "-0.04em" },
+    riskAdvice: { maxWidth: 580, margin: "12px 0 0", fontSize: 14, lineHeight: 1.55, opacity: 0.9 },
+    riskWhy: { maxWidth: 580, margin: "9px 0 0", fontSize: 11, lineHeight: 1.5, opacity: 0.82 },
+    assessmentActions: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginTop: 16 },
+    heroAssessButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 36, padding: "8px 14px", border: "1px solid color-mix(in oklch, var(--primary-foreground) 40%, transparent)", borderRadius: 9, background: "var(--primary-foreground)", color: "var(--primary)", fontFamily: "inherit", fontSize: 12, fontWeight: 750 },
+    assessedMeta: { fontFamily: "var(--mono)", fontSize: 10, fontVariantNumeric: "tabular-nums", opacity: 0.75 },
+    assessmentHint: { margin: "8px 0 0", color: "#FDE68A", fontSize: 10, lineHeight: 1.4 },
+    riskTiles: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, flex: "1 1 500px", minWidth: 440 },
+    riskTile: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0, padding: "13px 14px", borderRadius: 12, background: "color-mix(in oklch, var(--primary-foreground) 11%, transparent)" },
+    riskTileLabel: { fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", opacity: 0.72 },
+    riskTileValue: { fontFamily: "var(--mono)", fontSize: 16, lineHeight: 1.2, fontVariantNumeric: "tabular-nums" },
+    riskTileDetail: { fontSize: 10, lineHeight: 1.45, opacity: 0.82 },
+    ruleDetails: { marginTop: 3, paddingTop: 7, borderTop: "1px solid color-mix(in oklch, var(--primary-foreground) 16%, transparent)" },
+    ruleSummary: { cursor: "pointer", fontSize: 10, fontWeight: 650, lineHeight: 1.4 },
+    ruleBreakdown: { display: "flex", flexDirection: "column", gap: 6, marginTop: 8 },
+    ruleFactorRow: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 9, lineHeight: 1.35, opacity: 0.82 },
+    ruleFactorPoints: { flexShrink: 0, fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums" },
+    ruleTotal: { paddingTop: 6, borderTop: "1px solid color-mix(in oklch, var(--primary-foreground) 16%, transparent)", fontSize: 10, fontWeight: 700 },
+    pagasaOverviewCard: { minWidth: 0, maxHeight: 460, overflowY: "auto", overflowX: "hidden" },
+
+    sectionHeadingRow: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, marginBottom: 12 },
+    sectionEyebrow: { color: "var(--muted-foreground)", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" },
+    sectionTitle: { margin: "2px 0 0", color: "var(--foreground)", fontSize: 14, fontWeight: 650 },
+    sectionStatus: { maxWidth: 420, padding: "4px 8px", borderRadius: 999, fontSize: 11, textAlign: "right" },
+    weatherStatusRow: { display: "flex", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 6 },
+    weatherUpdated: { color: "var(--muted-foreground)", fontFamily: "var(--mono)", fontSize: 10, fontVariantNumeric: "tabular-nums" },
+    weatherRefreshButton: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)", color: "var(--foreground)", cursor: "pointer" },
 
 
 
     // Metrics
-    metricsRow: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 },
-    metricCard: { background: "white", borderRadius: 10, border: "0.5px solid #e8ecf0", padding: "10px 13px" },
-    metricIconRow: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-    metricIconBox: { width: 30, height: 30, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center" },
-    metricVal: { fontSize: 24, fontWeight: 600, color: "#1a1a2e" },
-    metricUnit: { fontSize: 11, color: "#aaa" },
-    metricLabel: { fontSize: 11, color: "#aaa", marginTop: 2 },
-    metricBarTrack: { height: 3, borderRadius: 2, marginTop: 7, background: "#f0f0f0", overflow: "hidden" },
+    metricsRow: { display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12 },
+    metricCard: { minWidth: 0, background: "var(--card)", borderRadius: 12, border: "1px solid var(--border)", padding: 16 },
+    metricIconRow: { display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 22, marginBottom: 10 },
+    metricLabelGroup: { display: "flex", alignItems: "center", gap: 7, minWidth: 0 },
+    metricIconBox: { width: 17, height: 17, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+    metricVal: { fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums", fontSize: 26, fontWeight: 650, color: "var(--foreground)", letterSpacing: "-0.04em" },
+    metricUnit: { fontFamily: "var(--mono)", fontSize: 10, color: "var(--muted-foreground)" },
+    metricLabel: { fontSize: 11, color: "var(--muted-foreground)", marginTop: 2 },
+    metricBarTrack: { height: 4, borderRadius: 999, marginTop: 12, background: "var(--muted)", overflow: "hidden" },
     metricBarFill: { height: "100%", borderRadius: 2, transition: "width 0.5s, background 0.3s" },
+    metricStatus: { marginTop: 7, fontSize: 10, lineHeight: 1.3 },
 
     // Cards
-    row2: { display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 },
-    row3: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-    card: { background: "white", borderRadius: 10, border: "0.5px solid #e8ecf0", padding: "11px 13px" },
-    cardHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-    cardTitle: { fontSize: 12, fontWeight: 600, color: "#333" },
-    cardAction: { fontSize: 11, color: "#1565c0", cursor: "pointer" },
+    row3: { display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(280px, 1fr)", gap: 16, alignItems: "start" },
+    chartsGrid: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(260px, 1fr)", gap: 16, alignItems: "stretch" },
+    card: { minWidth: 0, background: "var(--card)", borderRadius: 12, border: "1px solid var(--border)", padding: 20 },
+    cardHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 },
+    cardTitle: { fontSize: 13, fontWeight: 650, color: "var(--foreground)" },
+    cardSubtitle: { marginTop: 2, color: "var(--muted-foreground)", fontSize: 10, lineHeight: 1.4 },
+    cardAction: { fontSize: 11, color: "var(--primary)", cursor: "pointer" },
+    cardLink: { border: 0, padding: 0, color: "var(--primary)", background: "transparent", fontSize: 11, fontWeight: 650, cursor: "pointer" },
+    chartHeaderMeta: { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12 },
+    legendItem: { display: "inline-flex", alignItems: "center", gap: 5, color: "var(--muted-foreground)", fontSize: 10 },
+    legendMark: { display: "inline-block", width: 9, height: 9, borderRadius: 3 },
+    legendLine: { display: "inline-block", width: 12, height: 2, borderRadius: 999 },
+    monoMeta: { color: "var(--muted-foreground)", fontFamily: "var(--mono)", fontSize: 11, fontVariantNumeric: "tabular-nums" },
+    factorList: { display: "flex", flexDirection: "column", gap: 18, paddingTop: 6 },
+    factorRow: { display: "flex", flexDirection: "column", gap: 7, color: "var(--muted-foreground)", fontSize: 11 },
+    factorLabelRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 },
+    factorValue: { color: "var(--foreground)", fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums", fontWeight: 650 },
+    factorTrack: { width: "100%", height: 5, overflow: "hidden", borderRadius: 999, background: "var(--muted)" },
     mlCompareGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 },
     mlCompareBox: { background: "#f8f9fc", border: "1px solid #eef1f5", borderRadius: 8, padding: "9px 10px", minHeight: 92 },
     mlCompareLabel: { fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 },
@@ -1997,31 +2066,43 @@ const styles = {
     mlExplanation: { fontSize: 11, color: "#666", marginTop: 5, lineHeight: 1.35 },
 
     // Evacuation
-    evacCard: { background: "#FCEBEB", border: "0.5px solid #F09595", borderRadius: 10, padding: "10px 13px" },
-    evacHeader: { display: "flex", alignItems: "center", gap: 6, marginBottom: 8 },
-    evacTitle: { fontSize: 12, fontWeight: 600, color: "#501313" },
-    routeItem: { display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 0" },
+    evacCard: { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 },
+    evacHeader: { display: "flex", alignItems: "center", gap: 7, marginBottom: 12 },
+    evacTitle: { fontSize: 13, fontWeight: 650, color: "var(--foreground)" },
+    routeControls: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 8 },
+    segmentedControl: { display: "inline-flex", alignItems: "center", gap: 2, padding: 3, borderRadius: 9, background: "var(--secondary)" },
+    segment: { padding: "5px 8px", borderRadius: 7, color: "var(--muted-foreground)", fontSize: 10, whiteSpace: "nowrap" },
+    segmentButton: { padding: "5px 8px", border: 0, borderRadius: 7, color: "var(--muted-foreground)", background: "transparent", fontFamily: "inherit", fontSize: 10, cursor: "pointer" },
+    segmentActive: { color: "var(--foreground)", background: "var(--card)", boxShadow: "inset 0 0 0 1px var(--border)", fontWeight: 650 },
+    routeItem: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 0" },
     routeNum: { width: 18, height: 18, borderRadius: "50%", background: "#E24B4A", color: "white", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 600 },
-    routeInfo: { flex: 1 },
-    routeName: { fontSize: 12, fontWeight: 600, color: "#501313" },
-    routeDesc: { fontSize: 10, color: "#793333" },
-    routeStatus: { fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 10 },
+    routeInfo: { flex: 1, minWidth: 0 },
+    routeName: { fontSize: 13, fontWeight: 650, color: "var(--foreground)" },
+    routeDesc: { fontSize: 11, color: "var(--muted-foreground)" },
+    routeStatus: { fontSize: 10, fontWeight: 650, padding: "2px 8px", borderRadius: 999 },
 
     // History
-    historyCard: { background: "white", borderRadius: 10, border: "0.5px solid #e8ecf0", padding: "11px 13px" },
-    histRow: { display: "flex", alignItems: "center", gap: 8, padding: "5px 0" },
+    historyCard: { minWidth: 0, background: "var(--card)", borderRadius: 12, border: "1px solid var(--border)", padding: 20 },
+    histRow: { display: "flex", alignItems: "center", gap: 10, padding: "11px 0" },
+    historyDate: { minWidth: 52, color: "var(--muted-foreground)", fontFamily: "var(--mono)", fontSize: 10, fontVariantNumeric: "tabular-nums" },
 
     // Input / Assess
     input: {
         width: "100%", padding: "8px 10px", borderRadius: 8,
-        border: "1px solid #e0e0e0", fontSize: 13, outline: "none",
-        background: "#fafafa", color: "#333",
+        border: "1px solid var(--input)", fontSize: 13, outline: "none",
+        background: "var(--card)", color: "var(--foreground)", fontFamily: "var(--mono)", fontVariantNumeric: "tabular-nums",
     },
     assessBtn: {
-        padding: "8px 18px", color: "white", border: "none",
+        padding: "8px 18px", color: "var(--primary-foreground)", border: "none",
         borderRadius: 8, fontSize: 13, fontWeight: 700,
         transition: "opacity 0.2s, transform 0.15s", whiteSpace: "nowrap",
     },
+    overrideSummary: { display: "flex", alignItems: "center", gap: 10, minHeight: 66, padding: "14px 20px", cursor: "pointer", listStylePosition: "inside", color: "var(--foreground)" },
+    overrideSummaryIcon: { display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" },
+    overrideSummaryHelp: { display: "block", marginTop: 2, color: "var(--muted-foreground)", fontSize: 10 },
+    manualActiveBadge: { marginLeft: "auto", padding: "3px 8px", borderRadius: 999, background: "var(--warning-soft)", color: "#92400e", fontSize: 10, fontWeight: 650 },
+    overrideBody: { padding: "0 20px 20px", borderTop: "1px solid var(--border)" },
+    resetLiveButton: { display: "inline-flex", alignItems: "center", gap: 4, marginTop: 12, padding: "5px 9px", borderRadius: 7, border: "1px solid color-mix(in oklch, var(--warning) 55%, var(--border))", background: "var(--warning-soft)", color: "#92400e", fontFamily: "inherit", fontSize: 10, fontWeight: 650, cursor: "pointer" },
     overlay: {
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
@@ -2037,9 +2118,10 @@ const styles = {
 }
 
 const selectStyles = {
-    control: b => ({ ...b, borderRadius: 8, border: "1px solid #e0e0e0", boxShadow: "none", fontSize: 12, minHeight: 34 }),
-    option: (b, s) => ({ ...b, backgroundColor: s.isFocused ? "#EBF3FB" : "white", color: "#1a237e", fontSize: 12 }),
-    singleValue: b => ({ ...b, color: "#1a237e", fontWeight: 600, fontSize: 12 }),
+    control: b => ({ ...b, borderRadius: 8, border: "1px solid var(--input)", background: "var(--card)", boxShadow: "none", fontSize: 12, minHeight: 36 }),
+    option: (b, s) => ({ ...b, backgroundColor: s.isFocused ? "var(--accent)" : "var(--card)", color: "var(--foreground)", fontSize: 12 }),
+    singleValue: b => ({ ...b, color: "var(--foreground)", fontWeight: 600, fontSize: 12 }),
+    placeholder: b => ({ ...b, color: "var(--muted-foreground)" }),
     menu: b => ({ ...b, zIndex: 9999 }),
 }
 

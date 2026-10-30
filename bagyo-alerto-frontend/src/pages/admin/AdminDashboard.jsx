@@ -1,9 +1,8 @@
 import { useState, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import axios from "axios"
-import { Loader, BarChart2, MapPin, School, Users, Radio, RefreshCw, Download, Plus } from "lucide-react"
+import { Loader, BarChart2, MapPin, School, Users, Radio, Download, Plus } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
-import PagasaSignalCard from "../../components/PagasaSignalCard"
 import { useAdminAuth } from "../../context/AdminAuthContext"
 import { useAdminPolling } from "../../hooks/useAdminPolling"
 
@@ -15,6 +14,7 @@ const SEV_COLORS = {
     moderate: "#F59E0B",
     high: "#F0703F",
     critical: "#D85A30",
+    catastrophic: "#7F1D1D",
 }
 
 const STATUS_COLOR = {
@@ -79,21 +79,27 @@ export default function AdminDashboard() {
     const { authHeaders } = useAdminAuth()
     const [stats, setStats] = useState(null)
     const [loading, setLoading] = useState(true)
-    const [refreshing, setRefreshing] = useState(false)
     const [error, setError] = useState(null)
     const [lastUpdated, setLastUpdated] = useState(null)
+    const [currentRiskData, setCurrentRiskData] = useState(null)
 
     const fetchStats = useCallback(async () => {
         try {
-            const res = await axios.get(`${API_BASE}/admin/stats`, { headers: authHeaders() })
-            setStats(res.data)
+            const [statsResult, riskResult] = await Promise.allSettled([
+                axios.get(`${API_BASE}/admin/stats`, { headers: authHeaders() }),
+                axios.get(`${API_BASE}/risk/current`),
+            ])
+
+            if (statsResult.status === "rejected") throw statsResult.reason
+
+            setStats(statsResult.value.data)
+            if (riskResult.status === "fulfilled") setCurrentRiskData(riskResult.value.data)
             setLastUpdated(new Date())
             setError(null)
         } catch {
             setError("Failed to load dashboard stats.")
         } finally {
             setLoading(false)
-            setRefreshing(false)
         }
     }, [authHeaders])
 
@@ -123,14 +129,12 @@ export default function AdminDashboard() {
     }
 
     const totalSeverity = stats?.severity_counts || {}
-    const currentRisk = ["critical", "high", "moderate", "low"].find((level) => totalSeverity[level] > 0) || "low"
-    const totalSeverityCount = Object.values(totalSeverity).reduce((sum, value) => sum + value, 0) || 1
+    const currentRisk = currentRiskData?.severity || "low"
     const capacityTrend = stats?.capacity_trend || []
     const latestCapacityUsage = capacityTrend.length > 0 ? capacityTrend[capacityTrend.length - 1] : 0
     const systemStatus = [
         { label: "Backend API", status: error ? "Down" : "Online" },
         { label: "Open-Meteo API", status: "Online" },
-        { label: "PAGASA feed", status: "Delayed" },
     ]
 
     return (
@@ -172,7 +176,6 @@ export default function AdminDashboard() {
                 ) : (
                     stats && (
                         <>
-                            <PagasaSignalCard />
                             <div style={styles.grid}>
                                 <StatCard
                                     icon={<BarChart2 size={20} />}

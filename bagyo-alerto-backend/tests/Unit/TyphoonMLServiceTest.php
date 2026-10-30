@@ -120,6 +120,32 @@ class TyphoonMLServiceTest extends TestCase
         $this->assertStringContainsString('extra caution', $applicability['message']);
     }
 
+    public function test_pattern_check_flags_wind_and_rain_but_tolerates_pressure_near_training_maximum(): void
+    {
+        $analysis = $this->service->getPatternAnalysis(88.0, 50.0, 1013.7, 30.2, 74.0);
+
+        $this->assertFalse($analysis['within_range']);
+        $this->assertSame(['wind', 'rain'], $analysis['out_of_range']);
+        $this->assertNotContains('pressure', $analysis['out_of_range']);
+        $this->assertNull($analysis['pattern']);
+        $this->assertSame(1013.3, $analysis['ranges']['pressure']['max']);
+    }
+
+    public function test_in_range_pattern_check_returns_nearest_storm_evidence(): void
+    {
+        $analysis = $this->service->getPatternAnalysis(30.0, 5.0, 1008.0, 30.0, 80.0);
+
+        $this->assertTrue($analysis['within_range']);
+        $this->assertSame([], $analysis['out_of_range']);
+        $this->assertIsArray($analysis['pattern']);
+        $this->assertNotSame('', $analysis['pattern']['storm']);
+        $this->assertNotSame('', $analysis['pattern']['date']);
+        $this->assertArrayHasKey($analysis['pattern']['label'], TyphoonMLService::SIGNAL_RANK);
+        $this->assertGreaterThanOrEqual(1, $analysis['pattern']['agreeing']);
+        $this->assertLessThanOrEqual(3, $analysis['pattern']['agreeing']);
+        $this->assertSame(count($this->trainingData), $analysis['pattern']['compared']);
+    }
+
     public function test_prediction_details_keep_raw_ml_separate_from_wind_safety_floor(): void
     {
         $details = $this->service->predictWithDetails(90.0, 50.0, 900.0, 31.2, 70.0);

@@ -35,4 +35,14 @@ return [
         ],
     ],
 
+    'pagasa' => [
+        'driver' => env('PAGASA_DRIVER', 'bulletin'),
+        'bulletin_url' => 'https://www.pagasa.dost.gov.ph/tropical-cyclone/severe-weather-bulletin',
+        'facebook' => [
+            'graph_version' => env('FB_GRAPH_VERSION', 'v21.0'),
+            'page_id' => env('FB_PAGE_ID', 'PAGASA.DOST.GOV.PH'),
+            'app_id' => env('FB_APP_ID'),
+        ],
+    ],
+
 ];

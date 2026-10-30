@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Dashboard from './pages/Dashboard'
 import History from './pages/History'
 import Forecast from './pages/Forecast'
+import MapPage from './pages/Map'
 import { AdminAuthProvider } from './context/AdminAuthContext'
 import { AdminListsProvider } from './context/AdminListsContext'
 import AdminProtectedRoute from './components/AdminProtectedRoute'
@@ -25,6 +26,7 @@ function App() {
         <Router>
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/map" element={<MapPage />} />
             <Route path="/forecast" element={<Forecast />} />
             <Route path="/history" element={<History />} />
 
