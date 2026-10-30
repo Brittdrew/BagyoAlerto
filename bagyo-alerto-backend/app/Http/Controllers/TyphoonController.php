@@ -78,9 +78,13 @@ class TyphoonController extends Controller
         }
 
         // Rule-Based Severity Scoring
-        [$severity, $score, $rank, $factors] = $this->calculateSeverity(
+        $ruleAssessment = $this->classifyWeather(
             $windSpeed, $rainfall, $pressure, $temperature, $humidity
         );
+        $severity = $ruleAssessment['severity'];
+        $score = $ruleAssessment['score'];
+        $rank = $ruleAssessment['rank'];
+        $factors = $ruleAssessment['factors'];
 
         // Apply PAGASA signal minimum severity floor
         $computedSeverity = $severity;
@@ -101,7 +105,7 @@ class TyphoonController extends Controller
         }
 
         // Rule-based label — now uses same labels as ML
-        $classification = $this->getClassificationLabel($rank);
+        $classification = $ruleAssessment['classification'];
 
         $weatherData = [
             'wind' => $windSpeed,
@@ -291,6 +295,25 @@ class TyphoonController extends Controller
      *
      * This matches the ML model labels so both systems can be compared directly.
      */
+    public function classifyWeather($windSpeed, $rainfall, $pressure, $temperature = 30, $humidity = 85): array
+    {
+        [$severity, $score, $rank, $factors] = $this->calculateSeverity(
+            $windSpeed,
+            $rainfall,
+            $pressure,
+            $temperature,
+            $humidity,
+        );
+
+        return [
+            'severity' => $severity,
+            'classification' => $this->getClassificationLabel($rank),
+            'score' => $score,
+            'rank' => $rank,
+            'factors' => $factors,
+        ];
+    }
+
     private function calculateSeverity($wind_speed, $rainfall, $pressure, $temperature = 30, $humidity = 85)
     {
         // --- Individual Factor Scores (0–100) ---

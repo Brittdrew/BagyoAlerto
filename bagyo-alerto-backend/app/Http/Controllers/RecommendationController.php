@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Admin;
 use App\Models\Recommendation;
 use Illuminate\Http\Request;
 
@@ -32,8 +33,12 @@ class RecommendationController extends Controller
         return response()->json($recommendation, 201);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        if (! ($request->user() instanceof Admin)) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
         $recommendation = Recommendation::find($id);
 
         if (!$recommendation) {

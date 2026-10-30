@@ -76,7 +76,8 @@ function ProgressBar({ value = 0, color = "#1565c0" }) {
 
 export default function AdminDashboard() {
     const navigate = useNavigate()
-    const { authHeaders } = useAdminAuth()
+    const { authHeaders, isSuperAdmin } = useAdminAuth()
+    const superAdmin = isSuperAdmin()
     const [stats, setStats] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -149,9 +150,11 @@ export default function AdminDashboard() {
                         <button type="button" style={styles.outlineButton} onClick={exportSummary}>
                             <Download size={14} /> Export summary
                         </button>
-                        <button type="button" style={styles.primaryButton} onClick={() => navigate("/admin/barangays")}> 
-                            <Plus size={14} /> Add barangay
-                        </button>
+                        {superAdmin && (
+                            <button type="button" style={styles.primaryButton} onClick={() => navigate("/admin/barangays")}> 
+                                <Plus size={14} /> Add barangay
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -295,8 +298,12 @@ export default function AdminDashboard() {
                                         ))}
                                     </div>
                                     <div style={styles.quickActions}>
-                                        <button type="button" style={styles.primaryButtonBlock} onClick={() => navigate("/admin/barangays")}>Add barangay</button>
-                                        <button type="button" style={styles.outlineButtonBlock} onClick={() => navigate("/admin/evacuation-centers")}>Add evac. center</button>
+                                        {superAdmin && (
+                                            <>
+                                                <button type="button" style={styles.primaryButtonBlock} onClick={() => navigate("/admin/barangays")}>Add barangay</button>
+                                                <button type="button" style={styles.outlineButtonBlock} onClick={() => navigate("/admin/evacuation-centers")}>Add evac. center</button>
+                                            </>
+                                        )}
                                         <button type="button" style={styles.dangerButtonBlock} onClick={() => window.alert("Mass alert sent.")}>Send mass alert</button>
                                     </div>
                                 </div>

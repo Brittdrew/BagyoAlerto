@@ -5,6 +5,7 @@ import Forecast from './pages/Forecast'
 import MapPage from './pages/Map'
 import { AdminAuthProvider } from './context/AdminAuthContext'
 import { AdminListsProvider } from './context/AdminListsContext'
+import { AdminChatProvider } from './components/AdminChatWidget'
 import AdminProtectedRoute from './components/AdminProtectedRoute'
 import AdminLogin from './pages/admin/AdminLogin'
 import AdminDashboard from './pages/admin/AdminDashboard'
@@ -15,16 +16,17 @@ import AdminHistory from './pages/admin/AdminHistory'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminWeather from './pages/admin/AdminWeather'
 import AdminWeatherMap from './pages/admin/AdminWeatherMap'
-import AdminChat from './pages/admin/AdminChat'
 import AdminHazardMap from './pages/admin/AdminHazardMap'
+import AdminAccounts from './pages/admin/AdminAccounts'
 import './App.css'
 
 function App() {
   return (
     <AdminAuthProvider>
-      <AdminListsProvider>
-        <Router>
-          <Routes>
+      <AdminChatProvider>
+        <AdminListsProvider>
+          <Router>
+            <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/map" element={<MapPage />} />
             <Route path="/forecast" element={<Forecast />} />
@@ -41,16 +43,16 @@ function App() {
               <AdminProtectedRoute><AdminWeatherMap /></AdminProtectedRoute>
             } />
             <Route path="/admin/barangays" element={
-              <AdminProtectedRoute><AdminBarangays /></AdminProtectedRoute>
+              <AdminProtectedRoute superAdminOnly><AdminBarangays /></AdminProtectedRoute>
             } />
             <Route path="/admin/evacuation-centers" element={
-              <AdminProtectedRoute><AdminEvacuationCenters /></AdminProtectedRoute>
+              <AdminProtectedRoute superAdminOnly><AdminEvacuationCenters /></AdminProtectedRoute>
             } />
             <Route path="/admin/evacuation-monitoring" element={
               <AdminProtectedRoute><AdminEvacuationMonitoring /></AdminProtectedRoute>
             } />
             <Route path="/admin/chat" element={
-              <AdminProtectedRoute><AdminChat /></AdminProtectedRoute>
+              <AdminProtectedRoute><Navigate to="/admin/dashboard" replace /></AdminProtectedRoute>
             } />
             <Route path="/admin/history" element={
               <AdminProtectedRoute><AdminHistory /></AdminProtectedRoute>
@@ -58,13 +60,17 @@ function App() {
             <Route path="/admin/settings" element={
               <AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>
             } />
+            <Route path="/admin/accounts" element={
+              <AdminProtectedRoute superAdminOnly><AdminAccounts /></AdminProtectedRoute>
+            } />
             <Route path="/admin/hazard-map" element={
               <AdminProtectedRoute><AdminHazardMap /></AdminProtectedRoute>
             } />
             <Route path="/admin" element={<Navigate to="/admin/login" replace />} />
-          </Routes>
-        </Router>
-      </AdminListsProvider>
+            </Routes>
+          </Router>
+        </AdminListsProvider>
+      </AdminChatProvider>
     </AdminAuthProvider>
   )
 }

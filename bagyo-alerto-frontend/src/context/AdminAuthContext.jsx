@@ -67,6 +67,7 @@ export function AdminAuthProvider({ children }) {
     }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
     const isAuthenticated = !!getToken()
+    const isSuperAdmin = useCallback(() => admin?.role === "super_admin", [admin])
 
     return (
         <AdminAuthContext.Provider
@@ -78,6 +79,7 @@ export function AdminAuthProvider({ children }) {
                 authHeaders,
                 getToken,
                 isAuthenticated,
+                isSuperAdmin,
                 authReady,
             }}
         >

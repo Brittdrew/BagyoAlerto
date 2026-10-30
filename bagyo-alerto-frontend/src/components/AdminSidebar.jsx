@@ -11,8 +11,8 @@ import {
     Tornado,
     Cloud,
     Map,
-    MessageCircle,
     Users,
+    UserCog,
 } from "lucide-react"
 import { useAdminAuth } from "../context/AdminAuthContext"
 
@@ -23,18 +23,19 @@ const navItems = [
     { id: "weather", label: "Weather Monitor", path: "/admin/weather", icon: Cloud },
     { id: "weather-map", label: "Weather Map", path: "/admin/weather-map", icon: Map },
     { id: "hazard-map", label: "Hazard Map", path: "/admin/hazard-map", icon: Map },
-    { id: "barangays", label: "Barangays", path: "/admin/barangays", icon: MapPin },
-    { id: "evacuation-centers", label: "Evacuation Centers", path: "/admin/evacuation-centers", icon: School },
+    { id: "barangays", label: "Barangays", path: "/admin/barangays", icon: MapPin, superAdminOnly: true },
+    { id: "evacuation-centers", label: "Evacuation Centers", path: "/admin/evacuation-centers", icon: School, superAdminOnly: true },
     { id: "evacuation-monitoring", label: "Evacuation Monitoring", path: "/admin/evacuation-monitoring", icon: Users },
-    { id: "chat", label: "AI Assistant", path: "/admin/chat", icon: MessageCircle },
     { id: "history", label: "History", path: "/admin/history", icon: Clock },
+    { id: "accounts", label: "Admin Accounts", path: "/admin/accounts", icon: UserCog, superAdminOnly: true },
     { id: "settings", label: "Settings", path: "/admin/settings", icon: Settings },
 ]
 
 export default function AdminSidebar() {
     const navigate = useNavigate()
     const location = useLocation()
-    const { logout, authHeaders, admin } = useAdminAuth()
+    const { logout, authHeaders, isSuperAdmin } = useAdminAuth()
+    const superAdmin = isSuperAdmin()
 
     const handleLogout = async () => {
         try {
@@ -58,11 +59,11 @@ export default function AdminSidebar() {
 
             <div style={styles.adminBadge}>
                 <Shield size={14} />
-                <span>{admin?.name || "Admin"}</span>
+                <span>{superAdmin ? "Super Admin" : "Admin"}</span>
             </div>
 
             <div style={styles.navSection}>Navigation</div>
-            {navItems.map(({ id, label, path, icon: Icon }) => {
+            {navItems.filter(item => !item.superAdminOnly || superAdmin).map(({ id, label, path, icon: Icon }) => {
                 const isActive = location.pathname === path
                 return (
                     <div

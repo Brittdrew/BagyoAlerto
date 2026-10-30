@@ -51,7 +51,8 @@ function HazardMeta({ source, checkedAt }) {
 }
 
 export default function AdminBarangays() {
-    const { authHeaders } = useAdminAuth()
+    const { authHeaders, isSuperAdmin } = useAdminAuth()
+    const canManage = isSuperAdmin()
     const { refreshBarangays } = useAdminLists()
     const [barangays, setBarangays] = useState([])
     const [loading, setLoading] = useState(true)
@@ -156,9 +157,11 @@ export default function AdminBarangays() {
         <AdminLayout title="Barangays">
             <div style={styles.toolbar}>
                 <div style={styles.count}>{barangays.length} barangay{barangays.length !== 1 ? "s" : ""}</div>
-                <div onClick={openAdd} style={styles.addBtn}>
-                    <Plus size={16} /> Add Barangay
-                </div>
+                {canManage && (
+                    <div onClick={openAdd} style={styles.addBtn}>
+                        <Plus size={16} /> Add Barangay
+                    </div>
+                )}
             </div>
 
             {message && <div style={styles.successBox}>{message}</div>}
@@ -186,7 +189,7 @@ export default function AdminBarangays() {
                                 <th style={styles.th}>Risk Level</th>
                                 <th style={styles.th}>Flood</th>
                                 <th style={styles.th}>Landslide</th>
-                                <th style={styles.th}>Actions</th>
+                                {canManage && <th style={styles.th}>Actions</th>}
                             </tr>
                         </thead>
                         <tbody>
@@ -214,16 +217,18 @@ export default function AdminBarangays() {
                                     <td style={styles.td}>
                                         <HazardBadge type="landslide" level={b.landslide_susceptibility ?? null} />
                                     </td>
-                                    <td style={styles.td}>
-                                        <div style={styles.actions}>
-                                            <div onClick={() => openEdit(b)} style={styles.editBtn} title="Edit">
-                                                <Pencil size={14} />
+                                    {canManage && (
+                                        <td style={styles.td}>
+                                            <div style={styles.actions}>
+                                                <div onClick={() => openEdit(b)} style={styles.editBtn} title="Edit">
+                                                    <Pencil size={14} />
+                                                </div>
+                                                <div onClick={() => handleDelete(b.id)} style={styles.deleteBtn} title="Delete">
+                                                    <Trash2 size={14} />
+                                                </div>
                                             </div>
-                                            <div onClick={() => handleDelete(b.id)} style={styles.deleteBtn} title="Delete">
-                                                <Trash2 size={14} />
-                                            </div>
-                                        </div>
-                                    </td>
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>

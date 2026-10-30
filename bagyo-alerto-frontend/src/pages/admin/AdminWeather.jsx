@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback } from "react"
 import axios from "axios"
 import {
     RefreshCw,
@@ -18,18 +18,10 @@ import {
     AlertTriangle,
 } from "lucide-react"
 import AdminLayout from "../../components/AdminLayout"
-import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet"
+import { WEATHER_THRESHOLDS } from "../../constants/weatherThresholds"
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from "react-leaflet"
 import L from "leaflet"
-import markerIcon from "leaflet/dist/images/marker-icon.png"
-import markerShadow from "leaflet/dist/images/marker-shadow.png"
 import "leaflet/dist/leaflet.css"
-
-// Fix default marker icon broken image issue in React Vite
-delete L.Icon.Default.prototype._getIconUrl
-L.Icon.Default.mergeOptions({
-    iconUrl: markerIcon,
-    shadowUrl: markerShadow,
-})
 
 // ─── UNCHANGED: All data/logic constants ───────────────────────────────────────
 
@@ -51,6 +43,20 @@ const SEV_STYLES = {
     critical: { label: "CRITICAL", signal: "Signal #4-5", color: "#E24B4A", bg: "#FCEBEB", border: "#E24B4A", text: "#501313" },
 }
 
+function createMapPin(background, glyph) {
+    return L.divIcon({
+        className: "",
+        html: `<div style="width:26px;height:26px;background:${background};border:2px solid #fff;border-radius:50% 50% 50% 0;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;transform:rotate(-45deg)"><span style="color:#fff;font-size:12px;font-weight:800;line-height:1;transform:rotate(45deg)">${glyph}</span></div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 29],
+        popupAnchor: [0, -27],
+        tooltipAnchor: [0, -24],
+    })
+}
+
+const barangayMapIcon = createMapPin("#1a237e", "B")
+const evacuationMapIcon = createMapPin("#D85A30", "+")
+
 // ─── UNCHANGED: All helper functions ──────────────────────────────────────────
 
 function getWeatherIcon(code, size = 28) {
@@ -65,14 +71,12 @@ function getWeatherIcon(code, size = 28) {
     return <Gauge size={size} style={{ ...s, color: "#888" }} />
 }
 
-function getWeatherDesc(code) {
-    if (code === 0) return "Clear Sky"
-    if (code <= 3) return "Partly Cloudy"
-    if (code <= 48) return "Foggy"
-    if (code <= 67) return "Rainy"
-    if (code <= 82) return "Showers"
-    if (code <= 99) return "Thunderstorms"
-    return "Mild"
+function getWeatherLabel(rainfall, code) {
+    const rain = Number(rainfall)
+    if (!Number.isFinite(rain) || rain < 0.5) return code === 0 ? "Fair" : "Cloudy"
+    if (rain <= 2.5) return "Light rain"
+    if (rain <= 7.5) return "Moderate rain"
+    return "Heavy rain"
 }
 
 function readNumeric(current, keys) {
@@ -95,13 +99,24 @@ function clampPct(value) {
     return Math.min(100, Math.max(0, Math.round(Number(value))))
 }
 
+function isValidCoordinate(value) {
+    return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))
+}
+
 function getHumidityStyle(humidity) {
     if (humidity === null || humidity === undefined || Number.isNaN(Number(humidity))) {
         return { color: "#888", bar: "#d0d7de" }
     }
-    if (humidity < 60) return { color: "#1D9E75", bar: "#1D9E75" }
-    if (humidity <= 80) return { color: "#BA7517", bar: "#EF9F27" }
-    return { color: "#D85A30", bar: "#D85A30" }
+    if (humidity >= 95) return { color: "#A32D2D", bar: "#E24B4A" }
+    if (humidity >= 90) return { color: "#BA7517", bar: "#EF9F27" }
+    return { color: "#1a1a2e", bar: "#78909C" }
+}
+
+function getPressureBarColor(pressure) {
+    if (pressure === null || pressure === undefined || Number.isNaN(Number(pressure))) return "#d0d7de"
+    if (Number(pressure) < WEATHER_THRESHOLDS.pressure.danger) return "#E24B4A"
+    if (Number(pressure) < WEATHER_THRESHOLDS.pressure.warn) return "#EF9F27"
+    return "#78909C"
 }
 
 function getTemperatureStyle(temp) {
@@ -204,7 +219,7 @@ function SkeletonListItem() {
 // ─── NEW: Station list item (left panel) ──────────────────────────────────────
 
 function StationListItem({ entry, isActive, onClick }) {
-    const { barangay, status, weather, severity } = entry
+    const { barangay, status, weather } = entry
     const wind = status === "success" ? readNumeric(weather, ["wind_speed_10m"]) : null
     const temp = status === "success" ? readNumeric(weather, ["temperature_2m"]) : null
     const sevKey = entry.severityKey || "low"
@@ -243,6 +258,32 @@ function StationListItem({ entry, isActive, onClick }) {
 
 // ─── NEW: Map panel component using React Leaflet ────────────────────────────
 
+function MapViewport({ barangay, evacuationCenter }) {
+    const map = useMap()
+    const barangayLat = Number(barangay?.latitude)
+    const barangayLng = Number(barangay?.longitude)
+    const centerLat = Number(evacuationCenter?.latitude)
+    const centerLng = Number(evacuationCenter?.longitude)
+
+    useEffect(() => {
+        if (!Number.isFinite(barangayLat) || !Number.isFinite(barangayLng)) return
+
+        map.invalidateSize()
+        if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
+            const bounds = L.latLngBounds(
+                [barangayLat, barangayLng],
+                [centerLat, centerLng]
+            )
+            map.fitBounds(bounds, { padding: [24, 24], maxZoom: 16 })
+            return
+        }
+
+        map.setView([barangayLat, barangayLng], 15)
+    }, [map, barangay?.id, barangayLat, barangayLng, evacuationCenter?.id, centerLat, centerLng])
+
+    return null
+}
+
 function MapPanel({ entry, evacuationCenter }) {
     const [tileLayer, setTileLayer] = useState("street")
 
@@ -256,6 +297,7 @@ function MapPanel({ entry, evacuationCenter }) {
 
     const { barangay, status, weather } = entry
     const wind = status === "success" ? readNumeric(weather, ["wind_speed_10m"]) : null
+    const rain = status === "success" ? readNumeric(weather, ["precipitation", "rain"]) : null
     const severity = entry.severity || { label: "N/A", signal: "N/A", bg: "#E1F5EE", text: "#085041", border: "#1D9E75" }
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_KEY
 
@@ -270,47 +312,20 @@ function MapPanel({ entry, evacuationCenter }) {
             ? `https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}&key=${apiKey}`
             : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
         tileAttribution = apiKey ? "&copy; Google Maps" : "&copy; Esri, DigitalGlobe, Earthstar Geographics"
-    } else if (tileLayer === "hybrid") {
-        tileUrl = apiKey
-            ? `https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}&key=${apiKey}`
-            : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        tileAttribution = apiKey ? "&copy; Google Maps" : "&copy; OpenStreetMap contributors"
     }
 
     const handleToggleTileLayer = () => {
-        const layerOrder = ["street", "satellite", "hybrid", "street"]
-        const currentIndex = layerOrder.indexOf(tileLayer)
-        let nextLayer = layerOrder[currentIndex + 1] || "street"
-
-        // Skip hybrid if API key not available
-        if (nextLayer === "hybrid" && !apiKey) {
-            nextLayer = "street"
-        }
-
-        setTileLayer(nextLayer)
+        setTileLayer(current => current === "street" ? "satellite" : "street")
     }
 
-    const getNextLayerName = () => {
-        const layerOrder = ["street", "satellite", "hybrid", "street"]
-        const currentIndex = layerOrder.indexOf(tileLayer)
-        let nextLayer = layerOrder[currentIndex + 1] || "street"
-
-        if (nextLayer === "hybrid" && !apiKey) {
-            nextLayer = "street"
-        }
-
-        const labels = { street: "Satellite", satellite: "Hybrid", hybrid: "Street" }
-        return labels[nextLayer] || "Satellite"
-    }
-
-    // Key prop forces React to remount map when barangay changes
-    const mapKey = `${barangay.id}-${evacuationCenter?.id || 'none'}`
-
-    const code = weather?.weathercode || 0
-    const weatherDesc = getWeatherDesc(code)
-    const distance = evacuationCenter
+    const activeLayerName = tileLayer === "street" ? "Street" : "Satellite"
+    const nextLayerName = tileLayer === "street" ? "Satellite" : "Street"
+    const code = weather?.weathercode ?? 0
+    const weatherLabel = getWeatherLabel(rain, code)
+    const hasEvacuationCoordinates = isValidCoordinate(evacuationCenter?.latitude) && isValidCoordinate(evacuationCenter?.longitude)
+    const distance = hasEvacuationCoordinates
         ? calculateDistance(barangay.latitude, barangay.longitude, evacuationCenter.latitude, evacuationCenter.longitude)
-        : 0
+        : null
 
     return (
         <div style={{ marginTop: 16 }}>
@@ -319,9 +334,8 @@ function MapPanel({ entry, evacuationCenter }) {
             </h3>
             <div style={{ position: "relative" }}>
                 <MapContainer
-                    key={mapKey}
                     center={[barangay.latitude, barangay.longitude]}
-                    zoom={14}
+                    zoom={15}
                     style={{
                         height: "350px",
                         width: "100%",
@@ -331,17 +345,11 @@ function MapPanel({ entry, evacuationCenter }) {
                     }}
                 >
                     <TileLayer url={tileUrl} attribution={tileAttribution} maxZoom={20} />
+                    <MapViewport barangay={barangay} evacuationCenter={hasEvacuationCoordinates ? evacuationCenter : null} />
                     
-                    {/* Barangay marker (blue circle) */}
-                    <CircleMarker
-                        center={[barangay.latitude, barangay.longitude]}
-                        radius={8}
-                        fillColor="#1a237e"
-                        color="#fff"
-                        weight={2}
-                        opacity={1}
-                        fillOpacity={0.85}
-                    >
+                    {/* Barangay marker */}
+                    <Marker position={[barangay.latitude, barangay.longitude]} icon={barangayMapIcon}>
+                        <Tooltip direction="top" opacity={0.95}>{barangay.name}</Tooltip>
                         <Popup>
                             <div style={{ fontSize: 12, color: "#1a1a2e", fontWeight: 600 }}>
                                 {barangay.name}
@@ -366,19 +374,12 @@ function MapPanel({ entry, evacuationCenter }) {
                                 {severity.label}
                             </div>
                         </Popup>
-                    </CircleMarker>
+                    </Marker>
 
-                    {/* Evacuation center marker (red circle) */}
-                    {evacuationCenter && (
-                        <CircleMarker
-                            center={[evacuationCenter.latitude, evacuationCenter.longitude]}
-                            radius={8}
-                            fillColor="#D85A30"
-                            color="#fff"
-                            weight={2}
-                            opacity={1}
-                            fillOpacity={0.85}
-                        >
+                    {/* Evacuation center marker */}
+                    {hasEvacuationCoordinates && (
+                        <Marker position={[evacuationCenter.latitude, evacuationCenter.longitude]} icon={evacuationMapIcon}>
+                            <Tooltip direction="top" opacity={0.95}>{evacuationCenter.name}</Tooltip>
                             <Popup>
                                 <div style={{ fontSize: 12, color: "#1a1a2e", fontWeight: 600 }}>
                                     {evacuationCenter.name}
@@ -387,16 +388,16 @@ function MapPanel({ entry, evacuationCenter }) {
                                     Distance: {distance.toFixed(2)} km
                                 </div>
                             </Popup>
-                        </CircleMarker>
+                        </Marker>
                     )}
                 </MapContainer>
 
                 <button
                     onClick={handleToggleTileLayer}
                     style={styles.mapToggleBtn}
-                    title={`Switch to ${getNextLayerName()} view`}
+                    title={`Switch to ${nextLayerName} view`}
                 >
-                    {getNextLayerName()}
+                    Layer: {activeLayerName}
                 </button>
             </div>
             <div style={styles.mapInfoStrip}>
@@ -409,15 +410,19 @@ function MapPanel({ entry, evacuationCenter }) {
                         <span style={styles.mapInfoItem}>
                             🏫 {evacuationCenter.name}
                         </span>
-                        <span style={{ color: "#ccc" }}>|</span>
-                        <span style={styles.mapInfoItem}>
-                            📏 {distance.toFixed(1)} km away
-                        </span>
+                        {distance !== null && (
+                            <>
+                                <span style={{ color: "#ccc" }}>|</span>
+                                <span style={styles.mapInfoItem}>
+                                    📏 {distance.toFixed(1)} km away
+                                </span>
+                            </>
+                        )}
                     </>
                 )}
                 <span style={{ color: "#ccc" }}>|</span>
                 <span style={styles.mapInfoItem}>
-                    🌤 {weatherDesc} · {severity.signal}
+                    🌤 {weatherLabel} · {severity.signal}
                 </span>
             </div>
         </div>
@@ -466,8 +471,8 @@ function DetailPanel({ entry, evacuationCenter }) {
                             <MapPin size={11} style={{ marginRight: 3 }} />{barangay.city}
                         </div>
                     </div>
-                    <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}` }}>
-                        {barangay.risk_level}
+                    <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}`, textTransform: "none" }}>
+                        Area risk: {String(barangay.risk_level || "low").toUpperCase()}
                     </span>
                 </div>
                 <div style={styles.errorBody}>
@@ -500,15 +505,14 @@ function DetailPanel({ entry, evacuationCenter }) {
                     </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-                    <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}` }}>
-                        {barangay.risk_level}
+                    <span style={{ ...styles.riskBadge, background: risk.bg, color: risk.color, border: `1px solid ${risk.border}`, textTransform: "none" }}>
+                        Area risk: {String(barangay.risk_level || "low").toUpperCase()}
                     </span>
                     <span style={{
                         fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
                         background: severity.bg, color: severity.text, border: `1px solid ${severity.border}`,
-                        textTransform: "uppercase",
                     }}>
-                        {severity.label}
+                        Live severity: {severity.label}
                     </span>
                 </div>
             </div>
@@ -517,7 +521,7 @@ function DetailPanel({ entry, evacuationCenter }) {
             <div style={styles.conditionChip}>
                 {getWeatherIcon(code, 16)}
                 <span style={{ fontSize: 12, color: "#5b6470", fontWeight: 600, marginLeft: 6 }}>
-                    {getWeatherDesc(code)} · {severity.signal}
+                    {getWeatherLabel(rain, code)} · {severity.signal}
                 </span>
             </div>
 
@@ -547,7 +551,7 @@ function DetailPanel({ entry, evacuationCenter }) {
                     value={toFixedOrNA(pressure, 0)}
                     unit="hPa"
                     barPct={pressure ? clampPct(((1020 - pressure) / 120) * 100) : 0}
-                    barColor={pressure && pressure < 990 ? "#EF9F27" : "#D85A30"}
+                    barColor={getPressureBarColor(pressure)}
                 />
                 <MetricItem
                     icon={<Wind size={12} />}
@@ -593,7 +597,6 @@ function DetailPanel({ entry, evacuationCenter }) {
             {/* Map Panel */}
             <MapPanel entry={entry} evacuationCenter={evacuationCenter} />
 
-            <div style={styles.fetchedAt}>Fetched at {formatTime(fetchedAt)}</div>
         </div>
     )
 }
@@ -608,7 +611,7 @@ export default function AdminWeather() {
     const [barangaysError, setBarangaysError] = useState(null)
     const [selectedId, setSelectedId] = useState(null)
     const [evacuationCenters, setEvacuationCenters] = useState([])
-    const [evacuationCentersLoading, setEvacuationCentersLoading] = useState(false)
+    const [_evacuationCentersLoading, setEvacuationCentersLoading] = useState(false)
 
     // ─── UNCHANGED: All data fetching logic ───────────────────────────────────
 
@@ -768,7 +771,7 @@ export default function AdminWeather() {
                         <div style={styles.statCard}>
                             <div style={styles.statLabel}><Thermometer size={11} /> Avg temp</div>
                             <div style={{ ...styles.statValue, color: "#1D9E75" }}>{avgTemp ? `${avgTemp}°C` : "—"}</div>
-                            <div style={styles.statSub}>Across stations</div>
+                            <div style={styles.statSub}>Across barangays</div>
                         </div>
                         <div style={styles.statCard}>
                             <div style={styles.statLabel}><Wind size={11} /> Avg wind</div>
@@ -799,7 +802,7 @@ export default function AdminWeather() {
                         {/* Left: station list */}
                         <div style={styles.stationList}>
                             <div style={styles.stationListHeader}>
-                                Stations ({monitoringCount})
+                                Barangays ({monitoringCount})
                             </div>
                             <div style={styles.stationScroll}>
                                 {showSkeletons

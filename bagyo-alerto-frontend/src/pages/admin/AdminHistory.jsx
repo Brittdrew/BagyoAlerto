@@ -20,7 +20,7 @@ const FILTER_LABELS = {
 }
 
 // ─── Q&A History Row Component ───────────────────────────────────────────────
-function QAHistoryRow({ log, rowNum, onDelete }) {
+function QAHistoryRow({ log, rowNum, onDelete, canDelete }) {
     const [expanded, setExpanded] = useState(false)
 
     const getSeverityBadgeStyle = (severity) => {
@@ -84,21 +84,24 @@ function QAHistoryRow({ log, rowNum, onDelete }) {
                     {new Date(log.created_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}
                 </div>
             </td>
-            <td style={styles.td}>
-                <button
-                    onClick={() => onDelete(log.id)}
-                    style={styles.deleteBtn}
-                    title="Delete log entry"
-                >
-                    <Trash2 size={13} />
-                </button>
-            </td>
+            {canDelete && (
+                <td style={styles.td}>
+                    <button
+                        onClick={() => onDelete(log.id)}
+                        style={styles.deleteBtn}
+                        title="Delete log entry"
+                    >
+                        <Trash2 size={13} />
+                    </button>
+                </td>
+            )}
         </tr>
     )
 }
 
 export default function AdminHistory() {
-    const { authHeaders } = useAdminAuth()
+    const { authHeaders, isSuperAdmin } = useAdminAuth()
+    const canDeleteHistory = isSuperAdmin()
     const [activeTab, setActiveTab] = useState("recommendations") // "recommendations" | "qa"
 
     // ── Recommendations States
@@ -656,13 +659,15 @@ export default function AdminHistory() {
                             >
                                 <Download size={13} /> Export CSV
                             </button>
-                            <button
-                                onClick={handleClearQAHistory}
-                                disabled={qaLogs.length === 0}
-                                style={{ ...styles.dangerBtn, opacity: qaLogs.length === 0 ? 0.4 : 1 }}
-                            >
-                                <Trash2 size={13} /> Clear All History
-                            </button>
+                            {canDeleteHistory && (
+                                <button
+                                    onClick={handleClearQAHistory}
+                                    disabled={qaLogs.length === 0}
+                                    style={{ ...styles.dangerBtn, opacity: qaLogs.length === 0 ? 0.4 : 1 }}
+                                >
+                                    <Trash2 size={13} /> Clear All History
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -690,7 +695,7 @@ export default function AdminHistory() {
                                             <th style={{ ...styles.th, width: "34%" }}>Answer Response</th>
                                             <th style={{ ...styles.th, width: "15%" }}>Severity</th>
                                             <th style={{ ...styles.th, width: "15%" }}>Asked At</th>
-                                            <th style={{ ...styles.th, width: "5%" }}>Action</th>
+                                            {canDeleteHistory && <th style={{ ...styles.th, width: "5%" }}>Action</th>}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -700,6 +705,7 @@ export default function AdminHistory() {
                                                 log={log}
                                                 rowNum={qaTotalRecords - ((qaCurrentPage - 1) * 20) - i}
                                                 onDelete={handleDeleteQAEntry}
+                                                canDelete={canDeleteHistory}
                                             />
                                         ))}
                                     </tbody>

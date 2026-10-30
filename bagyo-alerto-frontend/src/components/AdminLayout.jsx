@@ -1,4 +1,5 @@
 import AdminSidebar from "./AdminSidebar"
+import AdminChatWidget from "./AdminChatWidget"
 
 export default function AdminLayout({ children, title }) {
     return (
@@ -8,6 +9,7 @@ export default function AdminLayout({ children, title }) {
                 {title && <h1 style={styles.pageTitle}>{title}</h1>}
                 {children}
             </main>
+            <AdminChatWidget />
         </div>
     )
 }
@@ -22,6 +24,7 @@ const styles = {
     main: {
         flex: 1,
         padding: "28px 32px",
+        paddingBottom: 112,
         overflowY: "auto",
         maxHeight: "100vh",
     },

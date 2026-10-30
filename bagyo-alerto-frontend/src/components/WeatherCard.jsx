@@ -1,11 +1,7 @@
-const thresholds = {
-    wind_speed:  { warn: 88,  danger: 118 },
-    rainfall:    { warn: 15,  danger: 30  },
-    pressure:    { warn: 990, danger: 970 },
-}
+import { WEATHER_THRESHOLDS } from "../constants/weatherThresholds"
 
 export default function WeatherCard({ icon, label, value, unit, name, onChange }) {
-    const t = thresholds[name]
+    const t = WEATHER_THRESHOLDS[name]
     const num = parseFloat(value)
     
     // For pressure, lower = worse. For wind/rain, higher = worse.

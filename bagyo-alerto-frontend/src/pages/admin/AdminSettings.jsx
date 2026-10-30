@@ -7,7 +7,8 @@ import { useAdminAuth } from "../../context/AdminAuthContext"
 const API_BASE = import.meta.env.VITE_API_BASE
 
 export default function AdminSettings() {
-    const { authHeaders, admin } = useAdminAuth()
+    const { authHeaders, admin, isSuperAdmin } = useAdminAuth()
+    const superAdmin = isSuperAdmin()
     const [currentPassword, setCurrentPassword] = useState("")
     const [newPassword, setNewPassword] = useState("")
     const [confirmPassword, setConfirmPassword] = useState("")
@@ -59,7 +60,7 @@ export default function AdminSettings() {
 
     return (
         <AdminLayout title="Settings">
-            <div style={styles.card}>
+            {superAdmin && <div style={styles.card}>
                 <div style={styles.cardHeader}>
                     <KeyRound size={18} color="#1a237e" />
                     <span>Account Information</span>
@@ -74,7 +75,7 @@ export default function AdminSettings() {
                         <span style={styles.infoValue}>{admin?.username || "—"}</span>
                     </div>
                 </div>
-            </div>
+            </div>}
 
             <div style={styles.card}>
                 <div style={styles.cardHeader}>

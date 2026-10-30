@@ -55,14 +55,17 @@ Route::middleware('throttle:10,1')->post(
 
 Route::get('/recommendations', [RecommendationController::class, 'index']);
 Route::post('/recommendations', [RecommendationController::class, 'store']);
-Route::delete('/recommendations/{id}', [RecommendationController::class, 'destroy']);
+Route::middleware(['auth:sanctum', 'role:super_admin'])
+    ->delete('/recommendations/{id}', [RecommendationController::class, 'destroy']);
 
 // Chat Q&A endpoint
 Route::middleware(['auth:sanctum', 'throttle:30,1'])->post('/chat', [ChatController::class, 'ask']);
 Route::get('/chat/history', [ChatController::class, 'history']);
 Route::get('/chat/history/{barangay}', [ChatController::class, 'historyByBarangay']);
-Route::delete('/chat/history/{id}', [ChatController::class, 'deleteLog']);
-Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
+Route::middleware(['auth:sanctum', 'role:super_admin'])->group(function () {
+    Route::delete('/chat/history/{id}', [ChatController::class, 'deleteLog']);
+    Route::delete('/chat/history', [ChatController::class, 'clearHistory']);
+});
 
 // Admin authentication (no auth middleware)
 Route::post('/admin/login', [AdminController::class, 'login']);
@@ -71,26 +74,37 @@ Route::post('/admin/login', [AdminController::class, 'login']);
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/logout', [AdminController::class, 'logout']);
     Route::get('/me', [AdminController::class, 'me']);
-    Route::put('/password', [AdminController::class, 'changePassword']);
     Route::get('/stats', [AdminController::class, 'stats']);
     Route::get('/recommendations', [AdminController::class, 'recommendations']);
     Route::get('/hazard-map', [AdminController::class, 'hazardMap']);
 
     Route::post('/pagasa-signal', [PagasaSignalController::class, 'store']);
     Route::get('/pagasa-detected', [PagasaDetectedController::class, 'show']);
-    Route::post('/pagasa-post', [PagasaPinnedPostController::class, 'store']);
 
     Route::get('/barangays', [AdminController::class, 'barangaysIndex']);
-    Route::post('/barangays', [AdminController::class, 'barangaysStore']);
-    Route::put('/barangays/{id}', [AdminController::class, 'barangaysUpdate']);
-    Route::delete('/barangays/{id}', [AdminController::class, 'barangaysDestroy']);
 
     Route::get('/evacuation-centers', [AdminController::class, 'evacuationCentersIndex']);
-    Route::post('/evacuation-centers', [AdminController::class, 'evacuationCentersStore']);
-    Route::put('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersUpdate']);
-    Route::delete('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersDestroy']);
-    Route::post('/evacuation-centers/photo', [AdminController::class, 'uploadEvacuationCenterPhoto']);
-    Route::delete('/evacuation-centers/photo/{barangay_name}', [AdminController::class, 'deleteEvacuationCenterPhoto']);
+
+    Route::put('/password', [AdminController::class, 'changePassword']);
+
+    Route::middleware('role:super_admin')->group(function () {
+        Route::post('/pagasa-post', [PagasaPinnedPostController::class, 'store']);
+
+        Route::post('/barangays', [AdminController::class, 'barangaysStore']);
+        Route::put('/barangays/{id}', [AdminController::class, 'barangaysUpdate']);
+        Route::delete('/barangays/{id}', [AdminController::class, 'barangaysDestroy']);
+
+        Route::post('/evacuation-centers', [AdminController::class, 'evacuationCentersStore']);
+        Route::put('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersUpdate']);
+        Route::delete('/evacuation-centers/{id}', [AdminController::class, 'evacuationCentersDestroy']);
+        Route::post('/evacuation-centers/photo', [AdminController::class, 'uploadEvacuationCenterPhoto']);
+        Route::delete('/evacuation-centers/photo/{barangay_name}', [AdminController::class, 'deleteEvacuationCenterPhoto']);
+
+        Route::get('/accounts', [AdminController::class, 'adminAccounts']);
+        Route::post('/accounts', [AdminController::class, 'storeAdminAccount']);
+        Route::put('/accounts/{id}/role', [AdminController::class, 'updateAdminRole']);
+        Route::delete('/accounts/{id}', [AdminController::class, 'destroyAdminAccount']);
+    });
 
     // Admin evacuation log and occupancy routes
     Route::post('/evacuation-centers/{centerId}/logs', [EvacuationLogController::class, 'store']);

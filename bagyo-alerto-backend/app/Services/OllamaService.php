@@ -16,12 +16,16 @@ class OllamaService
     private string $baseUrl;
     private string $model;
     private int    $timeout;
+    private int    $historyMessages;
+    private int    $numCtx;
 
     public function __construct()
     {
         $this->baseUrl = config('ollama.url',     'http://localhost:11434');
         $this->model   = config('ollama.model',   'llama3.2');
         $this->timeout = config('ollama.timeout', 30);
+        $this->historyMessages = max(1, (int) config('chat.history_messages', 10));
+        $this->numCtx = max(1024, (int) config('chat.num_ctx', 8192));
     }
 
     /**
@@ -42,25 +46,26 @@ class OllamaService
      *
      * @param  string  $systemPrompt  Context / personality instructions
      * @param  string  $userMessage   The user's question
+     * @param  array<int, array{role?: string, content?: string}>  $history
      * @return string|null            LLM response, or null if unavailable
      */
-    public function chat(string $systemPrompt, string $userMessage): ?string
+    public function chat(string $systemPrompt, string $userMessage, array $history = []): ?string
     {
         try {
             Log::info('Ollama chat() called, url: ' . $this->baseUrl . ', model: ' . $this->model);
             Log::info('Ollama timeout: ' . $this->timeout);
 
+            $conversation = $this->prepareConversation($systemPrompt, $history, $userMessage);
+
             $response = Http::timeout($this->timeout)
                 ->post("{$this->baseUrl}/api/chat", [
                     'model'  => $this->model,
                     'stream' => false,
-                    'messages' => [
-                        ['role' => 'system', 'content' => $systemPrompt],
-                        ['role' => 'user',   'content' => $userMessage],
-                    ],
+                    'messages' => $conversation,
                     'options' => [
                         'temperature' => 0.3,
                         'num_predict' => 500,
+                        'num_ctx' => $this->numCtx,
                     ],
                 ]);
 
@@ -85,6 +90,56 @@ class OllamaService
             Log::warning('Ollama unavailable: ' . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * Keep the complete system prompt, then the newest configured number of
+     * conversation messages. If the context estimate is still too large,
+     * discard oldest history first while always preserving the current user
+     * message and the unmodified system prompt/snapshot.
+     *
+     * @param  array<int, array{role?: string, content?: string}>  $history
+     * @return array<int, array{role: string, content: string}>
+     */
+    private function prepareConversation(string $systemPrompt, array $history, string $userMessage): array
+    {
+        $messages = collect($history)
+            ->filter(fn ($message) => is_array($message)
+                && in_array($message['role'] ?? null, ['user', 'assistant'], true)
+                && is_string($message['content'] ?? null)
+                && trim($message['content']) !== '')
+            ->map(fn (array $message) => [
+                'role' => $message['role'],
+                'content' => $message['content'],
+            ])
+            ->values()
+            ->all();
+
+        $messages[] = ['role' => 'user', 'content' => $userMessage];
+        $messages = array_slice($messages, -$this->historyMessages);
+
+        // Reserve generation room plus a small allowance for chat-template tokens.
+        $inputBudget = max(1, $this->numCtx - 500 - 256);
+        while (count($messages) > 1
+            && $this->estimatedTokens($systemPrompt, $messages) > $inputBudget) {
+            array_shift($messages);
+        }
+
+        return array_merge(
+            [['role' => 'system', 'content' => $systemPrompt]],
+            $messages,
+        );
+    }
+
+    /** @param array<int, array{role: string, content: string}> $messages */
+    private function estimatedTokens(string $systemPrompt, array $messages): int
+    {
+        $characters = mb_strlen($systemPrompt);
+        foreach ($messages as $message) {
+            $characters += mb_strlen($message['content']);
+        }
+
+        return (int) ceil($characters / 4) + ((count($messages) + 1) * 4);
     }
 
     /**
@@ -196,5 +251,134 @@ RULES:
 - Only answer typhoon, weather, disaster preparedness, and emergency-related questions
 - If asked anything unrelated, say: "I'm focused on typhoon safety and disaster preparedness. Please contact your local DRRMO for other concerns."
 PROMPT;
+    }
+
+    /**
+     * Build the LGU/CDRRMO operations prompt with only the live data supplied
+     * by the chat controller. Missing values are stated explicitly.
+     */
+    public function buildAdminSystemPrompt(
+        ?string $barangayName = null,
+        ?array $weatherData = null,
+        ?string $severity = null,
+        $evacuationCenter = null,
+        ?array $citySnapshot = null
+    ): string {
+        $basePrompt = (string) config('chat.prompts.admin');
+
+        if ($citySnapshot !== null) {
+            return $basePrompt . $this->formatCitywideSnapshot($citySnapshot);
+        }
+
+        if (!$barangayName) {
+            return $basePrompt . "\n\nOPERATIONAL DATA FOR THIS REQUEST:\n"
+                . "- No barangay-specific live data was loaded.\n"
+                . "- Citywide barangay risk rankings and center occupancy summaries were not supplied.\n"
+                . "State these limitations if the question requires that data.";
+        }
+
+        $value = static function ($raw, int $precision = 1): string {
+            if ($raw === null || $raw === '' || !is_numeric($raw)) {
+                return 'unavailable';
+            }
+
+            return number_format((float) $raw, $precision, '.', '');
+        };
+
+        $wind = $value($weatherData['wind_speed'] ?? null);
+        $rainfall = $value($weatherData['rainfall'] ?? null);
+        $pressure = $value($weatherData['pressure'] ?? null, 0);
+        $severityLabel = $severity ?: 'unavailable';
+
+        $dataBlock = "\n\nOPERATIONAL DATA FOR THIS REQUEST:\n"
+            . "- Barangay: {$barangayName}\n"
+            . "- Computed current severity: {$severityLabel}\n"
+            . "- Official PAGASA signal: unavailable for this request\n"
+            . "- Wind: " . ($wind === 'unavailable' ? $wind : "{$wind} km/h") . "\n"
+            . "- Rainfall: " . ($rainfall === 'unavailable' ? $rainfall : "{$rainfall} mm/hr") . "\n"
+            . "- Pressure: " . ($pressure === 'unavailable' ? $pressure : "{$pressure} hPa");
+
+        if (!$evacuationCenter) {
+            return $basePrompt . $dataBlock
+                . "\n- Evacuation center data: unavailable for this request.";
+        }
+
+        $center = is_array($evacuationCenter) ? (object) $evacuationCenter : $evacuationCenter;
+        $capacity = isset($center->capacity) && is_numeric($center->capacity)
+            ? (int) $center->capacity
+            : null;
+        $occupancy = isset($center->current_occupancy) && is_numeric($center->current_occupancy)
+            ? (int) $center->current_occupancy
+            : null;
+        $remaining = $capacity !== null && $occupancy !== null
+            ? max(0, $capacity - $occupancy)
+            : null;
+
+        $centerBlock = "\n- Evacuation center: " . ($center->name ?? 'unavailable')
+            . "\n- Center capacity: " . ($capacity ?? 'unavailable')
+            . "\n- Current occupancy: " . ($occupancy ?? 'unavailable')
+            . "\n- Remaining capacity: " . ($remaining ?? 'unavailable')
+            . "\n- Flood hazard class: " . ($center->flood_susceptibility ?? 'unavailable')
+            . "\n- Landslide hazard class: " . ($center->landslide_susceptibility ?? 'unavailable')
+            . "\n- Overall hazard class: " . ($center->hazard_level ?? 'unavailable');
+
+        return $basePrompt . $dataBlock . $centerBlock;
+    }
+
+    /**
+     * Keep city-wide data to one line per barangay and evacuation center.
+     */
+    private function formatCitywideSnapshot(array $snapshot): string
+    {
+        $value = static function ($raw, int $precision = 1, string $unit = ''): string {
+            if ($raw === null || $raw === '' || !is_numeric($raw)) {
+                return 'unavailable';
+            }
+
+            return number_format((float) $raw, $precision, '.', '') . $unit;
+        };
+        $text = static fn ($raw): string => $raw === null || $raw === ''
+            ? 'unavailable'
+            : (string) $raw;
+
+        $lines = [
+            "\n\nCITY-WIDE OPERATIONAL DATA FOR THIS REQUEST:",
+            'Barangays (one line each):',
+        ];
+
+        $barangays = $snapshot['barangays'] ?? [];
+        if ($barangays === []) {
+            $lines[] = '- Barangay data: unavailable';
+        } else {
+            foreach ($barangays as $barangay) {
+                $lines[] = '- ' . $text($barangay['name'] ?? null)
+                    . ' | severity=' . $text($barangay['severity'] ?? null)
+                    . '; wind=' . $value($barangay['wind_speed'] ?? null, 1, ' km/h')
+                    . '; rainfall=' . $value($barangay['rainfall'] ?? null, 1, ' mm/hr')
+                    . '; pressure=' . $value($barangay['pressure'] ?? null, 0, ' hPa')
+                    . '; PAGASA signal=' . $text($barangay['pagasa_signal'] ?? null);
+            }
+        }
+
+        $centerSummary = $snapshot['center_summary'] ?? [];
+        $lines[] = 'Active evacuation center summary: count='
+            . $value($centerSummary['count'] ?? null, 0)
+            . '; total capacity=' . $value($centerSummary['total_capacity'] ?? null, 0);
+        $lines[] = 'Evacuation centers (one line each):';
+        $centers = $snapshot['centers'] ?? [];
+        if ($centers === []) {
+            $lines[] = '- Evacuation center data: unavailable';
+        } else {
+            foreach ($centers as $center) {
+                $lines[] = '- ' . $text($center['name'] ?? null)
+                    . ' | barangay=' . $text($center['barangay_name'] ?? null)
+                    . '; capacity=' . $value($center['capacity'] ?? null, 0)
+                    . '; occupancy=' . $value($center['current_occupancy'] ?? null, 0)
+                    . '; occupancy%=' . $value($center['occupancy_percent'] ?? null, 0, '%')
+                    . '; hazard=' . $text($center['hazard_class'] ?? null);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 }

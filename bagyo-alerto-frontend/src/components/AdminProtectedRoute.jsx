@@ -1,8 +1,8 @@
 import { Navigate } from "react-router-dom"
 import { useAdminAuth, ADMIN_TOKEN_KEY } from "../context/AdminAuthContext"
 
-export default function AdminProtectedRoute({ children }) {
-    const { isAuthenticated, authReady } = useAdminAuth()
+export default function AdminProtectedRoute({ children, superAdminOnly = false }) {
+    const { isAuthenticated, authReady, isSuperAdmin } = useAdminAuth()
 
     const storedToken = localStorage.getItem(ADMIN_TOKEN_KEY)
     const hasToken = isAuthenticated || !!storedToken
@@ -25,6 +25,10 @@ export default function AdminProtectedRoute({ children }) {
 
     if (!hasToken) {
         return <Navigate to="/admin/login" replace />
+    }
+
+    if (superAdminOnly && !isSuperAdmin()) {
+        return <Navigate to="/admin/dashboard" replace />
     }
 
     return children

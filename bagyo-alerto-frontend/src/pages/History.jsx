@@ -3,6 +3,7 @@ import axios from "axios"
 import { useNavigate } from "react-router-dom"
 import { Tornado, BarChart2, Clock, RefreshCw, Download, Search, Loader, AlertTriangle, Inbox, MapPin, School, Trash2 } from "lucide-react"
 import Sidebar from "../components/Sidebar"
+import { useAdminAuth } from "../context/AdminAuthContext"
 import { calculateSeverityScore, getSeverityConfig } from "./Dashboard"
 
 const API_BASE = import.meta.env.VITE_API_BASE
@@ -70,6 +71,8 @@ function StatCard({ label, value, sub, valueColor }) {
 // ─── Main History Page ────────────────────────────────────────────────────────
 export default function History() {
     const navigate = useNavigate()
+    const { admin, authHeaders, authReady, isAuthenticated } = useAdminAuth()
+    const canManageHistory = authReady && isAuthenticated && !!admin
 
     const [logs, setLogs] = useState([])
     const [loading, setLoading] = useState(true)
@@ -97,10 +100,11 @@ export default function History() {
     }
 
     const handleDelete = async (id) => {
+        if (!canManageHistory) return
         if (!window.confirm("Delete this assessment record?")) return
         setDeletingId(id)
         try {
-            await axios.delete(`${API_BASE}/recommendations/${id}`)
+            await axios.delete(`${API_BASE}/recommendations/${id}`, { headers: authHeaders() })
             setLogs(prev => prev.filter(l => l.id !== id))
         } catch {
             alert("Failed to delete. Please try again.")
@@ -110,7 +114,7 @@ export default function History() {
 
     // ── CSV Export — now includes Temperature & Humidity ──────────────────────
     const handleExportCSV = () => {
-        if (filtered.length === 0) return
+        if (!canManageHistory || filtered.length === 0) return
         const headers = [
             "#", "Barangay", "City", "Date", "Severity", "PAGASA Signal",
             "Wind (km/h)", "Rainfall (mm/hr)", "Pressure (hPa)",
@@ -294,9 +298,11 @@ export default function History() {
                             <button className="h-refresh" onClick={fetchLogs} style={{ ...styles.btnRefresh, minHeight: 44 }}>
                                 <RefreshCw size={12} /> Refresh
                             </button>
-                            <button className="h-export" onClick={handleExportCSV} style={{ ...styles.btnExport, minHeight: 44 }} disabled={filtered.length === 0}>
-                                <Download size={12} /> Export CSV
-                            </button>
+                            {canManageHistory && (
+                                <button className="h-export" onClick={handleExportCSV} style={{ ...styles.btnExport, minHeight: 44 }} disabled={filtered.length === 0}>
+                                    <Download size={12} /> Export CSV
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -433,15 +439,17 @@ export default function History() {
                                                         <span className="h-card-date">
                                                             {formatDateShort(log.recommended_at)} · {formatTime(log.recommended_at)}
                                                         </span>
-                                                        <button
-                                                            className="h-del"
-                                                            onClick={() => handleDelete(log.id)}
-                                                            disabled={!!deletingId}
-                                                            style={styles.deleteBtn}
-                                                            title="Delete record"
-                                                        >
-                                                            <Trash2 size={11} />
-                                                        </button>
+                                                        {canManageHistory && (
+                                                            <button
+                                                                className="h-del"
+                                                                onClick={() => handleDelete(log.id)}
+                                                                disabled={!!deletingId}
+                                                                style={styles.deleteBtn}
+                                                                title="Delete record"
+                                                            >
+                                                                <Trash2 size={11} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
 
@@ -598,15 +606,17 @@ export default function History() {
                                                         </div>
                                                     </td>
                                                     <td style={styles.td}>
-                                                        <button
-                                                            className="h-del"
-                                                            onClick={() => handleDelete(log.id)}
-                                                            disabled={!!deletingId}
-                                                            style={styles.deleteBtn}
-                                                            title="Delete record"
-                                                        >
-                                                            <Trash2 size={11} /> Delete
-                                                        </button>
+                                                        {canManageHistory && (
+                                                            <button
+                                                                className="h-del"
+                                                                onClick={() => handleDelete(log.id)}
+                                                                disabled={!!deletingId}
+                                                                style={styles.deleteBtn}
+                                                                title="Delete record"
+                                                            >
+                                                                <Trash2 size={11} /> Delete
+                                                            </button>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             )

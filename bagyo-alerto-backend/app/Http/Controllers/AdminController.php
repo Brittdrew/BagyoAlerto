@@ -36,6 +36,7 @@ class AdminController extends Controller
                 'id'       => $admin->id,
                 'name'     => $admin->name,
                 'username' => $admin->username,
+                'role'     => $admin->role,
             ],
         ]);
     }
@@ -60,8 +61,98 @@ class AdminController extends Controller
             'id'         => $admin->id,
             'name'       => $admin->name,
             'username'   => $admin->username,
+            'role'       => $admin->role,
             'created_at' => $admin->created_at,
         ]);
+    }
+
+    public function adminAccounts()
+    {
+        return response()->json(
+            Admin::query()
+                ->orderBy('name')
+                ->get()
+                ->map(fn (Admin $admin): array => $this->adminAccountPayload($admin))
+                ->values()
+        );
+    }
+
+    public function storeAdminAccount(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:admins,username',
+            'password' => 'required|string|min:6|confirmed',
+            'role' => ['required', Rule::in([Admin::ROLE_ADMIN, Admin::ROLE_SUPER_ADMIN])],
+        ]);
+
+        $admin = Admin::create([
+            'name' => $data['name'],
+            'username' => strtolower($data['email']),
+            'password' => $data['password'],
+            'role' => $data['role'],
+        ]);
+
+        return response()->json($this->adminAccountPayload($admin), 201);
+    }
+
+    public function updateAdminRole(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'role' => ['required', Rule::in([Admin::ROLE_ADMIN, Admin::ROLE_SUPER_ADMIN])],
+        ]);
+
+        $updated = DB::transaction(function () use ($request, $id, $data): Admin {
+            $target = Admin::query()->lockForUpdate()->findOrFail($id);
+
+            if ((int) $request->user()->id === (int) $target->id
+                && $data['role'] !== Admin::ROLE_SUPER_ADMIN) {
+                abort(422, 'You cannot demote your own account.');
+            }
+
+            if ($target->role === Admin::ROLE_SUPER_ADMIN
+                && $data['role'] === Admin::ROLE_ADMIN
+                && Admin::query()->where('role', Admin::ROLE_SUPER_ADMIN)->lockForUpdate()->get(['id'])->count() <= 1) {
+                abort(422, 'The last super admin cannot be demoted.');
+            }
+
+            $target->update(['role' => $data['role']]);
+
+            return $target->refresh();
+        });
+
+        return response()->json($this->adminAccountPayload($updated));
+    }
+
+    public function destroyAdminAccount(Request $request, int $id)
+    {
+        DB::transaction(function () use ($request, $id): void {
+            $target = Admin::query()->lockForUpdate()->findOrFail($id);
+
+            if ((int) $request->user()->id === (int) $target->id) {
+                abort(422, 'You cannot delete your own account.');
+            }
+
+            if ($target->role === Admin::ROLE_SUPER_ADMIN
+                && Admin::query()->where('role', Admin::ROLE_SUPER_ADMIN)->lockForUpdate()->get(['id'])->count() <= 1) {
+                abort(422, 'The last super admin cannot be deleted.');
+            }
+
+            $target->delete();
+        });
+
+        return response()->json(['message' => 'Admin account removed successfully.']);
+    }
+
+    private function adminAccountPayload(Admin $admin): array
+    {
+        return [
+            'id' => $admin->id,
+            'name' => $admin->name,
+            'email' => $admin->username,
+            'role' => $admin->role,
+            'created_at' => $admin->created_at,
+        ];
     }
 
     public function changePassword(Request $request)

@@ -51,7 +51,8 @@ const emptyForm = {
 }
 
 export default function AdminEvacuationCenters() {
-    const { authHeaders } = useAdminAuth()
+    const { authHeaders, isSuperAdmin } = useAdminAuth()
+    const canManage = isSuperAdmin()
     const { refreshCenters } = useAdminLists()
     const [centers, setCenters] = useState([])
     const [barangays, setBarangays] = useState([])
@@ -299,9 +300,11 @@ export default function AdminEvacuationCenters() {
         <AdminLayout title="Evacuation Centers">
             <div style={styles.toolbar}>
                 <div style={styles.count}>{centers.length} center{centers.length !== 1 ? "s" : ""}</div>
-                <div onClick={openAdd} style={styles.addBtn}>
-                    <Plus size={16} /> Add Center
-                </div>
+                {canManage && (
+                    <div onClick={openAdd} style={styles.addBtn}>
+                        <Plus size={16} /> Add Center
+                    </div>
+                )}
             </div>
 
             {/* High-hazard summary line */}
@@ -318,7 +321,7 @@ export default function AdminEvacuationCenters() {
             )}
 
             {/* Photo Management Panel */}
-            <div style={styles.photoPanel}>
+            {canManage && <div style={styles.photoPanel}>
                 <div style={styles.photoPanelHeader}>
                     <h3 style={styles.photoPanelTitle}>📷 Evacuation Center Photo Management</h3>
                     <p style={styles.photoPanelSub}>Assign and manage representative photos for each barangay's evacuation center</p>
@@ -428,7 +431,7 @@ export default function AdminEvacuationCenters() {
                         )}
                     </div>
                 </div>
-            </div>
+            </div>}
 
             {message && <div style={styles.successBox}>{message}</div>}
             {error && <div style={styles.errorBox}>{error}</div>}
@@ -456,7 +459,7 @@ export default function AdminEvacuationCenters() {
                                 <th style={styles.th}>Status</th>
                                 <th style={styles.th}>Flood</th>
                                 <th style={styles.th}>Landslide</th>
-                                <th style={styles.th}>Actions</th>
+                                {canManage && <th style={styles.th}>Actions</th>}
                             </tr>
                         </thead>
                         <tbody>
@@ -492,12 +495,14 @@ export default function AdminEvacuationCenters() {
                                     <td style={{ ...styles.td, verticalAlign: "top" }}>
                                         <HazardBadge type="landslide" level={c.landslide_susceptibility ?? null} />
                                     </td>
-                                    <td style={styles.td}>
-                                        <div style={styles.actions}>
-                                            <div onClick={() => openEdit(c)} style={styles.editBtn}><Pencil size={14} /></div>
-                                            <div onClick={() => handleDelete(c.id)} style={styles.deleteBtn}><Trash2 size={14} /></div>
-                                        </div>
-                                    </td>
+                                    {canManage && (
+                                        <td style={styles.td}>
+                                            <div style={styles.actions}>
+                                                <div onClick={() => openEdit(c)} style={styles.editBtn}><Pencil size={14} /></div>
+                                                <div onClick={() => handleDelete(c.id)} style={styles.deleteBtn}><Trash2 size={14} /></div>
+                                            </div>
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>
